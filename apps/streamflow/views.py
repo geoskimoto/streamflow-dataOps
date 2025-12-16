@@ -313,3 +313,130 @@ def dashboard(request):
     }
     
     return render(request, 'streamflow/dashboard.html', context)
+
+
+def station_search_ajax(request):
+    """AJAX endpoint for searching master stations."""
+    
+    query = request.GET.get('q', '').strip()
+    state = request.GET.get('state', '').strip()
+    huc = request.GET.get('huc', '').strip()
+    limit = int(request.GET.get('limit', 50))
+    
+    # Build query
+    stations = MasterStation.objects.all()
+    
+    # Apply filters
+    if query:
+        stations = stations.filter(
+            Q(station_number__icontains=query) |
+            Q(station_name__icontains=query)
+        )
+    
+    if state:
+        stations = stations.filter(state_code=state)
+    
+    if huc:
+        stations = stations.filter(huc_code__startswith=huc)
+    
+    # Limit results
+    stations = stations.order_by('station_number')[:limit]
+    
+    # Convert to JSON
+    results = [
+        {
+            'id': station.id,
+            'station_number': station.station_number,
+            'station_name': station.station_name,
+            'state_code': station.state_code,
+            'huc_code': station.huc_code,
+            'latitude': str(station.latitude) if station.latitude else None,
+            'longitude': str(station.longitude) if station.longitude else None,
+        }
+        for station in stations
+    ]
+    
+    return JsonResponse({'stations': results})
+
+
+def add_stations_to_config(request, pk):
+    """Add selected stations to a configuration."""
+    
+    config = get_object_or_404(PullConfiguration, pk=pk)
+    
+    if request.method == 'POST':
+        station_ids = request.POST.getlist('station_ids')
+        
+        if not station_ids:
+            messages.warning(request, 'No stations selected.')
+            return redirect('streamflow:configuration_detail', pk=pk)
+        
+        added_count = 0
+        already_exists_count = 0
+        
+        for station_id in station_ids:
+            try:
+                master_station = MasterStation.objects.get(id=station_id)
+                
+                # Check if already exists
+                exists = PullConfigurationStation.objects.filter(
+                    configuration=config,
+                    station_number=master_station.station_number
+                ).exists()
+                
+                if exists:
+                    already_exists_count += 1
+                    continue
+                
+                # Create configuration station
+                PullConfigurationStation.objects.create(
+                    configuration=config,
+                    station_number=master_station.station_number,
+                    station_name=master_station.station_name,
+                    huc_code=master_station.huc_code,
+                    state=master_station.state_code,
+                )
+                added_count += 1
+            
+            except MasterStation.DoesNotExist:
+                continue
+        
+        if added_count > 0:
+            messages.success(
+                request,
+                f'Added {added_count} station(s) to configuration.'
+            )
+        
+        if already_exists_count > 0:
+            messages.info(
+                request,
+                f'{already_exists_count} station(s) already in configuration.'
+            )
+        
+        return redirect('streamflow:configuration_detail', pk=pk)
+    
+    # GET request - show station selection interface
+    # Get available states and HUCs for filtering
+    states = MasterStation.objects.values_list(
+        'state_code', flat=True
+    ).distinct().order_by('state_code')
+    
+    hucs = MasterStation.objects.filter(
+        huc_code__isnull=False
+    ).values_list(
+        'huc_code', flat=True
+    ).distinct().order_by('huc_code')[:100]  # Limit to first 100 HUCs
+    
+    # Get current stations in config
+    current_station_numbers = list(
+        config.configuration_stations.values_list('station_number', flat=True)
+    )
+    
+    context = {
+        'configuration': config,
+        'states': [s for s in states if s],
+        'hucs': [h for h in hucs if h],
+        'current_station_numbers': current_station_numbers,
+    }
+    
+    return render(request, 'streamflow/add_stations.html', context)

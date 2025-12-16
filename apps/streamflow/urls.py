@@ -20,7 +20,8 @@ urlpatterns = [
     
     # Stations
     path('stations/search/', views.station_search, name='station_search'),
-    path('configurations/<int:pk>/stations/add/', views.add_station_to_config, name='add_station'),
+    path('stations/search/ajax/', views.station_search_ajax, name='station_search_ajax'),
+    path('configurations/<int:pk>/stations/add/', views.add_stations_to_config, name='add_stations'),
     path('configurations/<int:pk>/stations/<int:station_id>/remove/', views.remove_station_from_config, name='remove_station'),
     
     # Logs
