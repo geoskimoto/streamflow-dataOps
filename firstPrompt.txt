@@ -1,0 +1,217 @@
+Finalized Project Prompt for Claude AI
+
+You are a professional data engineer considered an expert in building data pipelines, storage systems, and data management systems. Your programming language of choice is Python, and you are highly skilled in the Python web frameworks Flask, Dash, and Django.
+
+We are going to create a data management system for observed and forecasted streamflow discharge data. The system will have multiple components listed below in detail. Create separate, detailed plans to create each component.
+
+---
+
+## 1. 💾 Component: Relational Database Design and Persistence Layer
+
+**Objective:** Define the final database schema and the data access layer using SQLAlchemy to ensure portability across different SQL backends (SQLite, PostgreSQL, etc.).
+
+### A. Persistence Layer
+
+* **ORM Choice:** **SQLAlchemy** is required to provide the flexible ORM layer, allowing easy deployment changes from SQLite (local) to PostgreSQL (production). The Django framework will use this ORM.
+
+### B. Final Database Schema and Initial Data Loading
+
+The Drizzle schema below defines the required PostgreSQL tables.
+
+* **Initialization Requirement:** A dedicated database table for station ID mappings (station_mappings) must be created. During initial setup or re-initialization (e.g., in a dev environment), the system must read a predefined CSV file (e.g., hads_id_mappings.csv) and import its contents into the station_mappings table. This ensures data persistence outside of the database itself.
+
+```typescript
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb, decimal, varchar, uniqueIndex } from "drizzle-orm/pg-core";
+
+// Stations Metadata
+export const stations = pgTable("stations", {
+    id: serial("id").primaryKey(),
+    stationNumber: varchar("station_number", { length: 50 }).notNull().unique(),
+    name: text("name").notNull(),
+    agency: varchar("agency", { length: 50 }).notNull(), // 'USGS', 'EC'
+    latitude: decimal("latitude", { precision: 10, scale: 8 }),
+    longitude: decimal("longitude", { precision: 11, scale: 8 }),
+    timezone: varchar("timezone", { length: 50 }).default('UTC'),
+    
+    // Hydrological Attributes
+    hucCode: varchar("huc_code", { length: 20 }),
+    basin: varchar("basin", { length: 100 }),
+    state: varchar("state", { length: 50 }),
+    catchmentArea: decimal("catchment_area"), // sq km
+    
+    // Record Statistics
+    yearsOfRecord: decimal("years_of_record"),
+    recordStartDate: timestamp("record_start_date"),
+    recordEndDate: timestamp("record_end_date"),
+    
+    // [Other flood stages/volume cache fields omitted for brevity]
+    isActive: boolean("is_active").default(true),
+    lastUpdated: timestamp("last_updated").defaultNow(),
+});
+
+// Time Series Data
+export const dischargeObservations = pgTable("discharge_observations", {
+    id: serial("id").primaryKey(),
+    stationId: integer("station_id").references(() => stations.id),
+    observedAt: timestamp("observed_at").notNull(),
+    discharge: decimal("discharge").notNull(), // value in native unit
+    unit: varchar("unit", { length: 10 }).notNull(), // 'cfs', 'cms'
+    type: varchar("type", { length: 20 }).notNull(), // 'realtime_15min', 'daily_mean'
+    qualityCode: varchar("quality_code", { length: 10 }), // 'P' (Provisional), 'A' (Approved)
+}, (table) => {
+    return {
+        uniqueObservation: uniqueIndex("unique_observation_idx").on(table.stationId, table.observedAt, table.type),
+    };
+});
+
+// Forecasts
+export const forecastRuns = pgTable("forecast_runs", {
+    id: serial("id").primaryKey(),
+    stationId: integer("station_id").references(() => stations.id),
+    source: varchar("source", { length: 50 }).notNull(), // 'NOAA_RFC'
+    runDate: timestamp("run_date").notNull(),
+    data: jsonb("data").notNull(), // Array of { date: string, value: number }
+    rmse: decimal("rmse"), // Accuracy metric
+});
+
+// Data Pull Logs
+export const dataPullLogs = pgTable("data_pull_logs", {
+    id: serial("id").primaryKey(),
+    configId: integer("config_id").references(() => pullConfigurations.id).notNull(), // Link to configuration
+    status: varchar("status", { length: 20 }).notNull(), // 'success', 'failed', 'running'
+    recordsProcessed: integer("records_processed"),
+    startTime: timestamp("start_time").notNull(),
+    endTime: timestamp("end_time"),
+    errorMessage: text("error_message"),
+});
+
+// Pull Configurations - stores data pull job configurations
+export const pullConfigurations = pgTable("pull_configurations", {
+    id: serial("id").primaryKey(),
+    name: varchar("name", { length: 100 }).notNull(),
+    description: text("description"),
+    dataType: varchar("data_type", { length: 20 }).notNull(), // 'realtime_15min', 'daily_mean'
+    dataStrategy: varchar("data_strategy", { length: 20 }).notNull(), // 'append', 'overwrite'
+    pullStartDate: timestamp("pull_start_date").notNull(), // User-specified start date (e.g., 1900-01-01)
+    isEnabled: boolean("is_enabled").default(true),
+    
+    // Schedule (cron-like)
+    scheduleType: varchar("schedule_type", { length: 20 }).notNull(),
+    scheduleValue: varchar("schedule_value", { length: 50 }),
+    
+    lastRunAt: timestamp("last_run_at"),
+    nextRunAt: timestamp("next_run_at"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Junction table linking configurations to stations
+export const pullConfigurationStations = pgTable("pull_configuration_stations", {
+    id: serial("id").primaryKey(),
+    configId: integer("config_id").references(() => pullConfigurations.id).notNull(),
+    stationNumber: varchar("station_number", { length: 50 }).notNull(),
+    stationName: text("station_name"),
+    hucCode: varchar("huc_code", { length: 20 }),
+    state: varchar("state", { length: 50 }),
+    // [Other station metadata fields omitted for brevity]
+});
+
+// Master station list (from CSV import)
+export const masterStations = pgTable("master_stations", {
+    id: serial("id").primaryKey(),
+    stationNumber: varchar("station_number", { length: 50 }).notNull().unique(),
+    stationName: text("station_name").notNull(),
+    latitude: decimal("latitude", { precision: 10, scale: 8 }),
+    longitude: decimal("longitude", { precision: 11, scale: 8 }),
+    stateCode: varchar("state_code", { length: 10 }),
+    hucCode: varchar("huc_code", { length: 20 }),
+    altitudeFt: decimal("altitude_ft"),
+    drainageAreaSqmi: decimal("drainage_area_sqmi"),
+    agency: varchar("agency", { length: 20 }).default('USGS'),
+});
+
+// Tracks the progress of each station within a configuration (Smart Append Logic)
+export const pullStationProgress = pgTable("pull_station_progress", {
+    id: serial("id").primaryKey(),
+    configId: integer("config_id").references(() => pullConfigurations.id).notNull(),
+    stationNumber: varchar("station_number", { length: 50 }).notNull(), // Station key
+    
+    // THE CRUCIAL FIELD FOR SMART LOGIC
+    lastSuccessfulPullDate: timestamp("last_successful_pull_date"), 
+    
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => {
+    return {
+        uniqueProgress: uniqueIndex("unique_progress_idx").on(table.configId, table.stationNumber),
+    };
+});
+
+// NEW TABLE: Stores mappings between different network IDs
+export const stationMappings = pgTable("station_mappings", {
+    id: serial("id").primaryKey(),
+    sourceAgency: varchar("source_agency", { length: 50 }).notNull(), // e.g., 'USGS'
+    sourceId: varchar("source_id", { length: 50 }).notNull(),
+    targetAgency: varchar("target_agency", { length: 50 }).notNull(), // e.g., 'NOAA-HADS'
+    targetId: varchar("target_id", { length: 50 }).notNull(),
+}, (table) => {
+    return {
+        uniqueMapping: uniqueIndex("unique_mapping_idx").on(table.sourceAgency, table.sourceId, table.targetAgency),
+    };
+});
+
+---------------------------
+
+
+2. ⚙️ Component: Data Acquisition and Preparation Services
+Objective: Create a set of Python functions and classes for reliable, scheduled data ingestion (the Celery worker tasks).
+
+### A. Observed Streamflow Data Web Services
++-------------------+-----------------------------+-----------------------------+------------------------------------------------------------------------------------------------------------------+
+| Source            | Library/Method              | Data Types                  | Data Strategy Notes                                                                                              |
++===================+=============================+=============================+==================================================================================================================+
+| USGS (US)         | Python `dataRetrieval`      | Daily Mean and Instantaneous| The Celery task must dynamically pass the `start_date` based on the **Smart Append Logic** using the             |
+|                   | library                     | (Real-Time)                 | `pullStationProgress` table.                                                                                     |
++-------------------+-----------------------------+-----------------------------+------------------------------------------------------------------------------------------------------------------+
+| Env. Canada (EC - | Direct **HTTP GET** | Daily Mean and Real-Time    | Handle CSV parsing and time zone conversion from LST to **UTC** before storing data in `dischargeObservations`.    |
+| CAN)              | requests                    | (Instantaneous)             | Split large requests by time period if necessary, as noted in the EC documentation.                                |
++-------------------+-----------------------------+-----------------------------+------------------------------------------------------------------------------------------------------------------+
+
+B. Forecasted Streamflow Data Web Services
+Source: NOAA National Water Model (NWM) via api.water.noaa.gov.
+
+Focus: Forecasted data for US and British Columbia stations.
+
+Data Strategy: Use the stationMappings table to translate the station ID from the ID used in the configuration (e.g., a USGS/EC ID) to the ID required by the NOAA API (e.g., the HADS ID). Store the results in the forecastRuns table.
+
+C. Station ID Mapping Utility
+Implementation: Create a reusable data access layer (e.g., a SQLAlchemy repository or class method) that handles querying the stationMappings table.
+
+Usage: The Celery worker task must query this utility to translate station IDs required by specific APIs (e.g., getting the NOAA ID for a USGS station) before executing a web request.
+
+---------------------------
+
+## 3. 🖥️ Component: Data Pull Scheduling and Configuration Interface
+
+**Technical Stack:**
+- Web Framework: **Django** (Preferred) for the full-stack interface.
+- Job Scheduler/Task Queue: **Celery** with **Celery Beat** (using a broker like Redis or RabbitMQ).
+
+### A. Station Configuration Flow (Django Interface)
+
+- Station Selection: The UI queries the **masterStations** table.
+- Filtering/Search: Implement filters for **State** (stateCode) and **2-digit HUC** (hucCode), and a search box for **Station Name** or **Station ID**.
+
+### B. Celery Integration and Smart Append Logic
+
+- Job Creation: When a new pullConfiguration is saved, the Django backend must dynamically create or update a corresponding periodic task in Celery Beat.
+- Smart Append Logic Implementation: The Celery worker task (Component 2) must strictly adhere to the logic of using the **pullStationProgress** table to dynamically calculate the start_date for each station's data pull request, ensuring the goal of "initial full download, then continuous append" is met automatically. 
+
+---------------------------
+
+## 4. 🌐 Component: Future Database Web Service API
+
+**Objective:** Keep this component in mind during design, as it represents the future read-access layer for the system.
+
+- Plan Consideration: Use **Flask** or **FastAPI** for a lightweight REST API wrapper around the SQLAlchemy models.
+- Purpose: To serve time series data (dischargeObservations) and forecast data (forecastRuns) to external applications.
