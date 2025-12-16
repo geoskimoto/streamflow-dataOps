@@ -36,7 +36,7 @@ def test_task(self):
     return "Test task completed"
 
 
-@app.task(base=DatabaseTask, bind=True, max_retries=3)
+@shared_task(bind=True, max_retries=3)
 def execute_pull_configuration(self, config_id: int):
     """
     Execute a data pull for a specific configuration.
@@ -53,17 +53,17 @@ def execute_pull_configuration(self, config_id: int):
     Args:
         config_id: Pull configuration ID
     """
-    db = SessionLocal()
     try:
         logger.info(f"=" * 60)
         logger.info(f"Starting pull for configuration {config_id}")
         logger.info(f"=" * 60)
 
         # Get configuration
-        config_repo = PullConfigurationRepository(db)
-        config = config_repo.get_by_id(config_id)
-
-        if not config:
+        try:
+            config = PullConfiguration.objects.prefetch_related(
+                'configuration_stations'
+            ).get(id=config_id)
+        except PullConfiguration.DoesNotExist:
             logger.error(f"Configuration {config_id} not found")
             return {"status": "error", "message": "Configuration not found"}
 
@@ -72,8 +72,11 @@ def execute_pull_configuration(self, config_id: int):
             return {"status": "skipped", "message": "Configuration disabled"}
 
         # Create log entry
-        log_repo = DataPullLogRepository(db)
-        log = log_repo.create_log(config_id, "running")
+        log = DataPullLog.objects.create(
+            configuration=config,
+            status="running",
+            start_time=datetime.now(timezone.utc)
+        )
 
         # Initialize components
         total_records = 0
@@ -81,11 +84,11 @@ def execute_pull_configuration(self, config_id: int):
         failed_stations = 0
         errors = []
 
-        smart_append = SmartAppendLogic(db)
-        processor = DataProcessor(db)
+        smart_append = SmartAppendLogic()
+        processor = DataProcessor()
 
         # Get stations in configuration
-        config_stations = config_repo.get_stations(config_id)
+        config_stations = config.configuration_stations.all()
         logger.info(f"Processing {len(config_stations)} stations")
 
         for config_station in config_stations:
@@ -181,11 +184,8 @@ def execute_pull_configuration(self, config_id: int):
                 continue
 
         # Update log entry
-        log_status = (
-            "success"
-            if failed_stations == 0
-            else "failed"
-        )
+        log_status = "success" if failed_stations == 0 else "failed"
+        
         log.status = log_status
         log.records_processed = total_records
         log.end_time = datetime.now(timezone.utc)
@@ -214,13 +214,11 @@ def execute_pull_configuration(self, config_id: int):
 
     except Exception as e:
         logger.error(f"Critical error in pull configuration {config_id}: {e}")
-        try:
+        if 'log' in locals():
             log.status = "failed"
             log.end_time = datetime.now(timezone.utc)
             log.error_message = str(e)
             log.save()
-        except:
-            pass
         raise
 
 
