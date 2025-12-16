@@ -1,4 +1,5 @@
 """Database connection and session management."""
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from src.config.settings import DATABASE_URL
@@ -9,7 +10,7 @@ engine = create_engine(
     echo=True,  # Set to False in production
     pool_pre_ping=True,  # Verify connections before using
     pool_size=10,  # Adjust based on load
-    max_overflow=20
+    max_overflow=20,
 )
 
 # Create session factory

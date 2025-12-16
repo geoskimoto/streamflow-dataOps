@@ -1,9 +1,16 @@
 """Database initialization script."""
+
 from src.database.connection import engine, Base
 from src.database.models import (
-    Station, DischargeObservation, ForecastRun,
-    PullConfiguration, PullConfigurationStation, DataPullLog,
-    PullStationProgress, MasterStation, StationMapping
+    Station,
+    DischargeObservation,
+    ForecastRun,
+    PullConfiguration,
+    PullConfigurationStation,
+    DataPullLog,
+    PullStationProgress,
+    MasterStation,
+    StationMapping,
 )
 
 
@@ -23,7 +30,7 @@ def drop_db():
 
 if __name__ == "__main__":
     import sys
-    
+
     if len(sys.argv) > 1 and sys.argv[1] == "--drop":
         response = input("Are you sure you want to drop all tables? (yes/no): ")
         if response.lower() == "yes":
