@@ -65,10 +65,14 @@ class Command(BaseCommand):
                 kwargs['huc'] = options['huc']
                 self.stdout.write(f"Querying for HUC: {options['huc']}")
             
-            # Fetch site info
-            sites_df = nwis.get_info(**kwargs)
+            # Fetch site info - get_info returns a tuple (dataframe, metadata)
+            result = nwis.get_info(**kwargs)
+            if isinstance(result, tuple):
+                sites_df, metadata = result
+            else:
+                sites_df = result
             
-            if sites_df.empty:
+            if sites_df is None or sites_df.empty:
                 self.stdout.write(self.style.WARNING('No stations found'))
                 return
             
@@ -80,14 +84,22 @@ class Command(BaseCommand):
             
             for site_no, row in sites_df.iterrows():
                 try:
+                    import math
+                    
+                    # Helper function to handle NaN values
+                    def clean_decimal(value):
+                        if value is None or (isinstance(value, float) and math.isnan(value)):
+                            return None
+                        return value
+                    
                     station_data = {
                         'station_name': row.get('station_nm', ''),
-                        'latitude': row.get('dec_lat_va'),
-                        'longitude': row.get('dec_long_va'),
+                        'latitude': clean_decimal(row.get('dec_lat_va')),
+                        'longitude': clean_decimal(row.get('dec_long_va')),
                         'state_code': row.get('state_cd', ''),
                         'huc_code': row.get('huc_cd', ''),
-                        'altitude_ft': row.get('alt_va'),
-                        'drainage_area_sqmi': row.get('drain_area_va'),
+                        'altitude_ft': clean_decimal(row.get('alt_va')),
+                        'drainage_area_sqmi': clean_decimal(row.get('drain_area_va')),
                         'agency': 'USGS',
                     }
                     
