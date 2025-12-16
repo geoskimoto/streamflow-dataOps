@@ -1,10 +1,18 @@
 """Smart Append Logic implementation for incremental data pulls."""
 
+import os
+import sys
+import django
+
+# Setup Django
+if 'DJANGO_SETTINGS_MODULE' not in os.environ:
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+    django.setup()
+
 from datetime import datetime
 from typing import Optional
-from sqlalchemy.orm import Session
-from src.database.repositories import PullStationProgressRepository
 import logging
+from apps.streamflow.models import PullStationProgress
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +32,7 @@ class SmartAppendLogic:
     - Enables resumption after failures
     """
 
-    def __init__(self, db: Session):
-        self.db = db
-        self.progress_repo = PullStationProgressRepository(db)
+    def __init__(self):
         self.logger = logging.getLogger(__name__)
 
     def get_pull_start_date(
@@ -44,23 +50,33 @@ class SmartAppendLogic:
             Start date to use for data pull request
         """
         # Check if we have previous progress for this station
-        progress = self.progress_repo.get_progress(config_id, station_number)
-
-        if progress is None or progress.last_successful_pull_date is None:
+        try:
+            progress = PullStationProgress.objects.get(
+                configuration_id=config_id,
+                station_number=station_number
+            )
+            if progress.last_successful_pull_date is None:
+                # First pull - use configuration start date
+                self.logger.info(
+                    f"First pull for station {station_number} in config {config_id} "
+                    f"- using config start date: {config_start_date}"
+                )
+                return config_start_date
+            else:
+                # Subsequent pull - use last successful pull date
+                last_date = progress.last_successful_pull_date
+                self.logger.info(
+                    f"Subsequent pull for station {station_number} in config {config_id} "
+                    f"- using last pull date: {last_date}"
+                )
+                return last_date
+        except PullStationProgress.DoesNotExist:
             # First pull - use configuration start date
             self.logger.info(
                 f"First pull for station {station_number} in config {config_id} "
                 f"- using config start date: {config_start_date}"
             )
             return config_start_date
-        else:
-            # Subsequent pull - use last successful pull date
-            last_date = progress.last_successful_pull_date
-            self.logger.info(
-                f"Subsequent pull for station {station_number} in config {config_id} "
-                f"- using last pull date: {last_date}"
-            )
-            return last_date
 
     def update_pull_progress(
         self, config_id: int, station_number: str, successful_pull_date: datetime
@@ -73,10 +89,10 @@ class SmartAppendLogic:
             station_number: Station identifier
             successful_pull_date: The latest date successfully pulled
         """
-        self.progress_repo.update_progress(
-            config_id=config_id,
+        progress, created = PullStationProgress.objects.update_or_create(
+            configuration_id=config_id,
             station_number=station_number,
-            last_pull_date=successful_pull_date,
+            defaults={'last_successful_pull_date': successful_pull_date}
         )
         self.logger.info(
             f"Updated progress for station {station_number} in config {config_id} "
@@ -93,7 +109,7 @@ class SmartAppendLogic:
         Returns:
             List of progress records
         """
-        return self.progress_repo.get_all_for_config(config_id)
+        return list(PullStationProgress.objects.filter(configuration_id=config_id))
 
     def reset_station_progress(self, config_id: int, station_number: str) -> None:
         """
@@ -103,12 +119,18 @@ class SmartAppendLogic:
             config_id: Pull configuration ID
             station_number: Station identifier
         """
-        progress = self.progress_repo.get_progress(config_id, station_number)
-        if progress:
-            # Update to None to force full re-pull
-            self.progress_repo.update_progress(
-                config_id=config_id, station_number=station_number, last_pull_date=None
+        try:
+            progress = PullStationProgress.objects.get(
+                configuration_id=config_id,
+                station_number=station_number
             )
+            # Update to None to force full re-pull
+            progress.last_successful_pull_date = None
+            progress.save()
             self.logger.info(
                 f"Reset progress for station {station_number} in config {config_id}"
+            )
+        except PullStationProgress.DoesNotExist:
+            self.logger.warning(
+                f"No progress found for station {station_number} in config {config_id}"
             )

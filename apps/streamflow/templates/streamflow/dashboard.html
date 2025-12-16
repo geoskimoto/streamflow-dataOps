@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard | Streamflow DataOps{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">
+            <i class="bi bi-speedometer2"></i> Dashboard
+        </h1>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-gear-fill"></i> Configurations</h5>
+                <h2>{{ total_configs }}</h2>
+                <p class="mb-0">{{ enabled_configs }} enabled</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-check-circle-fill"></i> Successful (24h)</h5>
+                <h2>{{ recent_success }}</h2>
+                <p class="mb-0">Recent pulls</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-danger text-white">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-x-circle-fill"></i> Failed (24h)</h5>
+                <h2>{{ recent_failed }}</h2>
+                <p class="mb-0">Needs attention</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-info text-white">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-hourglass-split"></i> Running</h5>
+                <h2>{{ recent_running }}</h2>
+                <p class="mb-0">In progress</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Recent Logs -->
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="bi bi-journal-text"></i> Recent Execution Logs</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Configuration</th>
+                                <th>Status</th>
+                                <th>Records</th>
+                                <th>Start Time</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for log in recent_logs %}
+                            <tr>
+                                <td>
+                                    <a href="{% url 'streamflow:configuration_detail' log.configuration.id %}">
+                                        {{ log.configuration.name }}
+                                    </a>
+                                </td>
+                                <td>
+                                    {% if log.status == 'success' %}
+                                        <span class="badge bg-success">{{ log.get_status_display }}</span>
+                                    {% elif log.status == 'failed' %}
+                                        <span class="badge bg-danger">{{ log.get_status_display }}</span>
+                                    {% else %}
+                                        <span class="badge bg-info">{{ log.get_status_display }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ log.records_processed|default:"-" }}</td>
+                                <td>{{ log.start_time|date:"M d, Y H:i" }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="text-center text-muted">No recent logs</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <a href="{% url 'streamflow:log_list' %}" class="btn btn-sm btn-outline-primary">View All Logs</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Latest Observations -->
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="bi bi-droplet"></i> Latest Observations</h5>
+            </div>
+            <div class="card-body">
+                <ul class="list-group list-group-flush">
+                    {% for obs in latest_observations %}
+                    <li class="list-group-item">
+                        <strong>{{ obs.station.station_number }}</strong><br>
+                        <small class="text-muted">{{ obs.station.name|truncatewords:5 }}</small><br>
+                        {{ obs.discharge }} {{ obs.unit }}<br>
+                        <small class="text-muted">{{ obs.observed_at|date:"M d, H:i" }}</small>
+                    </li>
+                    {% empty %}
+                    <li class="list-group-item text-center text-muted">No observations yet</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+
+        <!-- Failed Configurations -->
+        {% if failed_configs %}
+        <div class="card mt-3">
+            <div class="card-header bg-warning">
+                <h5 class="mb-0"><i class="bi bi-exclamation-triangle-fill"></i> Needs Attention</h5>
+            </div>
+            <div class="card-body">
+                <ul class="list-group list-group-flush">
+                    {% for config in failed_configs %}
+                    <li class="list-group-item">
+                        <a href="{% url 'streamflow:configuration_detail' config.id %}">
+                            {{ config.name }}
+                        </a>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

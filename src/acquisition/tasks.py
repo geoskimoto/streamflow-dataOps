@@ -1,14 +1,24 @@
 """Celery tasks for data acquisition."""
 
-from celery import Task
+import os
+import sys
+import django
+
+# Setup Django
+if 'DJANGO_SETTINGS_MODULE' not in os.environ:
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+    django.setup()
+
+from celery import Task, shared_task
 from datetime import datetime, timezone
 import logging
-from src.celery_app.celery import app
-from src.database.connection import SessionLocal
-from src.database.repositories import (
-    PullConfigurationRepository,
-    StationMappingRepository,
-    DataPullLogRepository,
+from config.celery import app
+from django.db import transaction
+from apps.streamflow.models import (
+    PullConfiguration,
+    PullConfigurationStation,
+    StationMapping,
+    DataPullLog,
 )
 from src.acquisition.usgs_client import USGSClient
 from src.acquisition.canada_client import CanadaClient
@@ -17,24 +27,6 @@ from src.acquisition.smart_append import SmartAppendLogic
 from src.acquisition.data_processor import DataProcessor
 
 logger = logging.getLogger(__name__)
-
-
-class DatabaseTask(Task):
-    """Base task class with database session management."""
-
-    _db = None
-
-    @property
-    def db(self):
-        if self._db is None:
-            self._db = SessionLocal()
-        return self._db
-
-    def after_return(self, *args, **kwargs):
-        """Close database session after task completes."""
-        if self._db is not None:
-            self._db.close()
-            self._db = None
 
 
 @app.task(bind=True)
@@ -192,20 +184,17 @@ def execute_pull_configuration(self, config_id: int):
         log_status = (
             "success"
             if failed_stations == 0
-            else "partial_success" if successful_stations > 0 else "failed"
+            else "failed"
         )
-        log_repo.update_log(
-            log.id,
-            {
-                "status": log_status,
-                "records_processed": total_records,
-                "end_time": datetime.now(timezone.utc),
-                "error_message": "\n".join(errors) if errors else None,
-            },
-        )
+        log.status = log_status
+        log.records_processed = total_records
+        log.end_time = datetime.now(timezone.utc)
+        log.error_message = "\n".join(errors) if errors else ""
+        log.save()
 
         # Update configuration last_run_at
-        config_repo.update(config_id, {"last_run_at": datetime.now(timezone.utc)})
+        config.last_run_at = datetime.now(timezone.utc)
+        config.save()
 
         logger.info(f"\n" + "=" * 60)
         logger.info(f"Pull configuration {config_id} completed:")
@@ -226,60 +215,58 @@ def execute_pull_configuration(self, config_id: int):
     except Exception as e:
         logger.error(f"Critical error in pull configuration {config_id}: {e}")
         try:
-            log_repo.update_log(
-                log.id,
-                {
-                    "status": "failed",
-                    "end_time": datetime.now(timezone.utc),
-                    "error_message": str(e),
-                },
-            )
+            log.status = "failed"
+            log.end_time = datetime.now(timezone.utc)
+            log.error_message = str(e)
+            log.save()
         except:
             pass
         raise
-    finally:
-        db.close()
 
 
-@app.task(base=DatabaseTask, bind=True)
-def execute_forecast_pull(self, config_id: int):
+@shared_task
+def execute_forecast_pull(config_id: int):
     """
     Execute a forecast data pull for a specific configuration.
 
     Args:
         config_id: Pull configuration ID
     """
-    db = SessionLocal()
     try:
         logger.info(f"Starting forecast pull for configuration {config_id}")
 
         # Get configuration
-        config_repo = PullConfigurationRepository(db)
-        config = config_repo.get_by_id(config_id)
-
-        if not config or not config.is_enabled:
+        try:
+            config = PullConfiguration.objects.prefetch_related(
+                'configuration_stations'
+            ).get(id=config_id, is_enabled=True)
+        except PullConfiguration.DoesNotExist:
             logger.warning(f"Configuration {config_id} not found or disabled")
             return
 
         # Initialize components
         noaa_client = NOAAClient()
-        processor = DataProcessor(db)
-        mapping_repo = StationMappingRepository(db)
+        processor = DataProcessor()
 
         successful_count = 0
         failed_count = 0
 
         # Get stations in configuration
-        config_stations = config_repo.get_stations(config_id)
+        config_stations = config.configuration_stations.all()
 
         for config_station in config_stations:
             station_number = config_station.station_number
 
             try:
                 # Translate USGS ID to NOAA HADS ID
-                hads_id = mapping_repo.get_mapping("USGS", station_number, "NOAA-HADS")
-
-                if not hads_id:
+                try:
+                    mapping = StationMapping.objects.get(
+                        source_agency="USGS",
+                        source_id=station_number,
+                        target_agency="NOAA-HADS"
+                    )
+                    hads_id = mapping.target_id
+                except StationMapping.DoesNotExist:
                     logger.warning(
                         f"No HADS mapping found for station {station_number}"
                     )
@@ -316,12 +303,10 @@ def execute_forecast_pull(self, config_id: int):
     except Exception as e:
         logger.error(f"Critical error in forecast pull {config_id}: {e}")
         raise
-    finally:
-        db.close()
 
 
-@app.task(bind=True)
-def cleanup_old_logs(self, days_to_keep: int = 30):
+@shared_task
+def cleanup_old_logs(days_to_keep: int = 30):
     """
     Clean up old data pull logs.
 
@@ -330,17 +315,17 @@ def cleanup_old_logs(self, days_to_keep: int = 30):
     """
     from datetime import timedelta
 
-    db = SessionLocal()
     try:
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_to_keep)
 
-        log_repo = DataPullLogRepository(db)
-        # Implementation would delete logs older than cutoff_date
+        # Delete logs older than cutoff_date
+        deleted_count = DataPullLog.objects.filter(
+            start_time__lt=cutoff_date
+        ).delete()[0]
 
-        logger.info(f"Cleaned up logs older than {cutoff_date}")
+        logger.info(f"Cleaned up {deleted_count} logs older than {cutoff_date}")
+        return {"deleted": deleted_count}
 
     except Exception as e:
         logger.error(f"Error cleaning up logs: {e}")
         raise
-    finally:
-        db.close()

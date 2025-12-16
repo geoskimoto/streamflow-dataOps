@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+
+{% block title %}{{ configuration.name }} | Streamflow DataOps{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1>
+                <i class="bi bi-gear-fill"></i> {{ configuration.name }}
+                {% if configuration.is_enabled %}
+                    <span class="badge bg-success">Enabled</span>
+                {% else %}
+                    <span class="badge bg-secondary">Disabled</span>
+                {% endif %}
+            </h1>
+            <div>
+                <a href="{% url 'streamflow:configuration_update' configuration.id %}" class="btn btn-secondary">
+                    <i class="bi bi-pencil"></i> Edit
+                </a>
+                <a href="{% url 'streamflow:toggle_configuration' configuration.id %}" class="btn btn-warning">
+                    <i class="bi bi-power"></i> {% if configuration.is_enabled %}Disable{% else %}Enable{% endif %}
+                </a>
+                <a href="{% url 'streamflow:trigger_pull' configuration.id %}" class="btn btn-success">
+                    <i class="bi bi-play-fill"></i> Trigger Pull
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Configuration Details -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> Configuration Details</h5>
+            </div>
+            <div class="card-body">
+                <dl class="row">
+                    <dt class="col-sm-4">Data Type:</dt>
+                    <dd class="col-sm-8">{{ configuration.get_data_type_display }}</dd>
+                    
+                    <dt class="col-sm-4">Strategy:</dt>
+                    <dd class="col-sm-8">{{ configuration.get_data_strategy_display }}</dd>
+                    
+                    <dt class="col-sm-4">Start Date:</dt>
+                    <dd class="col-sm-8">{{ configuration.pull_start_date|date:"M d, Y H:i" }}</dd>
+                    
+                    <dt class="col-sm-4">Schedule:</dt>
+                    <dd class="col-sm-8">
+                        {{ configuration.get_schedule_type_display }}
+                        {% if configuration.schedule_value %}
+                            <br><code>{{ configuration.schedule_value }}</code>
+                        {% endif %}
+                    </dd>
+                    
+                    <dt class="col-sm-4">Last Run:</dt>
+                    <dd class="col-sm-8">
+                        {% if configuration.last_run_at %}
+                            {{ configuration.last_run_at|date:"M d, Y H:i" }}
+                        {% else %}
+                            <span class="text-muted">Never</span>
+                        {% endif %}
+                    </dd>
+                    
+                    <dt class="col-sm-4">Created:</dt>
+                    <dd class="col-sm-8">{{ configuration.created_at|date:"M d, Y" }}</dd>
+                </dl>
+                
+                {% if configuration.description %}
+                <hr>
+                <p class="mb-0"><strong>Description:</strong><br>{{ configuration.description }}</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="bi bi-graph-up"></i> Statistics</h5>
+            </div>
+            <div class="card-body">
+                <dl class="row">
+                    <dt class="col-sm-6">Total Runs:</dt>
+                    <dd class="col-sm-6">{{ stats.total_runs }}</dd>
+                    
+                    <dt class="col-sm-6">Success Rate:</dt>
+                    <dd class="col-sm-6">{{ stats.success_rate|floatformat:1 }}%</dd>
+                    
+                    <dt class="col-sm-6">Total Records:</dt>
+                    <dd class="col-sm-6">{{ stats.total_records|default:0 }}</dd>
+                    
+                    <dt class="col-sm-6">Stations:</dt>
+                    <dd class="col-sm-6">{{ stations|length }}</dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Stations -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-geo-alt-fill"></i> Stations ({{ stations|length }})</h5>
+                <button type="button" class="btn btn-sm btn-light" data-bs-toggle="modal" data-bs-target="#addStationModal">
+                    <i class="bi bi-plus-circle"></i> Add Station
+                </button>
+            </div>
+            <div class="card-body">
+                {% if stations %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Station Number</th>
+                                <th>Name</th>
+                                <th>State</th>
+                                <th>HUC</th>
+                                <th>Last Pull</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for station in stations %}
+                            <tr>
+                                <td><strong>{{ station.station_number }}</strong></td>
+                                <td>{{ station.station_name|truncatewords:8 }}</td>
+                                <td>{{ station.state|default:"-" }}</td>
+                                <td>{{ station.huc_code|default:"-" }}</td>
+                                <td>
+                                    {% with progress|dictsort:"station_number" as sorted_progress %}
+                                        {% for prog in sorted_progress %}
+                                            {% if prog.station_number == station.station_number %}
+                                                {% if prog.last_successful_pull_date %}
+                                                    {{ prog.last_successful_pull_date|date:"M d, H:i" }}
+                                                {% else %}
+                                                    <span class="text-muted">Not yet</span>
+                                                {% endif %}
+                                            {% endif %}
+                                        {% endfor %}
+                                    {% endwith %}
+                                </td>
+                                <td>
+                                    <a href="{% url 'streamflow:remove_station' configuration.id station.id %}" 
+                                       class="btn btn-sm btn-outline-danger"
+                                       onclick="return confirm('Remove this station?')">
+                                        <i class="bi bi-trash"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-center text-muted">No stations added yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Logs -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="bi bi-journal-text"></i> Recent Execution Logs</h5>
+            </div>
+            <div class="card-body">
+                {% if recent_logs %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Status</th>
+                                <th>Records</th>
+                                <th>Start Time</th>
+                                <th>End Time</th>
+                                <th>Duration</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for log in recent_logs %}
+                            <tr>
+                                <td>
+                                    {% if log.status == 'success' %}
+                                        <span class="badge bg-success">Success</span>
+                                    {% elif log.status == 'failed' %}
+                                        <span class="badge bg-danger">Failed</span>
+                                    {% else %}
+                                        <span class="badge bg-info">Running</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ log.records_processed|default:"-" }}</td>
+                                <td>{{ log.start_time|date:"M d, Y H:i:s" }}</td>
+                                <td>
+                                    {% if log.end_time %}
+                                        {{ log.end_time|date:"H:i:s" }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if log.end_time %}
+                                        {{ log.end_time|timeuntil:log.start_time }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% if log.error_message %}
+                            <tr>
+                                <td colspan="5">
+                                    <div class="alert alert-danger mb-0">
+                                        <small><strong>Error:</strong> {{ log.error_message }}</small>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endif %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-center text-muted">No execution logs yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Station Modal -->
+<div class="modal fade" id="addStationModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Station to Configuration</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'streamflow:add_station' configuration.id %}">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="station_number" class="form-label">Station Number *</label>
+                        <input type="text" class="form-control" id="station_number" name="station_number" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="station_name" class="form-label">Station Name</label>
+                        <input type="text" class="form-control" id="station_name" name="station_name">
+                    </div>
+                    <div class="mb-3">
+                        <label for="state" class="form-label">State</label>
+                        <input type="text" class="form-control" id="state" name="state" maxlength="50">
+                    </div>
+                    <div class="mb-3">
+                        <label for="huc_code" class="form-label">HUC Code</label>
+                        <input type="text" class="form-control" id="huc_code" name="huc_code" maxlength="20">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Station</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

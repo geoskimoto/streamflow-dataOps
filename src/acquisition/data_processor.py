@@ -1,11 +1,19 @@
 """Data processor for validation and storage of acquired data."""
 
+import os
+import sys
+import django
+
+# Setup Django
+if 'DJANGO_SETTINGS_MODULE' not in os.environ:
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+    django.setup()
+
 from typing import List, Dict
 from datetime import datetime
 import logging
-from sqlalchemy.orm import Session
-from src.database.repositories import StationRepository, DischargeObservationRepository
-from src.database.models import ForecastRun
+from django.db import transaction
+from apps.streamflow.models import Station, DischargeObservation, ForecastRun
 
 logger = logging.getLogger(__name__)
 
@@ -13,10 +21,7 @@ logger = logging.getLogger(__name__)
 class DataProcessor:
     """Process, validate, and store raw data before database insertion."""
 
-    def __init__(self, db: Session):
-        self.db = db
-        self.station_repo = StationRepository(db)
-        self.obs_repo = DischargeObservationRepository(db)
+    def __init__(self):
         self.logger = logging.getLogger(__name__)
 
     def process_observations(
@@ -38,8 +43,9 @@ class DataProcessor:
             return 0
 
         # Get station from database
-        station = self.station_repo.get_by_station_number(station_number)
-        if not station:
+        try:
+            station = Station.objects.get(station_number=station_number)
+        except Station.DoesNotExist:
             self.logger.error(f"Station {station_number} not found in database")
             return 0
 
@@ -47,9 +53,9 @@ class DataProcessor:
         if validate:
             observations = self.validate_observations(observations)
 
-        # Add station_id to each observation
+        # Add station to each observation
         for obs in observations:
-            obs["station_id"] = station.id
+            obs["station"] = station
 
             # Ensure observed_at is datetime
             if not isinstance(obs["observed_at"], datetime):
@@ -61,8 +67,27 @@ class DataProcessor:
                     )
                     obs["observed_at"] = datetime.utcnow()
 
-        # Bulk insert with duplicate handling
-        inserted_count = self.obs_repo.bulk_create(observations)
+        # Bulk insert with duplicate handling using Django
+        observation_objects = []
+        for obs in observations:
+            observation_objects.append(
+                DischargeObservation(
+                    station=obs["station"],
+                    observed_at=obs["observed_at"],
+                    discharge=obs["discharge"],
+                    unit=obs["unit"],
+                    type=obs["type"],
+                    quality_code=obs.get("quality_code", "")
+                )
+            )
+        
+        # Use bulk_create with ignore_conflicts to handle duplicates
+        with transaction.atomic():
+            created = DischargeObservation.objects.bulk_create(
+                observation_objects,
+                ignore_conflicts=True
+            )
+            inserted_count = len(created)
 
         self.logger.info(
             f"Inserted {inserted_count} of {len(observations)} observations "
