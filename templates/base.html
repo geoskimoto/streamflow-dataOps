@@ -11,6 +11,41 @@
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
+    <style>
+        .navbar-nav .nav-link.active {
+            background-color: rgba(255, 255, 255, 0.2);
+            border-radius: 0.25rem;
+        }
+        .toast-container {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            z-index: 9999;
+        }
+        .breadcrumb {
+            background-color: #f8f9fa;
+            padding: 0.75rem 1rem;
+            border-radius: 0.25rem;
+        }
+        .help-icon {
+            cursor: help;
+            color: #0d6efd;
+        }
+        footer {
+            margin-top: auto;
+        }
+        html, body {
+            height: 100%;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+        }
+        main {
+            flex: 1 0 auto;
+        }
+    </style>
+    
     {% block extra_css %}{% endblock %}
 </head>
 <body>
@@ -18,7 +53,7 @@
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
         <div class="container-fluid">
             <a class="navbar-brand" href="{% url 'streamflow:dashboard' %}">
-                <i class="bi bi-droplet-fill"></i> Streamflow DataOps
+                <i class="fas fa-water"></i> Streamflow DataOps
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
@@ -26,28 +61,68 @@
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'streamflow:dashboard' %}">
-                            <i class="bi bi-speedometer2"></i> Dashboard
+                        <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" 
+                           href="{% url 'streamflow:dashboard' %}">
+                            <i class="fas fa-tachometer-alt"></i> Dashboard
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'streamflow:station_list' %}">
-                            <i class="bi bi-geo-alt-fill"></i> Stations
+                        <a class="nav-link {% if 'station' in request.resolver_match.url_name %}active{% endif %}" 
+                           href="{% url 'streamflow:station_list' %}">
+                            <i class="fas fa-map-marker-alt"></i> Stations
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'streamflow:configuration_list' %}">
-                            <i class="bi bi-gear-fill"></i> Configurations
+                        <a class="nav-link {% if 'configuration' in request.resolver_match.url_name %}active{% endif %}" 
+                           href="{% url 'streamflow:configuration_list' %}">
+                            <i class="fas fa-cog"></i> Configurations
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'streamflow:log_list' %}">
-                            <i class="bi bi-journal-text"></i> Logs
+                        <a class="nav-link {% if 'log' in request.resolver_match.url_name %}active{% endif %}" 
+                           href="{% url 'streamflow:log_list' %}">
+                            <i class="fas fa-list"></i> Logs
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="quickActions" role="button" 
+                           data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="fas fa-bolt"></i> Quick Actions
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="quickActions">
+                            <li>
+                                <a class="dropdown-item" href="{% url 'streamflow:configuration_create' %}">
+                                    <i class="fas fa-plus"></i> New Configuration
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item" href="{% url 'streamflow:station_create' %}">
+                                    <i class="fas fa-map-marker-alt"></i> Add Station
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item" href="{% url 'streamflow:station_import' %}">
+                                    <i class="fas fa-file-upload"></i> Import Stations
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <a class="dropdown-item" href="{% url 'streamflow:station_sync' %}">
+                                    <i class="fas fa-sync"></i> Sync Master Stations
+                                </a>
+                            </li>
+                        </ul>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" data-bs-toggle="modal" data-bs-target="#helpModal">
+                            <i class="fas fa-question-circle"></i> Help
                         </a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'admin:index' %}">
-                            <i class="bi bi-shield-lock-fill"></i> Admin
+                            <i class="fas fa-user-shield"></i> Admin
                         </a>
                     </li>
                 </ul>
@@ -55,32 +130,177 @@
         </div>
     </nav>
 
-    <!-- Messages -->
+    <!-- Toast Container for notifications -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Messages (Django messages framework) -->
     {% if messages %}
-        <div class="container mt-3">
+        <div class="container-fluid mt-3">
             {% for message in messages %}
-                <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show" role="alert">
+                    {% if message.tags == 'success' %}
+                        <i class="fas fa-check-circle me-2"></i>
+                    {% elif message.tags == 'error' or message.tags == 'danger' %}
+                        <i class="fas fa-exclamation-circle me-2"></i>
+                    {% elif message.tags == 'warning' %}
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                    {% else %}
+                        <i class="fas fa-info-circle me-2"></i>
+                    {% endif %}
                     {{ message }}
-                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                 </div>
             {% endfor %}
         </div>
     {% endif %}
 
     <!-- Content -->
-    <main class="container-fluid py-4">
+    <main>
         {% block content %}{% endblock %}
     </main>
 
     <!-- Footer -->
     <footer class="bg-light text-center text-muted py-3 mt-5">
         <div class="container">
-            <small>Streamflow Data Operations System | Django {{ DJANGO_VERSION }}</small>
+            <div class="row">
+                <div class="col-md-12">
+                    <small>
+                        <i class="fas fa-water"></i> Streamflow Data Operations System | 
+                        Built with Django | 
+                        <a href="#" data-bs-toggle="modal" data-bs-target="#helpModal" class="text-decoration-none">
+                            <i class="fas fa-question-circle"></i> Help
+                        </a>
+                    </small>
+                </div>
+            </div>
         </div>
     </footer>
 
+    <!-- Help Modal -->
+    <div class="modal fade" id="helpModal" tabindex="-1" aria-labelledby="helpModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="helpModalLabel">
+                        <i class="fas fa-question-circle"></i> Streamflow DataOps Help
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <h6 class="text-primary"><i class="fas fa-tachometer-alt"></i> Dashboard</h6>
+                    <p>View system overview, active configurations, recent logs, and system health metrics. Auto-refreshes every 60 seconds.</p>
+                    
+                    <hr>
+                    
+                    <h6 class="text-primary"><i class="fas fa-map-marker-alt"></i> Stations</h6>
+                    <p>Manage streamflow monitoring stations. You can:</p>
+                    <ul>
+                        <li>Add individual stations manually</li>
+                        <li>Import multiple stations via CSV</li>
+                        <li>Sync from master station database</li>
+                        <li>Export stations to CSV</li>
+                        <li>Toggle station active status</li>
+                    </ul>
+                    
+                    <hr>
+                    
+                    <h6 class="text-primary"><i class="fas fa-cog"></i> Configurations</h6>
+                    <p>Create and manage data pull configurations. Each configuration defines:</p>
+                    <ul>
+                        <li><strong>Data Type:</strong> Discharge, stage, or both</li>
+                        <li><strong>Strategy:</strong> Full historical or latest only</li>
+                        <li><strong>Schedule:</strong> Hourly, daily, weekly, or custom cron</li>
+                        <li><strong>Stations:</strong> Which stations to pull data from</li>
+                    </ul>
+                    
+                    <hr>
+                    
+                    <h6 class="text-primary"><i class="fas fa-list"></i> Execution Logs</h6>
+                    <p>View detailed execution history with filters by status, configuration, and date range. Click on any log to see full error details and related runs.</p>
+                    
+                    <hr>
+                    
+                    <h6 class="text-primary"><i class="fas fa-bolt"></i> Quick Actions</h6>
+                    <p>Access common tasks quickly from the dropdown menu in the navigation bar.</p>
+                    
+                    <hr>
+                    
+                    <h6 class="text-primary"><i class="fas fa-question-circle"></i> Need More Help?</h6>
+                    <p>Check the contextual help on each page or contact your system administrator.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Bootstrap 5 JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        // Auto-dismiss alerts after 5 seconds
+        document.addEventListener('DOMContentLoaded', function() {
+            const alerts = document.querySelectorAll('.alert:not(.alert-dismissible)');
+            alerts.forEach(function(alert) {
+                setTimeout(function() {
+                    const bsAlert = new bootstrap.Alert(alert);
+                    bsAlert.close();
+                }, 5000);
+            });
+        });
+        
+        // Tooltip initialization for help icons
+        document.addEventListener('DOMContentLoaded', function() {
+            const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            tooltipTriggerList.map(function (tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl);
+            });
+        });
+        
+        // Function to show toast notification
+        function showToast(message, type = 'info') {
+            const toastContainer = document.getElementById('toastContainer');
+            const toastId = 'toast-' + Date.now();
+            
+            const iconMap = {
+                'success': 'fa-check-circle',
+                'error': 'fa-exclamation-circle',
+                'warning': 'fa-exclamation-triangle',
+                'info': 'fa-info-circle'
+            };
+            
+            const bgMap = {
+                'success': 'bg-success',
+                'error': 'bg-danger',
+                'warning': 'bg-warning',
+                'info': 'bg-info'
+            };
+            
+            const toastHTML = `
+                <div id="${toastId}" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+                    <div class="toast-header ${bgMap[type]} text-white">
+                        <i class="fas ${iconMap[type]} me-2"></i>
+                        <strong class="me-auto">Notification</strong>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+                    </div>
+                    <div class="toast-body">
+                        ${message}
+                    </div>
+                </div>
+            `;
+            
+            toastContainer.insertAdjacentHTML('beforeend', toastHTML);
+            const toastElement = document.getElementById(toastId);
+            const toast = new bootstrap.Toast(toastElement);
+            toast.show();
+            
+            // Remove toast element after it's hidden
+            toastElement.addEventListener('hidden.bs.toast', function() {
+                toastElement.remove();
+            });
+        }
+    </script>
     
     {% block extra_js %}{% endblock %}
 </body>
