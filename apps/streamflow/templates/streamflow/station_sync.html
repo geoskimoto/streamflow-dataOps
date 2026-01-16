@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Sync Master Stations{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <!-- Header -->
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{% url 'streamflow:station_list' %}">Stations</a></li>
+                    <li class="breadcrumb-item active">Sync from Master List</li>
+                </ol>
+            </nav>
+
+            <h2><i class="fas fa-sync"></i> Sync Stations from Master List</h2>
+            <p class="text-muted">Import stations from the MasterStation reference table.</p>
+
+            <!-- Current Status -->
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h3 class="text-primary">{{ master_count }}</h3>
+                            <p class="mb-0 text-muted">Master Stations Available</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h3 class="text-success">{{ station_count }}</h3>
+                            <p class="mb-0 text-muted">Active Stations</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sync Form -->
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0"><i class="fas fa-filter"></i> Sync Options</h5>
+                </div>
+                <div class="card-body">
+                    <form method="post">
+                        {% csrf_token %}
+                        
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle"></i>
+                            This will create new Station records from the MasterStation table and update missing metadata for existing stations.
+                        </div>
+                        
+                        <h6>Filter Master Stations (Optional)</h6>
+                        <p class="text-muted">Leave filters blank to sync all master stations.</p>
+                        
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label for="agency" class="form-label">Agency</label>
+                                <select class="form-select" id="agency" name="agency">
+                                    <option value="">All Agencies</option>
+                                    <option value="USGS">USGS</option>
+                                    <option value="EC">Environment Canada</option>
+                                </select>
+                            </div>
+                            
+                            <div class="col-md-4">
+                                <label for="state" class="form-label">State</label>
+                                <select class="form-select" id="state" name="state">
+                                    <option value="">All States</option>
+                                    {% for state in states %}
+                                    <option value="{{ state }}">{{ state }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            
+                            <div class="col-md-4">
+                                <label for="huc" class="form-label">HUC Code (starts with)</label>
+                                <input type="text" class="form-control" id="huc" name="huc" 
+                                       placeholder="e.g., 01" maxlength="8">
+                            </div>
+                        </div>
+                        
+                        <div class="d-flex justify-content-between mt-4 pt-3 border-top">
+                            <a href="{% url 'streamflow:station_list' %}" class="btn btn-outline-secondary">
+                                <i class="fas fa-times"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary" onclick="return confirm('This will sync stations from the master list. Continue?');">
+                                <i class="fas fa-sync"></i> Start Sync
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- How It Works -->
+            <div class="card">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0"><i class="fas fa-question-circle"></i> How It Works</h5>
+                </div>
+                <div class="card-body">
+                    <ol>
+                        <li><strong>Create New Stations:</strong> For each MasterStation not in the Station table, a new Station record is created.</li>
+                        <li><strong>Update Existing:</strong> For existing stations, missing metadata (coordinates, catchment area) is filled in from the master record.</li>
+                        <li><strong>No Overwrites:</strong> Existing station metadata is preserved; only blank fields are populated.</li>
+                        <li><strong>Agency Detection:</strong> Agency is determined from station number pattern (numeric = USGS, alphanumeric = EC).</li>
+                    </ol>
+                    
+                    <div class="alert alert-warning mt-3 mb-0">
+                        <strong><i class="fas fa-exclamation-triangle"></i> Note:</strong>
+                        Large syncs (1000+ stations) may take several minutes. The page will redirect when complete.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

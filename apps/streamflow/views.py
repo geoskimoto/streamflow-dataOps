@@ -20,9 +20,12 @@ from .models import (
     Station,
     MasterStation,
     DischargeObservation,
+    StationMapping,
 )
 from .forms import StationForm
+from .import_forms import StationImportForm
 from src.acquisition.tasks import execute_pull_configuration
+from decimal import Decimal, InvalidOperation
 
 
 class PullConfigurationListView(ListView):
@@ -682,3 +685,226 @@ def station_export_csv(request):
         ])
     
     return response
+
+
+def station_import(request):
+    """Import stations from CSV file."""
+    
+    if request.method == 'POST':
+        form = StationImportForm(request.POST, request.FILES)
+        
+        if form.is_valid():
+            csv_file = request.FILES['csv_file']
+            skip_duplicates = form.cleaned_data['skip_duplicates']
+            update_existing = form.cleaned_data['update_existing']
+            
+            # Parse CSV
+            parsed_rows = form.parsed_rows
+            
+            # Process stations
+            created_count = 0
+            updated_count = 0
+            skipped_count = 0
+            errors = []
+            
+            for idx, row in enumerate(parsed_rows, start=2):  # Start at 2 (header is row 1)
+                try:
+                    station_number = row.get('station_number', '').strip()
+                    if not station_number:
+                        errors.append(f'Row {idx}: Missing station_number')
+                        continue
+                    
+                    # Check if station exists
+                    exists = Station.objects.filter(station_number=station_number).exists()
+                    
+                    if exists and skip_duplicates and not update_existing:
+                        skipped_count += 1
+                        continue
+                    
+                    # Prepare station data
+                    station_data = {
+                        'station_number': station_number,
+                        'name': row.get('name', '').strip(),
+                        'agency': row.get('agency', '').strip().upper(),
+                    }
+                    
+                    # Optional fields
+                    if row.get('latitude'):
+                        try:
+                            station_data['latitude'] = Decimal(row['latitude'])
+                        except (InvalidOperation, ValueError):
+                            errors.append(f'Row {idx}: Invalid latitude value')
+                            continue
+                    
+                    if row.get('longitude'):
+                        try:
+                            station_data['longitude'] = Decimal(row['longitude'])
+                        except (InvalidOperation, ValueError):
+                            errors.append(f'Row {idx}: Invalid longitude value')
+                            continue
+                    
+                    if row.get('state'):
+                        station_data['state'] = row['state'].strip()
+                    
+                    if row.get('huc_code'):
+                        station_data['huc_code'] = row['huc_code'].strip()
+                    
+                    if row.get('basin'):
+                        station_data['basin'] = row['basin'].strip()
+                    
+                    if row.get('catchment_area'):
+                        try:
+                            station_data['catchment_area'] = Decimal(row['catchment_area'])
+                        except (InvalidOperation, ValueError):
+                            pass  # Optional field, skip on error
+                    
+                    if row.get('timezone'):
+                        station_data['timezone'] = row['timezone'].strip()
+                    
+                    # Create or update station
+                    if exists and update_existing:
+                        Station.objects.filter(station_number=station_number).update(**station_data)
+                        updated_count += 1
+                    elif not exists:
+                        Station.objects.create(**station_data)
+                        created_count += 1
+                    
+                except Exception as e:
+                    errors.append(f'Row {idx}: {str(e)}')
+            
+            # Show results
+            if created_count > 0:
+                messages.success(request, f'Successfully created {created_count} station(s).')
+            if updated_count > 0:
+                messages.success(request, f'Successfully updated {updated_count} station(s).')
+            if skipped_count > 0:
+                messages.info(request, f'Skipped {skipped_count} duplicate station(s).')
+            if errors:
+                for error in errors[:10]:  # Show first 10 errors
+                    messages.error(request, error)
+                if len(errors) > 10:
+                    messages.error(request, f'...and {len(errors) - 10} more errors.')
+            
+            if created_count > 0 or updated_count > 0:
+                return redirect('streamflow:station_list')
+    
+    else:
+        form = StationImportForm()
+    
+    context = {
+        'form': form,
+        'sample_csv': '''station_number,name,agency,latitude,longitude,state,huc_code,basin,catchment_area,timezone
+01013500,Fish River near Fort Kent ME,USGS,47.2476898,-68.5850645,ME,01010001,St. John,873.45,America/New_York
+01018035,East Branch St. Croix River at Kellyland ME,USGS,45.58451,-67.76979,ME,01010005,St. Croix,45.67,America/New_York'''
+    }
+    
+    return render(request, 'streamflow/station_import.html', context)
+
+
+def sync_master_stations(request):
+    """Sync stations from MasterStation table."""
+    
+    if request.method == 'POST':
+        agency_filter = request.POST.get('agency', '')
+        state_filter = request.POST.get('state', '')
+        huc_filter = request.POST.get('huc', '')
+        
+        # Get master stations
+        master_stations = MasterStation.objects.all()
+        
+        if agency_filter:
+            # Map agency to master station field
+            master_stations = master_stations.filter(
+                Q(station_number__startswith='0') if agency_filter == 'USGS' else Q()
+            )
+        
+        if state_filter:
+            master_stations = master_stations.filter(state_code=state_filter)
+        
+        if huc_filter:
+            master_stations = master_stations.filter(huc_code__startswith=huc_filter)
+        
+        created_count = 0
+        updated_count = 0
+        skipped_count = 0
+        errors = []
+        
+        for master in master_stations:
+            try:
+                # Determine agency from station number pattern
+                if master.station_number and master.station_number.isdigit():
+                    agency = 'USGS'
+                else:
+                    agency = 'EC'  # Assume Environment Canada for non-numeric
+                
+                # Check if station already exists
+                station, created = Station.objects.get_or_create(
+                    station_number=master.station_number,
+                    defaults={
+                        'name': master.name or master.station_name or 'Unknown',
+                        'agency': agency,
+                        'latitude': master.latitude,
+                        'longitude': master.longitude,
+                        'state': master.state_code or '',
+                        'huc_code': master.huc_code or '',
+                        'basin': master.river_basin or '',
+                        'catchment_area': master.drainage_area_sqkm,
+                        'is_active': True,
+                    }
+                )
+                
+                if created:
+                    created_count += 1
+                else:
+                    # Update existing station
+                    updated = False
+                    if master.latitude and not station.latitude:
+                        station.latitude = master.latitude
+                        updated = True
+                    if master.longitude and not station.longitude:
+                        station.longitude = master.longitude
+                        updated = True
+                    if master.drainage_area_sqkm and not station.catchment_area:
+                        station.catchment_area = master.drainage_area_sqkm
+                        updated = True
+                    
+                    if updated:
+                        station.save()
+                        updated_count += 1
+                    else:
+                        skipped_count += 1
+                
+            except Exception as e:
+                errors.append(f'Station {master.station_number}: {str(e)}')
+        
+        # Show results
+        if created_count > 0:
+            messages.success(request, f'Successfully created {created_count} station(s) from master list.')
+        if updated_count > 0:
+            messages.success(request, f'Successfully updated {updated_count} station(s).')
+        if skipped_count > 0:
+            messages.info(request, f'Skipped {skipped_count} station(s) (already up to date).')
+        if errors:
+            for error in errors[:10]:
+                messages.error(request, error)
+            if len(errors) > 10:
+                messages.error(request, f'...and {len(errors) - 10} more errors.')
+        
+        return redirect('streamflow:station_list')
+    
+    # GET request - show sync form
+    master_count = MasterStation.objects.count()
+    station_count = Station.objects.count()
+    
+    # Get available filters
+    states = MasterStation.objects.values_list('state_code', flat=True).distinct().order_by('state_code')
+    hucs = MasterStation.objects.values_list('huc_code', flat=True).distinct().order_by('huc_code')
+    
+    context = {
+        'master_count': master_count,
+        'station_count': station_count,
+        'states': [s for s in states if s],
+        'hucs': [h for h in hucs if h][:20],  # Limit to first 20 HUCs
+    }
+    
+    return render(request, 'streamflow/station_sync.html', context)

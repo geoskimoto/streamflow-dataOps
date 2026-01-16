@@ -21,6 +21,8 @@ urlpatterns = [
     # Stations
     path('stations/', views.StationListView.as_view(), name='station_list'),
     path('stations/new/', views.StationCreateView.as_view(), name='station_create'),
+    path('stations/import/', views.station_import, name='station_import'),
+    path('stations/sync/', views.sync_master_stations, name='station_sync'),
     path('stations/export/', views.station_export_csv, name='station_export_csv'),
     path('stations/<str:station_number>/', views.StationDetailView.as_view(), name='station_detail'),
     path('stations/<str:station_number>/edit/', views.StationUpdateView.as_view(), name='station_update'),

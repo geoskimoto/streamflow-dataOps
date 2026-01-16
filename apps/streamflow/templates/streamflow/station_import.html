@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% load static %}
+{% load crispy_forms_tags %}
+
+{% block title %}Import Stations{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <!-- Header -->
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{% url 'streamflow:station_list' %}">Stations</a></li>
+                    <li class="breadcrumb-item active">Import from CSV</li>
+                </ol>
+            </nav>
+
+            <h2><i class="fas fa-file-upload"></i> Import Stations from CSV</h2>
+            <p class="text-muted">Upload a CSV file to bulk import station metadata.</p>
+
+            <!-- Import Form -->
+            <div class="card shadow-sm mb-4">
+                <div class="card-body">
+                    <form method="post" enctype="multipart/form-data">
+                        {% csrf_token %}
+                        
+                        {% if form.non_field_errors %}
+                        <div class="alert alert-danger">
+                            {{ form.non_field_errors }}
+                        </div>
+                        {% endif %}
+                        
+                        {{ form.csv_file|as_crispy_field }}
+                        
+                        <div class="row mt-3">
+                            <div class="col-md-6">
+                                <div class="form-check">
+                                    {{ form.skip_duplicates }}
+                                    <label class="form-check-label" for="{{ form.skip_duplicates.id_for_label }}">
+                                        {{ form.skip_duplicates.label }}
+                                    </label>
+                                    <div class="form-text">{{ form.skip_duplicates.help_text }}</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check">
+                                    {{ form.update_existing }}
+                                    <label class="form-check-label" for="{{ form.update_existing.id_for_label }}">
+                                        {{ form.update_existing.label }}
+                                    </label>
+                                    <div class="form-text">{{ form.update_existing.help_text }}</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="d-flex justify-content-between mt-4 pt-3 border-top">
+                            <a href="{% url 'streamflow:station_list' %}" class="btn btn-outline-secondary">
+                                <i class="fas fa-times"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-upload"></i> Import Stations
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- CSV Format Guide -->
+            <div class="card mb-4">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0"><i class="fas fa-info-circle"></i> CSV Format Requirements</h5>
+                </div>
+                <div class="card-body">
+                    <h6>Required Columns:</h6>
+                    <ul>
+                        <li><code>station_number</code> - Unique station identifier</li>
+                        <li><code>name</code> - Station name</li>
+                        <li><code>agency</code> - USGS or EC</li>
+                        <li><code>latitude</code> - Decimal degrees (-90 to 90)</li>
+                        <li><code>longitude</code> - Decimal degrees (-180 to 180)</li>
+                    </ul>
+                    
+                    <h6>Optional Columns:</h6>
+                    <ul>
+                        <li><code>state</code> - State code (e.g., ME, VT)</li>
+                        <li><code>huc_code</code> - Hydrologic Unit Code</li>
+                        <li><code>basin</code> - River basin name</li>
+                        <li><code>catchment_area</code> - Drainage area in sq km</li>
+                        <li><code>timezone</code> - Timezone (e.g., America/New_York)</li>
+                    </ul>
+                    
+                    <h6 class="mt-3">Sample CSV:</h6>
+                    <pre class="bg-light p-3 rounded"><code>{{ sample_csv }}</code></pre>
+                    
+                    <div class="alert alert-warning mt-3">
+                        <strong><i class="fas fa-exclamation-triangle"></i> Important:</strong>
+                        <ul class="mb-0">
+                            <li>File must be UTF-8 encoded</li>
+                            <li>Maximum file size: 10 MB</li>
+                            <li>Station numbers must be unique</li>
+                            <li>Coordinates must be in decimal degrees</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Download Template -->
+            <div class="card">
+                <div class="card-body">
+                    <h6><i class="fas fa-download"></i> Download CSV Template</h6>
+                    <p class="text-muted">Use this template to prepare your station data.</p>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="downloadTemplate()">
+                        <i class="fas fa-download"></i> Download Template
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function downloadTemplate() {
+    const csvContent = {{ sample_csv|safe }};
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'station_import_template.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+</script>
+{% endblock %}
