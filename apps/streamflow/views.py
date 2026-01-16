@@ -39,7 +39,9 @@ class PullConfigurationListView(ListView):
     def get_queryset(self):
         queryset = PullConfiguration.objects.annotate(
             station_count=Count('configuration_stations'),
-            latest_log=Max('logs__start_time')
+            latest_log=Max('logs__start_time'),
+            total_runs=Count('logs'),
+            successful_runs=Count('logs', filter=Q(logs__status='success'))
         )
         
         # Search functionality
@@ -56,7 +58,33 @@ class PullConfigurationListView(ListView):
         elif status == 'disabled':
             queryset = queryset.filter(is_enabled=False)
         
+        # Filter by data type
+        data_type = self.request.GET.get('data_type')
+        if data_type:
+            queryset = queryset.filter(data_type=data_type)
+        
+        # Calculate success rate
+        for config in queryset:
+            if config.total_runs > 0:
+                config.success_rate = (config.successful_runs / config.total_runs) * 100
+            else:
+                config.success_rate = 0
+        
         return queryset.order_by('-created_at')
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        
+        # Add summary stats
+        all_configs = PullConfiguration.objects.all()
+        context['enabled_count'] = all_configs.filter(is_enabled=True).count()
+        context['total_stations'] = PullConfigurationStation.objects.values('station_number').distinct().count()
+        
+        # Recent runs (last 24 hours)
+        from_time = timezone.now() - timedelta(days=1)
+        context['recent_runs'] = DataPullLog.objects.filter(start_time__gte=from_time).count()
+        
+        return context
 
 
 class PullConfigurationDetailView(DetailView):

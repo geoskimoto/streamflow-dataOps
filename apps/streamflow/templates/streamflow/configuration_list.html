@@ -1,135 +1,229 @@
 {% extends "base.html" %}
+{% load static %}
 
-{% block title %}Pull Configurations | Streamflow DataOps{% endblock %}
+{% block title %}Pull Configurations{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-12">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h1><i class="bi bi-gear-fill"></i> Pull Configurations</h1>
-            <a href="{% url 'streamflow:configuration_create' %}" class="btn btn-primary">
-                <i class="bi bi-plus-circle"></i> New Configuration
-            </a>
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="fas fa-cog"></i> Pull Configurations</h2>
+        <a href="{% url 'streamflow:configuration_create' %}" class="btn btn-primary">
+            <i class="fas fa-plus-circle"></i> New Configuration
+        </a>
+    </div>
+
+    <!-- Search and Filter -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="fas fa-filter"></i> Search & Filter</h5>
+        </div>
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label for="search" class="form-label">Search</label>
+                    <input type="text" name="search" id="search" class="form-control" 
+                           placeholder="Search by name or description..." value="{{ request.GET.search }}">
+                </div>
+                <div class="col-md-3">
+                    <label for="status" class="form-label">Status</label>
+                    <select name="status" id="status" class="form-select">
+                        <option value="">All Configurations</option>
+                        <option value="enabled" {% if request.GET.status == 'enabled' %}selected{% endif %}>Enabled Only</option>
+                        <option value="disabled" {% if request.GET.status == 'disabled' %}selected{% endif %}>Disabled Only</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="data_type" class="form-label">Data Type</label>
+                    <select name="data_type" id="data_type" class="form-select">
+                        <option value="">All Types</option>
+                        <option value="realtime_15min" {% if request.GET.data_type == 'realtime_15min' %}selected{% endif %}>Real-time 15min</option>
+                        <option value="daily_mean" {% if request.GET.data_type == 'daily_mean' %}selected{% endif %}>Daily Mean</option>
+                    </select>
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-search"></i> Filter
+                    </button>
+                </div>
+            </form>
+            
+            {% if request.GET %}
+            <div class="mt-2">
+                <a href="{% url 'streamflow:configuration_list' %}" class="btn btn-sm btn-outline-secondary">
+                    <i class="fas fa-times"></i> Clear Filters
+                </a>
+            </div>
+            {% endif %}
         </div>
     </div>
-</div>
 
-<!-- Filters -->
-<div class="row mb-3">
-    <div class="col-md-6">
-        <form method="get" class="input-group">
-            <input type="text" name="search" class="form-control" placeholder="Search configurations..." value="{{ request.GET.search }}">
-            <button type="submit" class="btn btn-outline-primary">
-                <i class="bi bi-search"></i> Search
-            </button>
-        </form>
-    </div>
-    <div class="col-md-6 text-end">
-        <div class="btn-group" role="group">
-            <a href="?status=enabled" class="btn btn-outline-secondary">Enabled</a>
-            <a href="?status=disabled" class="btn btn-outline-secondary">Disabled</a>
-            <a href="?" class="btn btn-outline-secondary">All</a>
+    <!-- Summary Stats -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h3 class="text-primary">{{ page_obj.paginator.count }}</h3>
+                    <p class="mb-0 text-muted">Total Configurations</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h3 class="text-success">{{ enabled_count }}</h3>
+                    <p class="mb-0 text-muted">Enabled</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h3 class="text-info">{{ total_stations }}</h3>
+                    <p class="mb-0 text-muted">Total Stations</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h3 class="text-warning">{{ recent_runs }}</h3>
+                    <p class="mb-0 text-muted">Runs (24h)</p>
+                </div>
+            </div>
         </div>
     </div>
-</div>
-
-<!-- Configurations Table -->
-<div class="card">
-    <div class="card-body">
-        <div class="table-responsive">
-            <table class="table table-hover">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Data Type</th>
-                        <th>Stations</th>
-                        <th>Status</th>
-                        <th>Last Run</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for config in configurations %}
-                    <tr>
-                        <td>
-                            <a href="{% url 'streamflow:configuration_detail' config.id %}">
-                                <strong>{{ config.name }}</strong>
-                            </a>
-                            {% if config.description %}
-                            <br><small class="text-muted">{{ config.description|truncatewords:10 }}</small>
-                            {% endif %}
-                        </td>
-                        <td>{{ config.get_data_type_display }}</td>
-                        <td>
-                            <span class="badge bg-secondary">{{ config.station_count }} stations</span>
-                        </td>
-                        <td>
-                            {% if config.is_enabled %}
+    <!-- Configurations Table -->
+    <div class="card">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Name</th>
+                            <th>Data Type</th>
+                            <th>Strategy</th>
+                            <th>Stations</th>
+                            <th>Status</th>
+                            <th>Schedule</th>
+                            <th>Last Run</th>
+                            <th>Success Rate</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for config in page_obj %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'streamflow:configuration_detail' config.id %}" class="text-decoration-none">
+                                    <strong>{{ config.name }}</strong>
+                                </a>
+                                {% if config.description %}
+                                <br><small class="text-muted">{{ config.description|truncatewords:8 }}</small>
+                                {% endif %}
+                            </td>
+                            <td><span class="badge bg-info">{{ config.get_data_type_display }}</span></td>
+                            <td><span class="badge bg-secondary">{{ config.get_data_strategy_display }}</span></td>
+                            <td>
+                                <span class="badge bg-primary">{{ config.station_count }}</span>
+                            </td>
+                            <td>
+                                {% if config.is_enabled %}
                                 <span class="badge bg-success">Enabled</span>
-                            {% else %}
+                                {% else %}
                                 <span class="badge bg-secondary">Disabled</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            {% if config.last_run_at %}
-                                {{ config.last_run_at|date:"M d, Y H:i" }}
-                            {% else %}
+                                {% endif %}
+                            </td>
+                            <td>
+                                <small>{{ config.get_schedule_type_display }}</small>
+                            </td>
+                            <td>
+                                {% if config.latest_log %}
+                                <small>{{ config.latest_log|timesince }} ago</small>
+                                {% else %}
                                 <span class="text-muted">Never</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            <div class="btn-group btn-group-sm" role="group">
-                                <a href="{% url 'streamflow:configuration_detail' config.id %}" class="btn btn-outline-primary" title="View">
-                                    <i class="bi bi-eye"></i>
-                                </a>
-                                <a href="{% url 'streamflow:configuration_update' config.id %}" class="btn btn-outline-secondary" title="Edit">
-                                    <i class="bi bi-pencil"></i>
-                                </a>
-                                <a href="{% url 'streamflow:trigger_pull' config.id %}" class="btn btn-outline-success" title="Trigger">
-                                    <i class="bi bi-play-fill"></i>
-                                </a>
-                            </div>
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="6" class="text-center text-muted">
-                            No configurations found. <a href="{% url 'streamflow:configuration_create' %}">Create one</a>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if config.total_runs > 0 %}
+                                <div class="progress" style="height: 20px;">
+                                    <div class="progress-bar bg-success" role="progressbar" 
+                                         style="width: {{ config.success_rate }}%"
+                                         aria-valuenow="{{ config.success_rate }}" aria-valuemin="0" aria-valuemax="100">
+                                        {{ config.success_rate|floatformat:0 }}%
+                                    </div>
+                                </div>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <a href="{% url 'streamflow:configuration_detail' config.id %}" 
+                                       class="btn btn-outline-primary" title="View Details">
+                                        <i class="fas fa-eye"></i>
+                                    </a>
+                                    <a href="{% url 'streamflow:configuration_update' config.id %}" 
+                                       class="btn btn-outline-secondary" title="Edit">
+                                        <i class="fas fa-edit"></i>
+                                    </a>
+                                    <form method="post" action="{% url 'streamflow:trigger_pull' config.id %}" 
+                                          class="d-inline" onsubmit="return confirm('Trigger data pull for {{ config.name }}?');">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-outline-success" title="Trigger Pull"
+                                                {% if not config.is_enabled %}disabled{% endif %}>
+                                            <i class="fas fa-play"></i>
+                                        </button>
+                                    </form>
+                                    <form method="post" action="{% url 'streamflow:toggle_configuration' config.id %}" 
+                                          class="d-inline">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-outline-warning" 
+                                                title="{% if config.is_enabled %}Disable{% else %}Enable{% endif %}">
+                                            <i class="fas fa-power-off"></i>
+                                        </button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="9" class="text-center py-4 text-muted">
+                                <i class="fas fa-inbox fa-2x mb-2"></i>
+                                <p>No configurations found. <a href="{% url 'streamflow:configuration_create' %}">Create your first configuration</a>.</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
-
-        <!-- Pagination -->
-        {% if is_paginated %}
-        <nav>
-            <ul class="pagination justify-content-center">
-                {% if page_obj.has_previous %}
-                    <li class="page-item">
-                        <a class="page-link" href="?page=1">First</a>
-                    </li>
-                    <li class="page-item">
-                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}">Previous</a>
-                    </li>
-                {% endif %}
-
-                <li class="page-item active">
-                    <span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
-                </li>
-
-                {% if page_obj.has_next %}
-                    <li class="page-item">
-                        <a class="page-link" href="?page={{ page_obj.next_page_number }}">Next</a>
-                    </li>
-                    <li class="page-item">
-                        <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}">Last</a>
-                    </li>
-                {% endif %}
-            </ul>
-        </nav>
-        {% endif %}
     </div>
+
+    <!-- Pagination -->
+    {% if page_obj.has_other_pages %}
+    <nav aria-label="Configuration pagination" class="mt-4">
+        <ul class="pagination justify-content-center">
+            {% if page_obj.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
+                    <i class="fas fa-angle-left"></i> Previous
+                </a>
+            </li>
+            {% endif %}
+            
+            <li class="page-item active">
+                <span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+            </li>
+            
+            {% if page_obj.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.next_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
+                    Next <i class="fas fa-angle-right"></i>
+                </a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
 </div>
 {% endblock %}
