@@ -735,7 +735,7 @@ class StationDetailView(DetailView):
         # Recent pull progress
         context['recent_progress'] = PullStationProgress.objects.filter(
             station_number=station.station_number
-        ).select_related('configuration').order_by('-last_updated')[:10]
+        ).select_related('configuration').order_by('-updated_at')[:10]
         
         # Forecast runs
         context['recent_forecasts'] = station.forecast_runs.order_by(
