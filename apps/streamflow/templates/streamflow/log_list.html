@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block title %}Execution Logs | Streamflow DataOps{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4"><i class="bi bi-journal-text"></i> Execution Logs</h1>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="row mb-3">
+    <div class="col-md-4">
+        <form method="get">
+            <div class="input-group">
+                <select name="configuration" class="form-select">
+                    <option value="">All Configurations</option>
+                    {% for config in configurations %}
+                        <option value="{{ config.id }}" {% if request.GET.configuration == config.id|stringformat:"s" %}selected{% endif %}>
+                            {{ config.name }}
+                        </option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-primary">Filter</button>
+            </div>
+        </form>
+    </div>
+    <div class="col-md-4">
+        <form method="get">
+            <div class="input-group">
+                <select name="status" class="form-select">
+                    <option value="">All Statuses</option>
+                    <option value="success" {% if request.GET.status == "success" %}selected{% endif %}>Success</option>
+                    <option value="failed" {% if request.GET.status == "failed" %}selected{% endif %}>Failed</option>
+                    <option value="running" {% if request.GET.status == "running" %}selected{% endif %}>Running</option>
+                </select>
+                <button type="submit" class="btn btn-primary">Filter</button>
+            </div>
+        </form>
+    </div>
+    <div class="col-md-4">
+        <form method="get">
+            <div class="input-group">
+                <select name="days" class="form-select">
+                    <option value="1" {% if request.GET.days == "1" %}selected{% endif %}>Last 24 hours</option>
+                    <option value="7" {% if request.GET.days == "7" or not request.GET.days %}selected{% endif %}>Last 7 days</option>
+                    <option value="30" {% if request.GET.days == "30" %}selected{% endif %}>Last 30 days</option>
+                    <option value="90" {% if request.GET.days == "90" %}selected{% endif %}>Last 90 days</option>
+                </select>
+                <button type="submit" class="btn btn-primary">Filter</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Logs Table -->
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Configuration</th>
+                        <th>Status</th>
+                        <th>Records</th>
+                        <th>Start Time</th>
+                        <th>End Time</th>
+                        <th>Duration</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td>
+                            <a href="{% url 'streamflow:configuration_detail' log.configuration.id %}">
+                                {{ log.configuration.name }}
+                            </a>
+                        </td>
+                        <td>
+                            {% if log.status == 'success' %}
+                                <span class="badge bg-success"><i class="bi bi-check-circle"></i> Success</span>
+                            {% elif log.status == 'failed' %}
+                                <span class="badge bg-danger"><i class="bi bi-x-circle"></i> Failed</span>
+                            {% else %}
+                                <span class="badge bg-info"><i class="bi bi-hourglass-split"></i> Running</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ log.records_processed|default:"-" }}</td>
+                        <td>{{ log.start_time|date:"M d, Y H:i:s" }}</td>
+                        <td>
+                            {% if log.end_time %}
+                                {{ log.end_time|date:"M d, Y H:i:s" }}
+                            {% else %}
+                                <span class="text-muted">Still running...</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if log.end_time %}
+                                {% widthratio log.end_time|timesince:log.start_time 1 1 %}
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% if log.error_message %}
+                    <tr>
+                        <td colspan="6">
+                            <div class="alert alert-danger mb-0">
+                                <strong><i class="bi bi-exclamation-triangle"></i> Error Details:</strong>
+                                <pre class="mb-0 mt-2"><small>{{ log.error_message }}</small></pre>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center text-muted">No logs found for the selected filters.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {% if is_paginated %}
+        <nav>
+            <ul class="pagination justify-content-center">
+                {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page=1{% if request.GET.configuration %}&configuration={{ request.GET.configuration }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}{% if request.GET.days %}&days={{ request.GET.days }}{% endif %}">First</a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if request.GET.configuration %}&configuration={{ request.GET.configuration }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}{% if request.GET.days %}&days={{ request.GET.days }}{% endif %}">Previous</a>
+                    </li>
+                {% endif %}
+
+                <li class="page-item active">
+                    <span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+                </li>
+
+                {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if request.GET.configuration %}&configuration={{ request.GET.configuration }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}{% if request.GET.days %}&days={{ request.GET.days }}{% endif %}">Next</a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}{% if request.GET.configuration %}&configuration={{ request.GET.configuration }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}{% if request.GET.days %}&days={{ request.GET.days }}{% endif %}">Last</a>
+                    </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

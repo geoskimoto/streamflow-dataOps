@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Confirm Delete | Streamflow DataOps{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-6 offset-md-3">
+        <div class="card">
+            <div class="card-header bg-danger text-white">
+                <h4 class="mb-0"><i class="bi bi-exclamation-triangle-fill"></i> Confirm Delete</h4>
+            </div>
+            <div class="card-body">
+                <p>Are you sure you want to delete the configuration "<strong>{{ object.name }}</strong>"?</p>
+                
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>Warning:</strong> This will also delete:
+                    <ul class="mb-0">
+                        <li>All associated station links</li>
+                        <li>All execution logs</li>
+                        <li>All progress tracking data</li>
+                    </ul>
+                </div>
+                
+                <p class="text-muted">This action cannot be undone.</p>
+                
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'streamflow:configuration_detail' object.id %}" class="btn btn-secondary">
+                            <i class="bi bi-x-circle"></i> Cancel
+                        </a>
+                        <button type="submit" class="btn btn-danger">
+                            <i class="bi bi-trash"></i> Delete Configuration
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
