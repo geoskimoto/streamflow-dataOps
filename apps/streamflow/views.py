@@ -310,11 +310,16 @@ def remove_station_from_config(request, pk, station_id):
 
 
 def dashboard(request):
-    """Main dashboard view."""
+    """Main dashboard view with comprehensive monitoring."""
     
-    # Get recent statistics
+    # Configuration statistics
     total_configs = PullConfiguration.objects.count()
     enabled_configs = PullConfiguration.objects.filter(is_enabled=True).count()
+    disabled_configs = total_configs - enabled_configs
+    
+    # Station statistics
+    total_stations = Station.objects.count()
+    active_stations = Station.objects.filter(is_active=True).count()
     
     # Recent logs (last 24 hours)
     recent_cutoff = timezone.now() - timedelta(hours=24)
@@ -323,27 +328,74 @@ def dashboard(request):
     recent_success = recent_logs.filter(status='success').count()
     recent_failed = recent_logs.filter(status='failed').count()
     recent_running = recent_logs.filter(status='running').count()
+    total_recent = recent_logs.count()
     
-    # Latest observations
+    # Success rate
+    success_rate = (recent_success / total_recent * 100) if total_recent > 0 else 0
+    
+    # Data statistics
+    total_observations = DischargeObservation.objects.count()
+    observations_today = DischargeObservation.objects.filter(
+        observed_at__gte=timezone.now().replace(hour=0, minute=0, second=0)
+    ).count()
+    
+    # Latest observations with station info
     latest_observations = DischargeObservation.objects.select_related(
         'station'
-    ).order_by('-observed_at')[:10]
+    ).order_by('-observed_at')[:15]
     
     # Configurations needing attention (failed recently)
     failed_configs = PullConfiguration.objects.filter(
         logs__status='failed',
         logs__start_time__gte=recent_cutoff
-    ).distinct()
+    ).distinct().annotate(
+        fail_count=Count('logs', filter=Q(logs__status='failed', logs__start_time__gte=recent_cutoff))
+    ).order_by('-fail_count')[:5]
+    
+    # Active configurations (enabled with recent activity)
+    active_configs = PullConfiguration.objects.filter(
+        is_enabled=True
+    ).annotate(
+        last_run=Max('logs__start_time'),
+        recent_runs=Count('logs', filter=Q(logs__start_time__gte=recent_cutoff))
+    ).order_by('-last_run')[:5]
+    
+    # System health indicators
+    stale_data_threshold = timezone.now() - timedelta(days=7)
+    stale_stations = Station.objects.filter(
+        is_active=True,
+        discharge_observations__observed_at__lt=stale_data_threshold
+    ).distinct().count()
     
     context = {
+        # Configuration stats
         'total_configs': total_configs,
         'enabled_configs': enabled_configs,
+        'disabled_configs': disabled_configs,
+        
+        # Station stats
+        'total_stations': total_stations,
+        'active_stations': active_stations,
+        
+        # Recent activity
         'recent_success': recent_success,
         'recent_failed': recent_failed,
         'recent_running': recent_running,
+        'total_recent': total_recent,
+        'success_rate': success_rate,
+        
+        # Data stats
+        'total_observations': total_observations,
+        'observations_today': observations_today,
+        
+        # Recent data
         'latest_observations': latest_observations,
+        'recent_logs': DataPullLog.objects.select_related('configuration').order_by('-start_time')[:15],
+        
+        # Alerts
         'failed_configs': failed_configs,
-        'recent_logs': DataPullLog.objects.order_by('-start_time')[:10],
+        'active_configs': active_configs,
+        'stale_stations': stale_stations,
     }
     
     return render(request, 'streamflow/dashboard.html', context)
