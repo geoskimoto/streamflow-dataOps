@@ -3,12 +3,14 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.urls import reverse_lazy
-from django.db.models import Q, Count, Max
+from django.db.models import Q, Count, Max, Min, Avg
+from django.db import models
 from django.utils import timezone
 from datetime import timedelta
+import csv
 
 from .models import (
     PullConfiguration,
@@ -19,6 +21,7 @@ from .models import (
     MasterStation,
     DischargeObservation,
 )
+from .forms import StationForm
 from src.acquisition.tasks import execute_pull_configuration
 
 
@@ -241,7 +244,7 @@ def add_station_to_config(request, pk):
         config = get_object_or_404(PullConfiguration, pk=pk)
         
         station_number = request.POST.get('station_number')
-        station_name = request.POST.get('station_name', '')
+        name = request.POST.get('station_name', '')
         huc_code = request.POST.get('huc_code', '')
         state = request.POST.get('state', '')
         
@@ -252,7 +255,7 @@ def add_station_to_config(request, pk):
             PullConfigurationStation.objects.create(
                 configuration=config,
                 station_number=station_number,
-                station_name=station_name,
+                station_name=name,
                 huc_code=huc_code,
                 state=state
             )
@@ -392,7 +395,7 @@ def add_stations_to_config(request, pk):
                 PullConfigurationStation.objects.create(
                     configuration=config,
                     station_number=master_station.station_number,
-                    station_name=master_station.station_name,
+                    station_name=master_station.name,
                     huc_code=master_station.huc_code,
                     state=master_station.state_code,
                 )
@@ -440,3 +443,242 @@ def add_stations_to_config(request, pk):
     }
     
     return render(request, 'streamflow/add_stations.html', context)
+
+
+# ============================================================================
+# Station Management Views
+# ============================================================================
+
+class StationListView(ListView):
+    """List all stations with search and filtering."""
+    
+    model = Station
+    template_name = 'streamflow/station_list.html'
+    context_object_name = 'stations'
+    paginate_by = 50
+    
+    def get_queryset(self):
+        queryset = Station.objects.all()
+        
+        # Search functionality
+        search = self.request.GET.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(station_number__icontains=search) |
+                Q(name__icontains=search)
+            )
+        
+        # Filter by agency
+        agency = self.request.GET.get('agency')
+        if agency:
+            queryset = queryset.filter(agency=agency)
+        
+        # Filter by state
+        state = self.request.GET.get('state')
+        if state:
+            queryset = queryset.filter(state=state)
+        
+        # Filter by basin
+        basin = self.request.GET.get('basin')
+        if basin:
+            queryset = queryset.filter(basin__icontains=basin)
+        
+        # Filter by HUC code
+        huc = self.request.GET.get('huc')
+        if huc:
+            queryset = queryset.filter(huc_code__startswith=huc)
+        
+        # Filter by active status
+        is_active = self.request.GET.get('is_active')
+        if is_active == 'true':
+            queryset = queryset.filter(is_active=True)
+        elif is_active == 'false':
+            queryset = queryset.filter(is_active=False)
+        
+        # Annotate with observation count
+        queryset = queryset.annotate(
+            observation_count=Count('discharge_observations')
+        )
+        
+        # Sort
+        sort = self.request.GET.get('sort', 'station_number')
+        queryset = queryset.order_by(sort)
+        
+        return queryset
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        
+        # Get unique values for filters
+        context['agencies'] = Station.AGENCY_CHOICES
+        context['states'] = Station.objects.values_list(
+            'state', flat=True
+        ).distinct().order_by('state')
+        context['basins'] = Station.objects.filter(
+            basin__isnull=False
+        ).values_list('basin', flat=True).distinct().order_by('basin')[:50]
+        
+        # Pass filter values back to template
+        context['current_filters'] = {
+            'search': self.request.GET.get('search', ''),
+            'agency': self.request.GET.get('agency', ''),
+            'state': self.request.GET.get('state', ''),
+            'basin': self.request.GET.get('basin', ''),
+            'huc': self.request.GET.get('huc', ''),
+            'is_active': self.request.GET.get('is_active', ''),
+            'sort': self.request.GET.get('sort', 'station_number'),
+        }
+        
+        # Summary statistics
+        total_stations = Station.objects.count()
+        active_stations = Station.objects.filter(is_active=True).count()
+        context['stats'] = {
+            'total': total_stations,
+            'active': active_stations,
+            'inactive': total_stations - active_stations,
+        }
+        
+        return context
+
+
+class StationDetailView(DetailView):
+    """Display details of a specific station."""
+    
+    model = Station
+    template_name = 'streamflow/station_detail.html'
+    context_object_name = 'station'
+    slug_field = 'station_number'
+    slug_url_kwarg = 'station_number'
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        station = self.object
+        
+        # Recent observations (last 100)
+        context['recent_observations'] = station.discharge_observations.order_by(
+            '-observed_at'
+        )[:100]
+        
+        # Observation statistics
+        obs_stats = station.discharge_observations.aggregate(
+            total=Count('id'),
+            earliest=models.Min('observed_at'),
+            latest=models.Max('observed_at'),
+            avg_discharge=models.Avg('discharge'),
+            max_discharge=models.Max('discharge'),
+            min_discharge=models.Min('discharge'),
+        )
+        context['observation_stats'] = obs_stats
+        
+        # Configurations using this station
+        context['configurations'] = PullConfigurationStation.objects.filter(
+            station_number=station.station_number
+        ).select_related('configuration')
+        
+        # Recent pull progress
+        context['recent_progress'] = PullStationProgress.objects.filter(
+            station_number=station.station_number
+        ).select_related('configuration').order_by('-last_updated')[:10]
+        
+        # Forecast runs
+        context['recent_forecasts'] = station.forecast_runs.order_by(
+            '-run_date'
+        )[:10]
+        
+        return context
+
+
+class StationCreateView(CreateView):
+    """Create a new station."""
+    
+    model = Station
+    form_class = StationForm
+    template_name = 'streamflow/station_form.html'
+    success_url = reverse_lazy('streamflow:station_list')
+    
+    def form_valid(self, form):
+        messages.success(
+            self.request,
+            f'Station "{form.instance.station_number}" created successfully!'
+        )
+        return super().form_valid(form)
+
+
+class StationUpdateView(UpdateView):
+    """Update an existing station."""
+    
+    model = Station
+    form_class = StationForm
+    template_name = 'streamflow/station_form.html'
+    slug_field = 'station_number'
+    slug_url_kwarg = 'station_number'
+    
+    def get_success_url(self):
+        return reverse_lazy(
+            'streamflow:station_detail',
+            kwargs={'station_number': self.object.station_number}
+        )
+    
+    def form_valid(self, form):
+        messages.success(
+            self.request,
+            f'Station "{form.instance.station_number}" updated successfully!'
+        )
+        return super().form_valid(form)
+
+
+def toggle_station_status(request, station_number):
+    """Toggle a station's active status."""
+    
+    station = get_object_or_404(Station, station_number=station_number)
+    station.is_active = not station.is_active
+    station.save()
+    
+    status = 'activated' if station.is_active else 'deactivated'
+    messages.success(request, f'Station "{station.station_number}" {status}.')
+    
+    return redirect('streamflow:station_detail', station_number=station_number)
+
+
+def station_export_csv(request):
+    """Export filtered stations to CSV."""
+    
+    import csv
+    from django.http import HttpResponse
+    
+    # Get queryset using same filtering as list view
+    view = StationListView()
+    view.request = request
+    queryset = view.get_queryset()
+    
+    # Create CSV response
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = 'attachment; filename="stations_export.csv"'
+    
+    writer = csv.writer(response)
+    
+    # Write header
+    writer.writerow([
+        'Station Number', 'Name', 'Agency', 'State', 'Basin',
+        'HUC Code', 'Latitude', 'Longitude', 'Catchment Area (sq km)',
+        'Years of Record', 'Is Active', 'Last Updated'
+    ])
+    
+    # Write data
+    for station in queryset:
+        writer.writerow([
+            station.station_number,
+            station.name,
+            station.agency,
+            station.state,
+            station.basin,
+            station.huc_code,
+            station.latitude,
+            station.longitude,
+            station.catchment_area,
+            station.years_of_record,
+            'Yes' if station.is_active else 'No',
+            station.last_updated.strftime('%Y-%m-%d %H:%M:%S') if station.last_updated else '',
+        ])
+    
+    return response

@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ station.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Header with Actions -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{% url 'station_list' %}">Stations</a></li>
+                    <li class="breadcrumb-item active">{{ station.station_number }}</li>
+                </ol>
+            </nav>
+            <h2>
+                <i class="fas fa-map-marker-alt"></i> {{ station.name }}
+                {% if station.is_active %}
+                <span class="badge bg-success">Active</span>
+                {% else %}
+                <span class="badge bg-secondary">Inactive</span>
+                {% endif %}
+            </h2>
+        </div>
+        <div>
+            <a href="{% url 'station_update' station.station_number %}" class="btn btn-secondary">
+                <i class="fas fa-edit"></i> Edit
+            </a>
+            <form method="post" action="{% url 'toggle_station_status' station.station_number %}" 
+                  class="d-inline" onsubmit="return confirm('Toggle station status?');">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-warning">
+                    <i class="fas fa-{% if station.is_active %}pause{% else %}play{% endif %}"></i>
+                    {% if station.is_active %}Deactivate{% else %}Activate{% endif %}
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Left Column: Station Info -->
+        <div class="col-md-4">
+            <!-- Basic Information Card -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-info-circle"></i> Station Information</h5>
+                </div>
+                <div class="card-body">
+                    <table class="table table-sm">
+                        <tr>
+                            <th>Station Number:</th>
+                            <td><code>{{ station.station_number }}</code></td>
+                        </tr>
+                        <tr>
+                            <th>Agency:</th>
+                            <td><span class="badge bg-secondary">{{ station.agency }}</span></td>
+                        </tr>
+                        <tr>
+                            <th>State:</th>
+                            <td>{{ station.state|default:"-" }}</td>
+                        </tr>
+                        <tr>
+                            <th>HUC Code:</th>
+                            <td><code>{{ station.huc_code|default:"-" }}</code></td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Geographic Information Card -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-globe"></i> Geographic Information</h5>
+                </div>
+                <div class="card-body">
+                    <table class="table table-sm">
+                        <tr>
+                            <th>Latitude:</th>
+                            <td>{{ station.latitude|floatformat:6|default:"-" }}°</td>
+                        </tr>
+                        <tr>
+                            <th>Longitude:</th>
+                            <td>{{ station.longitude|floatformat:6|default:"-" }}°</td>
+                        </tr>
+                        <tr>
+                            <th>Timezone:</th>
+                            <td>{{ station.timezone|default:"UTC" }}</td>
+                        </tr>
+                        <tr>
+                            <th>Basin:</th>
+                            <td>{{ station.basin|default:"-" }}</td>
+                        </tr>
+                        <tr>
+                            <th>Catchment Area:</th>
+                            <td>{{ station.catchment_area|floatformat:2|default:"-" }} km²</td>
+                        </tr>
+                    </table>
+                    
+                    {% if station.latitude and station.longitude %}
+                    <div class="mt-3">
+                        <a href="https://www.google.com/maps/search/?api=1&query={{ station.latitude }},{{ station.longitude }}" 
+                           target="_blank" class="btn btn-sm btn-outline-primary w-100">
+                            <i class="fas fa-map-marked-alt"></i> View on Google Maps
+                        </a>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Period of Record Card -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-calendar"></i> Period of Record</h5>
+                </div>
+                <div class="card-body">
+                    <table class="table table-sm">
+                        <tr>
+                            <th>Start Date:</th>
+                            <td>{{ station.record_start_date|date:"Y-m-d"|default:"-" }}</td>
+                        </tr>
+                        <tr>
+                            <th>End Date:</th>
+                            <td>{{ station.record_end_date|date:"Y-m-d"|default:"Present" }}</td>
+                        </tr>
+                        <tr>
+                            <th>Years of Record:</th>
+                            <td>{{ station.years_of_record|floatformat:2|default:"-" }}</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: Data and Activity -->
+        <div class="col-md-8">
+            <!-- Statistics Card -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-chart-bar"></i> Data Statistics</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-md-3">
+                            <div class="border rounded p-3">
+                                <h3 class="text-primary">{{ stats.total_observations|default:0 }}</h3>
+                                <small class="text-muted">Total Observations</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="border rounded p-3">
+                                <h3 class="text-success">{{ stats.latest_obs_date|date:"Y-m-d"|default:"-" }}</h3>
+                                <small class="text-muted">Latest Observation</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="border rounded p-3">
+                                <h3 class="text-info">{{ stats.avg_discharge|floatformat:2|default:"-" }}</h3>
+                                <small class="text-muted">Avg Discharge (cfs)</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="border rounded p-3">
+                                <h3 class="text-warning">{{ stats.max_discharge|floatformat:2|default:"-" }}</h3>
+                                <small class="text-muted">Max Discharge (cfs)</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Observations Card -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-water"></i> Recent Observations</h5>
+                </div>
+                <div class="card-body">
+                    {% if recent_observations %}
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Timestamp</th>
+                                    <th>Discharge (cfs)</th>
+                                    <th>Gage Height (ft)</th>
+                                    <th>Quality</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for obs in recent_observations %}
+                                <tr>
+                                    <td>{{ obs.timestamp|date:"Y-m-d H:i" }}</td>
+                                    <td>{{ obs.discharge_cfs|floatformat:2|default:"-" }}</td>
+                                    <td>{{ obs.gage_height_ft|floatformat:2|default:"-" }}</td>
+                                    <td>
+                                        <span class="badge bg-{% if obs.quality_code == 'A' %}success{% elif obs.quality_code == 'P' %}warning{% else %}secondary{% endif %}">
+                                            {{ obs.quality_code|default:"U" }}
+                                        </span>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted text-center py-3">
+                        <i class="fas fa-inbox fa-2x mb-2"></i><br>
+                        No observations recorded yet.
+                    </p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Pull Configurations Card -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-cog"></i> Pull Configurations</h5>
+                </div>
+                <div class="card-body">
+                    {% if configurations %}
+                    <div class="list-group">
+                        {% for config in configurations %}
+                        <a href="{% url 'configuration_detail' config.id %}" class="list-group-item list-group-item-action">
+                            <div class="d-flex w-100 justify-content-between">
+                                <h6 class="mb-1">{{ config.name }}</h6>
+                                <small>
+                                    {% if config.is_enabled %}
+                                    <span class="badge bg-success">Enabled</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">Disabled</span>
+                                    {% endif %}
+                                </small>
+                            </div>
+                            <p class="mb-1 text-muted small">{{ config.description|truncatewords:15 }}</p>
+                            <small class="text-muted">
+                                <i class="fas fa-database"></i> {{ config.data_type }} | 
+                                <i class="fas fa-clock"></i> {{ config.schedule_type }}
+                            </small>
+                        </a>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="text-muted text-center py-3">
+                        <i class="fas fa-inbox fa-2x mb-2"></i><br>
+                        This station is not included in any pull configurations.
+                    </p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Progress Tracking Card -->
+            {% if progress %}
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-tasks"></i> Smart Append Progress</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Configuration</th>
+                                    <th>Last Fetch</th>
+                                    <th>Next Start</th>
+                                    <th>Records</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for prog in progress %}
+                                <tr>
+                                    <td>
+                                        <a href="{% url 'configuration_detail' prog.pull_configuration.id %}">
+                                            {{ prog.pull_configuration.name }}
+                                        </a>
+                                    </td>
+                                    <td>{{ prog.last_successful_fetch|date:"Y-m-d H:i"|default:"-" }}</td>
+                                    <td>{{ prog.next_start_date|date:"Y-m-d"|default:"-" }}</td>
+                                    <td>{{ prog.total_records_fetched|default:0 }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

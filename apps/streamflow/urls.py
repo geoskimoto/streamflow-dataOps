@@ -19,6 +19,12 @@ urlpatterns = [
     path('configurations/<int:pk>/toggle/', views.toggle_configuration, name='toggle_configuration'),
     
     # Stations
+    path('stations/', views.StationListView.as_view(), name='station_list'),
+    path('stations/new/', views.StationCreateView.as_view(), name='station_create'),
+    path('stations/export/', views.station_export_csv, name='station_export_csv'),
+    path('stations/<str:station_number>/', views.StationDetailView.as_view(), name='station_detail'),
+    path('stations/<str:station_number>/edit/', views.StationUpdateView.as_view(), name='station_update'),
+    path('stations/<str:station_number>/toggle/', views.toggle_station_status, name='toggle_station_status'),
     path('stations/search/', views.station_search, name='station_search'),
     path('stations/search/ajax/', views.station_search_ajax, name='station_search_ajax'),
     path('configurations/<int:pk>/stations/add/', views.add_stations_to_config, name='add_stations'),

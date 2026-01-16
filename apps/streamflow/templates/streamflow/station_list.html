@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Stations{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="fas fa-map-marker-alt"></i> Stations</h2>
+        <div>
+            <a href="{% url 'station_export_csv' %}?{{ request.GET.urlencode }}" class="btn btn-success">
+                <i class="fas fa-download"></i> Export CSV
+            </a>
+            <a href="{% url 'station_create' %}" class="btn btn-primary">
+                <i class="fas fa-plus"></i> Add Station
+            </a>
+        </div>
+    </div>
+
+    <!-- Search and Filter Form -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="fas fa-filter"></i> Search & Filter</h5>
+        </div>
+        <div class="card-body">
+            <form method="get" action="{% url 'station_list' %}" class="row g-3">
+                <div class="col-md-3">
+                    <label for="search" class="form-label">Search</label>
+                    <input type="text" class="form-control" id="search" name="search" 
+                           value="{{ request.GET.search }}" 
+                           placeholder="Station number or name">
+                </div>
+                
+                <div class="col-md-2">
+                    <label for="agency" class="form-label">Agency</label>
+                    <select class="form-select" id="agency" name="agency">
+                        <option value="">All Agencies</option>
+                        <option value="USGS" {% if request.GET.agency == 'USGS' %}selected{% endif %}>USGS</option>
+                        <option value="EC" {% if request.GET.agency == 'EC' %}selected{% endif %}>Environment Canada</option>
+                        <option value="NOAA" {% if request.GET.agency == 'NOAA' %}selected{% endif %}>NOAA</option>
+                    </select>
+                </div>
+                
+                <div class="col-md-2">
+                    <label for="state" class="form-label">State</label>
+                    <input type="text" class="form-control" id="state" name="state" 
+                           value="{{ request.GET.state }}" 
+                           placeholder="e.g., ME" maxlength="2">
+                </div>
+                
+                <div class="col-md-2">
+                    <label for="huc_code" class="form-label">HUC Code</label>
+                    <input type="text" class="form-control" id="huc_code" name="huc_code" 
+                           value="{{ request.GET.huc_code }}" 
+                           placeholder="e.g., 02070010">
+                </div>
+                
+                <div class="col-md-2">
+                    <label for="active" class="form-label">Status</label>
+                    <select class="form-select" id="active" name="active">
+                        <option value="">All Stations</option>
+                        <option value="true" {% if request.GET.active == 'true' %}selected{% endif %}>Active Only</option>
+                        <option value="false" {% if request.GET.active == 'false' %}selected{% endif %}>Inactive Only</option>
+                    </select>
+                </div>
+                
+                <div class="col-md-1 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-search"></i> Filter
+                    </button>
+                </div>
+            </form>
+            
+            {% if request.GET %}
+            <div class="mt-2">
+                <a href="{% url 'station_list' %}" class="btn btn-sm btn-outline-secondary">
+                    <i class="fas fa-times"></i> Clear Filters
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Results Summary -->
+    <div class="alert alert-info">
+        <i class="fas fa-info-circle"></i>
+        Showing {{ page_obj.start_index }} to {{ page_obj.end_index }} of {{ paginator.count }} station{{ paginator.count|pluralize }}
+        {% if request.GET.search or request.GET.agency or request.GET.state or request.GET.huc_code or request.GET.active %}
+        (filtered)
+        {% endif %}
+    </div>
+
+    <!-- Stations Table -->
+    <div class="card">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Station Number</th>
+                            <th>Station Name</th>
+                            <th>Agency</th>
+                            <th>State</th>
+                            <th>HUC Code</th>
+                            <th>Lat / Lon</th>
+                            <th>Observations</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for station in page_obj %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'station_detail' station.station_number %}" class="text-decoration-none">
+                                    <strong>{{ station.station_number }}</strong>
+                                </a>
+                            </td>
+                            <td>{{ station.name|truncatewords:8 }}</td>
+                            <td>
+                                <span class="badge bg-secondary">{{ station.agency }}</span>
+                            </td>
+                            <td>{{ station.state|default:"-" }}</td>
+                            <td>
+                                <code>{{ station.huc_code|default:"-" }}</code>
+                            </td>
+                            <td class="text-nowrap">
+                                {% if station.latitude and station.longitude %}
+                                <small>{{ station.latitude|floatformat:4 }}, {{ station.longitude|floatformat:4 }}</small>
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge bg-info">
+                                    {{ station.observation_count|default:0 }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if station.is_active %}
+                                <span class="badge bg-success">Active</span>
+                                {% else %}
+                                <span class="badge bg-secondary">Inactive</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <a href="{% url 'station_detail' station.station_number %}" 
+                                       class="btn btn-outline-primary" title="View Details">
+                                        <i class="fas fa-eye"></i>
+                                    </a>
+                                    <a href="{% url 'station_update' station.station_number %}" 
+                                       class="btn btn-outline-secondary" title="Edit">
+                                        <i class="fas fa-edit"></i>
+                                    </a>
+                                    <form method="post" action="{% url 'toggle_station_status' station.station_number %}" 
+                                          class="d-inline" onsubmit="return confirm('Toggle station status?');">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-outline-warning" 
+                                                title="{% if station.is_active %}Deactivate{% else %}Activate{% endif %}">
+                                            <i class="fas fa-{% if station.is_active %}pause{% else %}play{% endif %}"></i>
+                                        </button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="9" class="text-center py-4 text-muted">
+                                <i class="fas fa-inbox fa-2x mb-2"></i>
+                                <p>No stations found. Try adjusting your filters or <a href="{% url 'station_create' %}">add a new station</a>.</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pagination -->
+    {% if page_obj.has_other_pages %}
+    <nav aria-label="Station pagination" class="mt-4">
+        <ul class="pagination justify-content-center">
+            {% if page_obj.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?page=1{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
+                    <i class="fas fa-angle-double-left"></i> First
+                </a>
+            </li>
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
+                    <i class="fas fa-angle-left"></i> Previous
+                </a>
+            </li>
+            {% else %}
+            <li class="page-item disabled">
+                <span class="page-link"><i class="fas fa-angle-double-left"></i> First</span>
+            </li>
+            <li class="page-item disabled">
+                <span class="page-link"><i class="fas fa-angle-left"></i> Previous</span>
+            </li>
+            {% endif %}
+
+            <li class="page-item active">
+                <span class="page-link">
+                    Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+                </span>
+            </li>
+
+            {% if page_obj.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.next_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
+                    Next <i class="fas fa-angle-right"></i>
+                </a>
+            </li>
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
+                    Last <i class="fas fa-angle-double-right"></i>
+                </a>
+            </li>
+            {% else %}
+            <li class="page-item disabled">
+                <span class="page-link">Next <i class="fas fa-angle-right"></i></span>
+            </li>
+            <li class="page-item disabled">
+                <span class="page-link">Last <i class="fas fa-angle-double-right"></i></span>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+{% endblock %}

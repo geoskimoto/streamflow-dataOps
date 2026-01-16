@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% load static %}
+{% load crispy_forms_tags %}
+
+{% block title %}{% if form.instance.pk %}Edit{% else %}Add{% endif %} Station{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <!-- Header -->
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{% url 'station_list' %}">Stations</a></li>
+                    {% if form.instance.pk %}
+                    <li class="breadcrumb-item"><a href="{% url 'station_detail' form.instance.station_number %}">{{ form.instance.station_number }}</a></li>
+                    <li class="breadcrumb-item active">Edit</li>
+                    {% else %}
+                    <li class="breadcrumb-item active">Add Station</li>
+                    {% endif %}
+                </ol>
+            </nav>
+
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2>
+                    <i class="fas fa-{% if form.instance.pk %}edit{% else %}plus{% endif %}"></i>
+                    {% if form.instance.pk %}Edit Station{% else %}Add New Station{% endif %}
+                </h2>
+            </div>
+
+            <!-- Form Card -->
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <form method="post" novalidate>
+                        {% csrf_token %}
+                        
+                        {% if form.non_field_errors %}
+                        <div class="alert alert-danger" role="alert">
+                            {{ form.non_field_errors }}
+                        </div>
+                        {% endif %}
+
+                        <!-- Station Identification Section -->
+                        <div class="mb-4">
+                            <h5 class="border-bottom pb-2 mb-3">
+                                <i class="fas fa-id-card"></i> Station Identification
+                            </h5>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    {{ form.station_number|as_crispy_field }}
+                                </div>
+                                <div class="col-md-6">
+                                    {{ form.agency|as_crispy_field }}
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-12">
+                                    {{ form.name|as_crispy_field }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Geographic Information Section -->
+                        <div class="mb-4">
+                            <h5 class="border-bottom pb-2 mb-3">
+                                <i class="fas fa-globe"></i> Geographic Information
+                            </h5>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    {{ form.latitude|as_crispy_field }}
+                                </div>
+                                <div class="col-md-6">
+                                    {{ form.longitude|as_crispy_field }}
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-4">
+                                    {{ form.state|as_crispy_field }}
+                                </div>
+                                <div class="col-md-4">
+                                    {{ form.huc_code|as_crispy_field }}
+                                </div>
+                                <div class="col-md-4">
+                                    {{ form.basin|as_crispy_field }}
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    {{ form.catchment_area|as_crispy_field }}
+                                </div>
+                                <div class="col-md-6">
+                                    {{ form.timezone|as_crispy_field }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Period of Record Section -->
+                        <div class="mb-4">
+                            <h5 class="border-bottom pb-2 mb-3">
+                                <i class="fas fa-calendar"></i> Period of Record
+                            </h5>
+                            <div class="row">
+                                <div class="col-md-4">
+                                    {{ form.record_start_date|as_crispy_field }}
+                                </div>
+                                <div class="col-md-4">
+                                    {{ form.record_end_date|as_crispy_field }}
+                                </div>
+                                <div class="col-md-4">
+                                    {{ form.years_of_record|as_crispy_field }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Status Section -->
+                        <div class="mb-4">
+                            <h5 class="border-bottom pb-2 mb-3">
+                                <i class="fas fa-toggle-on"></i> Status
+                            </h5>
+                            <div class="form-check form-switch">
+                                {{ form.is_active }}
+                                <label class="form-check-label" for="{{ form.is_active.id_for_label }}">
+                                    Station is active for data collection
+                                </label>
+                                {% if form.is_active.help_text %}
+                                <div class="form-text">{{ form.is_active.help_text }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- Form Actions -->
+                        <div class="d-flex justify-content-between mt-4 pt-3 border-top">
+                            <a href="{% if form.instance.pk %}{% url 'station_detail' form.instance.station_number %}{% else %}{% url 'station_list' %}{% endif %}" 
+                               class="btn btn-outline-secondary">
+                                <i class="fas fa-times"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save"></i> 
+                                {% if form.instance.pk %}Update Station{% else %}Create Station{% endif %}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Help Text -->
+            <div class="alert alert-info mt-4">
+                <h6><i class="fas fa-info-circle"></i> Tips:</h6>
+                <ul class="mb-0">
+                    <li><strong>Station Number:</strong> Must be unique. Use the agency's official identifier (e.g., USGS site code).</li>
+                    <li><strong>Coordinates:</strong> Enter in decimal degrees. Longitude is negative for Western Hemisphere.</li>
+                    <li><strong>HUC Code:</strong> Hydrologic Unit Code for watershed classification.</li>
+                    <li><strong>Active Status:</strong> Only active stations are included in automated data pulls.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Add coordinate validation hints
+document.addEventListener('DOMContentLoaded', function() {
+    const latInput = document.querySelector('#id_latitude');
+    const lonInput = document.querySelector('#id_longitude');
+    
+    if (latInput) {
+        latInput.addEventListener('input', function() {
+            const value = parseFloat(this.value);
+            if (value < -90 || value > 90) {
+                this.classList.add('is-invalid');
+            } else {
+                this.classList.remove('is-invalid');
+            }
+        });
+    }
+    
+    if (lonInput) {
+        lonInput.addEventListener('input', function() {
+            const value = parseFloat(this.value);
+            if (value < -180 || value > 180) {
+                this.classList.add('is-invalid');
+            } else {
+                this.classList.remove('is-invalid');
+            }
+        });
+    }
+});
+</script>
+{% endblock %}
