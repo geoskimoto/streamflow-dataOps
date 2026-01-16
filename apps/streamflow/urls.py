@@ -34,4 +34,5 @@ urlpatterns = [
     
     # Logs
     path('logs/', views.DataPullLogListView.as_view(), name='log_list'),
+    path('logs/<int:pk>/', views.log_detail, name='log_detail'),
 ]

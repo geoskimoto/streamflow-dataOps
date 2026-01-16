@@ -201,7 +201,7 @@ def toggle_configuration(request, pk):
 
 
 class DataPullLogListView(ListView):
-    """List all data pull logs."""
+    """List all data pull logs with filtering and search."""
     
     model = DataPullLog
     template_name = 'streamflow/log_list.html'
@@ -209,7 +209,22 @@ class DataPullLogListView(ListView):
     paginate_by = 50
     
     def get_queryset(self):
-        queryset = DataPullLog.objects.select_related('configuration')
+        from django.db.models import F, ExpressionWrapper, DurationField
+        
+        queryset = DataPullLog.objects.select_related('configuration').annotate(
+            duration=ExpressionWrapper(
+                F('end_time') - F('start_time'),
+                output_field=DurationField()
+            )
+        )
+        
+        # Search by error message
+        search = self.request.GET.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(error_message__icontains=search) |
+                Q(configuration__name__icontains=search)
+            )
         
         # Filter by configuration
         config_id = self.request.GET.get('configuration')
@@ -235,6 +250,14 @@ class DataPullLogListView(ListView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['configurations'] = PullConfiguration.objects.all()
+        
+        # Summary stats
+        logs = self.get_queryset()
+        context['total_logs'] = logs.count()
+        context['success_count'] = logs.filter(status='success').count()
+        context['failed_count'] = logs.filter(status='failed').count()
+        context['running_count'] = logs.filter(status='running').count()
+        
         return context
 
 
@@ -307,6 +330,32 @@ def remove_station_from_config(request, pk, station_id):
     messages.success(request, f'Station {station_number} removed from configuration.')
     
     return redirect('streamflow:configuration_detail', pk=pk)
+
+
+def log_detail(request, pk):
+    """Detailed view of a data pull log with full error information."""
+    
+    log = get_object_or_404(DataPullLog.objects.select_related('configuration'), pk=pk)
+    
+    # Calculate duration if ended
+    duration = None
+    if log.end_time:
+        duration = log.end_time - log.start_time
+    
+    # Get related logs (same configuration, recent)
+    related_logs = DataPullLog.objects.filter(
+        configuration=log.configuration
+    ).exclude(
+        pk=log.pk
+    ).order_by('-start_time')[:10]
+    
+    context = {
+        'log': log,
+        'duration': duration,
+        'related_logs': related_logs,
+    }
+    
+    return render(request, 'streamflow/log_detail.html', context)
 
 
 def dashboard(request):
