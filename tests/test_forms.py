@@ -145,9 +145,12 @@ class StationFormTests(TestCase):
             'agency': 'USGS',
             'latitude': 47.068333,
             'longitude': -69.061111,
+            'timezone': 'UTC',
             'is_active': True
         }
         form = StationForm(data=form_data)
+        if not form.is_valid():
+            print(f"Station form errors: {form.errors}")
         self.assertTrue(form.is_valid())
     
     def test_invalid_latitude(self):
