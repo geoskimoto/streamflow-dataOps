@@ -22,7 +22,7 @@ from .models import (
     DischargeObservation,
     StationMapping,
 )
-from .forms import StationForm
+from .forms import StationForm, PullConfigurationForm
 from .import_forms import StationImportForm
 from src.acquisition.tasks import execute_pull_configuration
 from decimal import Decimal, InvalidOperation
@@ -101,24 +101,55 @@ class PullConfigurationDetailView(DetailView):
         # Get stations
         context['stations'] = config.configuration_stations.all()
         
-        # Get recent logs
-        context['recent_logs'] = config.logs.order_by('-start_time')[:10]
+        # Get recent logs (last 10)
+        recent_logs = config.logs.order_by('-start_time')[:10]
+        context['recent_logs'] = recent_logs
         
         # Get progress for each station
         context['progress'] = config.progress_records.select_related(
             'configuration'
         ).all()
         
-        # Stats
-        total_logs = config.logs.count()
-        successful_logs = config.logs.filter(status='success').count()
+        # Comprehensive stats
+        all_logs = config.logs.all()
+        total_logs = all_logs.count()
+        successful_logs = all_logs.filter(status='success').count()
+        failed_logs = all_logs.filter(status='failed').count()
+        running_logs = all_logs.filter(status='running').count()
+        
+        # Calculate total records across all successful runs
+        total_records = all_logs.filter(
+            status='success'
+        ).aggregate(
+            total=models.Sum('records_processed')
+        )['total'] or 0
+        
+        # Recent performance (last 7 days)
+        from django.utils import timezone
+        from datetime import timedelta
+        seven_days_ago = timezone.now() - timedelta(days=7)
+        recent_runs = all_logs.filter(start_time__gte=seven_days_ago)
+        recent_success = recent_runs.filter(status='success').count()
+        recent_total = recent_runs.count()
+        
         context['stats'] = {
             'total_runs': total_logs,
+            'successful_runs': successful_logs,
+            'failed_runs': failed_logs,
+            'running_runs': running_logs,
             'success_rate': (successful_logs / total_logs * 100) if total_logs > 0 else 0,
-            'total_records': config.logs.aggregate(
-                total=Count('records_processed')
-            )['total'] or 0,
+            'total_records': total_records,
+            'recent_success_rate': (recent_success / recent_total * 100) if recent_total > 0 else 0,
+            'recent_runs_count': recent_total,
         }
+        
+        # Last successful run info
+        last_success = all_logs.filter(status='success').order_by('-start_time').first()
+        if last_success:
+            context['last_success'] = {
+                'time': last_success.start_time,
+                'records': last_success.records_processed,
+            }
         
         return context
 
@@ -127,11 +158,8 @@ class PullConfigurationCreateView(CreateView):
     """Create a new pull configuration."""
     
     model = PullConfiguration
+    form_class = PullConfigurationForm
     template_name = 'streamflow/configuration_form.html'
-    fields = [
-        'name', 'description', 'data_type', 'data_strategy',
-        'pull_start_date', 'is_enabled', 'schedule_type', 'schedule_value'
-    ]
     success_url = reverse_lazy('streamflow:configuration_list')
     
     def form_valid(self, form):
@@ -143,11 +171,8 @@ class PullConfigurationUpdateView(UpdateView):
     """Update an existing pull configuration."""
     
     model = PullConfiguration
+    form_class = PullConfigurationForm
     template_name = 'streamflow/configuration_form.html'
-    fields = [
-        'name', 'description', 'data_type', 'data_strategy',
-        'pull_start_date', 'is_enabled', 'schedule_type', 'schedule_value'
-    ]
     success_url = reverse_lazy('streamflow:configuration_list')
     
     def form_valid(self, form):

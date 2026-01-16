@@ -3,11 +3,13 @@
 from django import forms
 from django.forms import ModelForm, inlineformset_factory
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 from .models import PullConfiguration, PullConfigurationStation, MasterStation, Station
+import re
 
 
 class PullConfigurationForm(ModelForm):
-    """Form for creating/editing pull configurations."""
+    """Form for creating/editing pull configurations with enhanced validation."""
     
     class Meta:
         model = PullConfiguration
@@ -16,12 +18,91 @@ class PullConfigurationForm(ModelForm):
             'pull_start_date', 'is_enabled', 'schedule_type', 'schedule_value'
         ]
         widgets = {
-            'description': forms.Textarea(attrs={'rows': 3}),
-            'pull_start_date': forms.DateTimeInput(attrs={'type': 'datetime-local'}),
-            'schedule_value': forms.TextInput(attrs={
-                'placeholder': 'e.g., 0 */6 * * * for every 6 hours'
+            'description': forms.Textarea(attrs={
+                'rows': 3,
+                'placeholder': 'Describe the purpose and scope of this configuration...',
+                'class': 'form-control'
             }),
+            'pull_start_date': forms.DateTimeInput(attrs={
+                'type': 'datetime-local',
+                'class': 'form-control'
+            }),
+            'schedule_value': forms.TextInput(attrs={
+                'placeholder': 'e.g., 0 */6 * * * for every 6 hours',
+                'class': 'form-control'
+            }),
+            'name': forms.TextInput(attrs={
+                'placeholder': 'Configuration name',
+                'class': 'form-control'
+            }),
+            'data_type': forms.Select(attrs={'class': 'form-select'}),
+            'data_strategy': forms.Select(attrs={'class': 'form-select'}),
+            'schedule_type': forms.Select(attrs={'class': 'form-select'}),
         }
+        labels = {
+            'name': 'Configuration Name',
+            'description': 'Description',
+            'data_type': 'Data Type',
+            'data_strategy': 'Data Strategy',
+            'pull_start_date': 'Start Date (Optional)',
+            'is_enabled': 'Enable Configuration',
+            'schedule_type': 'Schedule Type',
+            'schedule_value': 'Cron Schedule (for custom)',
+        }
+        help_texts = {
+            'name': 'A unique, descriptive name for this configuration',
+            'data_type': 'Choose discharge, stage, or both',
+            'data_strategy': 'Full historical: pull all available data. Latest only: pull recent data only',
+            'pull_start_date': 'Leave empty to start from earliest available data',
+            'schedule_type': 'How frequently to run this configuration',
+            'schedule_value': 'Required only for custom schedule type. Use standard cron format',
+            'is_enabled': 'Disabled configurations will not run on schedule',
+        }
+    
+    def clean_name(self):
+        """Validate configuration name."""
+        name = self.cleaned_data.get('name')
+        
+        if not name or len(name.strip()) < 3:
+            raise ValidationError('Configuration name must be at least 3 characters long.')
+        
+        # Check for duplicate names (excluding current instance if editing)
+        qs = PullConfiguration.objects.filter(name__iexact=name)
+        if self.instance.pk:
+            qs = qs.exclude(pk=self.instance.pk)
+        
+        if qs.exists():
+            raise ValidationError('A configuration with this name already exists.')
+        
+        return name.strip()
+    
+    def clean_schedule_value(self):
+        """Validate cron schedule format for custom schedules."""
+        schedule_type = self.cleaned_data.get('schedule_type')
+        schedule_value = self.cleaned_data.get('schedule_value', '').strip()
+        
+        if schedule_type == 'custom':
+            if not schedule_value:
+                raise ValidationError('Cron schedule is required for custom schedule type.')
+            
+            # Basic cron validation (5 fields)
+            cron_parts = schedule_value.split()
+            if len(cron_parts) != 5:
+                raise ValidationError(
+                    'Invalid cron format. Expected 5 fields: minute hour day month weekday. '
+                    'Example: "0 */6 * * *" runs every 6 hours.'
+                )
+        
+        return schedule_value
+    
+    def clean_pull_start_date(self):
+        """Validate start date is not in the future."""
+        start_date = self.cleaned_data.get('pull_start_date')
+        
+        if start_date and start_date > timezone.now():
+            raise ValidationError('Start date cannot be in the future.')
+        
+        return start_date
 
 
 class StationSelectionForm(forms.Form):
