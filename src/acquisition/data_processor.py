@@ -104,6 +104,7 @@ class DataProcessor:
         - Non-negative discharge values
         - Reasonable ranges (< 1,000,000 cfs for safety)
         - Valid timestamps
+        - Statistical outliers (>5 std deviations)
 
         Args:
             observations: List of observation dictionaries
@@ -112,7 +113,9 @@ class DataProcessor:
             Filtered list of valid observations
         """
         valid_observations = []
-
+        
+        # First pass: basic validation
+        basic_valid = []
         for obs in observations:
             # Check required fields
             if not all(k in obs for k in ["observed_at", "discharge", "unit", "type"]):
@@ -146,7 +149,31 @@ class DataProcessor:
                 self.logger.warning(f"Invalid timestamp: {obs['observed_at']}")
                 continue
 
-            valid_observations.append(obs)
+            basic_valid.append(obs)
+        
+        # Second pass: statistical outlier detection
+        if len(basic_valid) > 3:  # Need at least 4 points for meaningful stats
+            discharges = [float(obs["discharge"]) for obs in basic_valid]
+            mean = sum(discharges) / len(discharges)
+            variance = sum((x - mean) ** 2 for x in discharges) / len(discharges)
+            std_dev = variance ** 0.5
+            
+            if std_dev > 0:  # Avoid division by zero
+                for obs in basic_valid:
+                    z_score = abs((float(obs["discharge"]) - mean) / std_dev)
+                    if z_score > 5:  # More than 5 standard deviations
+                        self.logger.warning(
+                            f"Statistical outlier detected: discharge={obs['discharge']}, "
+                            f"z_score={z_score:.2f}"
+                        )
+                        continue
+                    valid_observations.append(obs)
+            else:
+                # All values are the same, accept them
+                valid_observations = basic_valid
+        else:
+            # Not enough data for outlier detection
+            valid_observations = basic_valid
 
         removed_count = len(observations) - len(valid_observations)
         if removed_count > 0:
