@@ -107,12 +107,9 @@ def execute_pull_configuration(self, config_id: int):
 
                 logger.info(f"Pulling data from {start_date} to {end_date}")
 
-                # Fetch data based on data type and agency
+                # Fetch data based on data source and data type
                 observations = []
-
-                # Determine agency (default to USGS for now)
-                # In production, this would be determined from station metadata
-                agency = "USGS"  # Could also be 'EC' for Canadian stations
+                agency = config.data_source  # Use the configuration's data source
 
                 if agency == "USGS":
                     client = USGSClient()
@@ -151,6 +148,41 @@ def execute_pull_configuration(self, config_id: int):
                     else:
                         logger.error(f"Unknown data type: {config.data_type}")
                         continue
+
+                elif agency == "NOAA":
+                    # NOAA provides forecasts, not historical observations
+                    # This is primarily for forecast data retrieval
+                    logger.info(f"NOAA source - checking for HADS ID mapping")
+                    
+                    # Try to get NOAA HADS ID from StationMapping
+                    try:
+                        mapping = StationMapping.objects.get(usgs_site_no=station_number)
+                        hads_id = mapping.noaa_hads_id
+                        
+                        if not hads_id:
+                            logger.warning(f"No NOAA HADS ID for USGS {station_number}")
+                            continue
+                        
+                        client = NOAAClient()
+                        forecast_data = client.get_forecast(hads_id, forecast_type="short")
+                        
+                        if forecast_data:
+                            # Store as forecast, not observation
+                            # This would need separate handling via ForecastRun model
+                            logger.info(f"Retrieved NOAA forecast with {len(forecast_data.get('data', []))} points")
+                            # TODO: Implement forecast storage
+                        else:
+                            logger.warning(f"No forecast data available for HADS {hads_id}")
+                        
+                        continue  # NOAA doesn't produce observations
+                        
+                    except StationMapping.DoesNotExist:
+                        logger.warning(f"No StationMapping found for USGS {station_number}")
+                        continue
+                
+                else:
+                    logger.error(f"Unknown agency: {agency}")
+                    continue
 
                 logger.info(f"Fetched {len(observations)} observations")
 

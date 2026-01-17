@@ -123,6 +123,12 @@ class ForecastRun(models.Model):
 class PullConfiguration(models.Model):
     """Stores data pull job configurations."""
 
+    DATA_SOURCE_CHOICES = [
+        ("USGS", "USGS NWIS"),
+        ("EC", "Environment Canada"),
+        ("NOAA", "NOAA National Water Model"),
+    ]
+
     DATA_TYPE_CHOICES = [
         ("realtime_15min", "Real-time 15 min"),
         ("daily_mean", "Daily Mean"),
@@ -142,6 +148,7 @@ class PullConfiguration(models.Model):
 
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
+    data_source = models.CharField(max_length=20, choices=DATA_SOURCE_CHOICES, default="USGS")
     data_type = models.CharField(max_length=20, choices=DATA_TYPE_CHOICES)
     data_strategy = models.CharField(max_length=20, choices=STRATEGY_CHOICES)
     pull_start_date = models.DateTimeField()
