@@ -82,7 +82,7 @@ class Command(BaseCommand):
             created_count = 0
             updated_count = 0
             
-            for site_no, row in sites_df.iterrows():
+            for idx, row in sites_df.iterrows():
                 try:
                     import math
                     
@@ -91,6 +91,11 @@ class Command(BaseCommand):
                         if value is None or (isinstance(value, float) and math.isnan(value)):
                             return None
                         return value
+                    
+                    # Get the actual USGS site number from the row data
+                    site_no = row.get('site_no', '')
+                    if not site_no:
+                        continue
                     
                     station_data = {
                         'station_name': row.get('station_nm', ''),
