@@ -211,11 +211,12 @@ None
 - [ ] Optimize batch processing - pending
 - [ ] Add error recovery mechanisms - pending
 
-### Section 3.4: Smart Append Logic Validation
-- [ ] Test incremental pulls
-- [ ] Test backfill scenarios
-- [ ] Verify duplicate prevention
-- [ ] Test gap detection
+### Section 3.4: Smart Append Logic Validation ✅
+- [x] Test incremental pulls (second run only pulled 2 new records vs 57 initial)
+- [x] Test backfill scenarios (pulled 30 days of historical data successfully)
+- [x] Verify duplicate prevention (unique constraint blocked duplicate dates - maintained 57 records)
+- [x] Test gap detection (PullStationProgress tracks last_successful_pull_date correctly)
+- [x] Fix USGSClient bug (column name: '00060_Mean' not '_00060_00003')
 
 ### Section 3.5: Data Quality Checks
 - [ ] Create validation task
@@ -365,38 +366,40 @@ None
   - StageObservation references removed (model doesn't exist)
   - All code committed (commit 2edee66, 2ec4433)
   - Documentation complete (PHASE_2_COMPLETE.md)
-- 🟡 **Phase 3 IN PROGRESS** (Sections 3.1-3.3)
+- 🟡 **Phase 3 IN PROGRESS** (Sections 3.1-3.4 COMPLETE)
   - Fixed load_master_stations bug (used DataFrame index instead of site_no)
   - Loaded 1,277 Colorado stations with real USGS IDs
   - Started Redis in Docker (container: redis:latest)
   - Started Celery worker successfully
-  - Created test configuration with 5 USGS stations
-  - Successfully executed execute_pull_configuration task
-  - All 5 stations processed, DataPullLog created (status: success)
+  - Created test configuration with 2 active USGS stations
+  - **Fixed USGSClient bug**: Column name is '00060_Mean' for daily values
+  - Successfully executed data pull: 57 discharge observations
+  - **Smart Append Logic validated**: Second run only pulled new data (2 records)
+  - Duplicate prevention working: Unique constraint maintained 57 records
+  - PullStationProgress tracking correctly: last_pull = 2026-01-16
 
 **In Progress:**
 - 🟡 Phase 3: Data Pipeline Integration
-  - Sections 3.1-3.3 partially complete
-  - Need to import all Western US stations
-  - Need to test with stations that have recent data
+  - Sections 3.1-3.4 complete ✅
+  - Remaining: 3.5 Data Quality, 3.6 Performance, 3.7 Monitoring
 
 **Next Steps:**
-- Run full Western US station import (scripts/load_western_us_stations.sh)
-- Create configurations for EC and NOAA data sources
-- Test Smart Append Logic with multiple pulls
-- Performance optimization and monitoring
-- Complete Phase 3 documentation
+- Section 3.5: Data quality checks and validation
+- Section 3.6: Performance optimization for bulk operations
+- Section 3.7: Monitoring and alerting setup
+- Import all Western US stations (full dataset)
 
 **Blockers:**
 None
 
 **Notes:**
-- API fully functional and tested manually
-- Dev server running on port 8000
-- Celery worker running successfully
+- API fully functional on port 8000
+- Celery worker running successfully with code hot-reload
 - Redis running in Docker container
-- load_master_stations bug fix: changed `for site_no, row in sites_df.iterrows()` to `for idx, row in sites_df.iterrows()` and extract site_no from row['site_no']
-- Test configuration executed successfully but 0 data records (stations may be inactive or no recent data)
+- **Bug fixes**: load_master_stations DataFrame index issue, USGSClient column name
+- Smart Append Logic proven: incremental updates work, no duplicates, progress tracking functional
+- Test data: 57 observations from 2 Colorado River stations (09070500, 09085000)
+- Date range: 2025-12-18 to 2026-01-16
 
 ---
 

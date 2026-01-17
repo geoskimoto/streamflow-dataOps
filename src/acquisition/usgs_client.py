@@ -62,13 +62,18 @@ class USGSClient:
             # Transform to our format
             observations = []
             for index, row in df.iterrows():
-                # Get the discharge value column (usually ends with '_00060_00003')
+                # Get the discharge value column
+                # Daily values use '00060_Mean', instantaneous use '_00060_00003'
                 discharge_cols = [
                     col
                     for col in df.columns
-                    if "_00060_00003" in col and not col.endswith("_cd")
+                    if ("00060_Mean" in col or "_00060_00003" in col) and not col.endswith("_cd")
                 ]
-                quality_cols = [col for col in df.columns if "_00060_00003_cd" in col]
+                quality_cols = [
+                    col 
+                    for col in df.columns 
+                    if ("00060_Mean_cd" in col or "_00060_00003_cd" in col)
+                ]
 
                 if not discharge_cols:
                     continue
