@@ -7,20 +7,21 @@ from apps.streamflow.models import DischargeObservation
 class DischargeObservationSerializer(serializers.ModelSerializer):
     """Serializer for discharge observations."""
     
+    station_number = serializers.CharField(source='station.station_number', read_only=True)
+    
     class Meta:
         model = DischargeObservation
         fields = [
             'id',
+            'station',
             'station_number',
-            'timestamp',
-            'value',
+            'observed_at',
+            'discharge',
             'unit',
-            'data_type',
+            'type',
             'quality_code',
-            'is_provisional',
-            'data_source',
         ]
-        read_only_fields = ['id']
+        read_only_fields = ['id', 'station_number']
 
 
 class ObservationStatisticsSerializer(serializers.Serializer):

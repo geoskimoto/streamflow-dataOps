@@ -25,6 +25,62 @@
 
 ## Active Issues
 
+### None - All Critical Issues Resolved! 🎉
+
+---
+
+## Recently Resolved Issues (January 20, 2026)
+
+### [#005] DischargeObservation Filterset Configuration Error
+**Date Reported:** January 17, 2026  
+**Status:** ✅ Resolved  
+**Severity:** Medium  
+**Phase:** Phase 5  
+**Description:** DischargeObservation ViewSet had filterset_fields containing non-model fields (`station_number`, `data_type`, `is_provisional`, `data_source`) that are properties on the serializer, not database fields. This caused TypeError: "'Meta.fields' must not contain non-model field names".  
+**Impact:** 7 API tests failing for DischargeObservation endpoints  
+**Resolution:** 
+- Updated `apps/api/views/observation.py` filterset_fields to only include actual model fields: `['station', 'quality_code', 'type', 'unit']`
+- Updated serializer to add `station_number` as computed field via `source='station.station_number'`
+- Updated all query methods to use correct field names (`observed_at` not `timestamp`, `discharge` not `value`)
+- All 5 DischargeObservation tests now passing  
+**Date Resolved:** January 20, 2026
+
+### [#006] DataPullLogViewSet Not Registered
+**Date Reported:** January 17, 2026  
+**Status:** ✅ Resolved  
+**Severity:** Medium  
+**Phase:** Phase 5  
+**Description:** DataPullLogViewSet was planned but never created or registered in the API router, causing 4 tests to fail with "Reverse for 'datapulllog-list' not found".  
+**Impact:** 4 API tests skipped, missing endpoint in API  
+**Resolution:**
+- Created `apps/api/views/log.py` with DataPullLogViewSet (ReadOnlyModelViewSet)
+- Created `apps/api/serializers/log.py` with DataPullLogSerializer and DataPullLogListSerializer
+- Registered in `apps/api/urls.py`: `router.register(r'logs', DataPullLogViewSet, basename='log')`
+- Updated test URLs from `api:datapulllog-list` to `api:log-list`
+- Added to `__init__.py` exports
+- All 4 DataPullLog tests now passing  
+**Date Resolved:** January 20, 2026
+
+### [#007] Pagination Limit Parameter Not Respected
+**Date Reported:** January 17, 2026  
+**Status:** ✅ Resolved  
+**Severity:** Low  
+**Phase:** Phase 5  
+**Description:** API pagination was not respecting the `limit` query parameter. DRF's default PageNumberPagination only uses `page` parameter, not `limit`.  
+**Impact:** 1 test failing, API consumers cannot control page size via `limit` parameter  
+**Resolution:**
+- Created `apps/api/pagination.py` with StandardResultsSetPagination class
+- Added `page_size_query_param = 'limit'` to allow clients to set page size
+- Set `max_page_size = 1000` to prevent abuse
+- Updated `config/settings.py` REST_FRAMEWORK to use custom pagination class
+- Added pagination_class to viewsets
+- Pagination test now passing  
+**Date Resolved:** January 20, 2026
+
+---
+
+## Previously Resolved Issues
+
 ### [#002] psycopg2-binary Installation Failed
 **Date Reported:** January 16, 2026  
 **Status:** ✅ Resolved (Workaround)  

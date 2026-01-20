@@ -12,6 +12,7 @@ from apps.api.views import (
     StationViewSet,
     PullConfigurationViewSet,
     DischargeObservationViewSet,
+    DataPullLogViewSet,
 )
 
 # Create router and register viewsets
@@ -19,6 +20,7 @@ router = DefaultRouter()
 router.register(r'stations', StationViewSet, basename='station')
 router.register(r'configurations', PullConfigurationViewSet, basename='configuration')
 router.register(r'observations/discharge', DischargeObservationViewSet, basename='discharge')
+router.register(r'logs', DataPullLogViewSet, basename='log')
 
 app_name = 'api'
 

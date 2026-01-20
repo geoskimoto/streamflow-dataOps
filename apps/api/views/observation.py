@@ -15,6 +15,7 @@ from apps.api.serializers import (
     DischargeObservationSerializer,
     ObservationStatisticsSerializer,
 )
+from apps.api.pagination import StandardResultsSetPagination
 
 
 class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
@@ -27,10 +28,12 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
     
     queryset = DischargeObservation.objects.all()
     serializer_class = DischargeObservationSerializer
+    pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['station_number', 'data_type', 'quality_code', 'is_provisional']
-    ordering_fields = ['timestamp', 'value']
-    ordering = ['timestamp']
+    # Only include actual model fields, not serializer properties
+    filterset_fields = ['station', 'quality_code', 'type', 'unit']
+    ordering_fields = ['observed_at', 'discharge']
+    ordering = ['-observed_at']
     
     def get_queryset(self):
         """Filter observations by date range and station."""
@@ -41,16 +44,16 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
         end_date = self.request.query_params.get('end_date')
         
         if start_date:
-            queryset = queryset.filter(timestamp__gte=start_date)
+            queryset = queryset.filter(observed_at__gte=start_date)
         if end_date:
-            queryset = queryset.filter(timestamp__lte=end_date)
+            queryset = queryset.filter(observed_at__lte=end_date)
         
-        # Filter by station
+        # Filter by station number (via station relationship)
         station_number = self.request.query_params.get('station_number')
         if station_number:
-            queryset = queryset.filter(station_number=station_number)
+            queryset = queryset.filter(station__station_number=station_number)
         
-        return queryset.select_related()
+        return queryset.select_related('station')
     
     @action(detail=False, methods=['get'])
     def export_csv(self, request):
@@ -71,7 +74,7 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
             )
         
         # Get observations
-        observations = self.get_queryset().filter(station_number=station_number)
+        observations = self.get_queryset().filter(station__station_number=station_number)
         
         # Create CSV response
         response = HttpResponse(content_type='text/csv')
@@ -80,24 +83,21 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
         writer = csv.writer(response)
         writer.writerow([
             'Station Number',
-            'Timestamp',
-            'Value',
+            'Observed At',
+            'Discharge',
             'Unit',
-            'Data Type',
+            'Type',
             'Quality Code',
-            'Is Provisional',
-            'Data Source',
         ])
         
         for obs in observations:
             writer.writerow([
-                obs.station_number,
-                obs.timestamp.isoformat(),
-                obs.value,
+                obs.station.station_number,
+                obs.observed_at.isoformat(),
+                obs.discharge,
                 obs.unit,
-                obs.data_type,
+                obs.type,
                 obs.quality_code,
-                obs.is_provisional,
                 obs.data_source,
             ])
         
