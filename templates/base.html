@@ -67,9 +67,15 @@
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link {% if 'station' in request.resolver_match.url_name %}active{% endif %}" 
+                        <a class="nav-link {% if request.resolver_match.url_name == 'station_list' %}active{% endif %}" 
                            href="{% url 'streamflow:station_list' %}">
-                            <i class="fas fa-map-marker-alt"></i> Stations
+                            <i class="fas fa-map-marker-alt"></i> Configured Stations
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.resolver_match.url_name == 'master_station_list' %}active{% endif %}" 
+                           href="{% url 'streamflow:master_station_list' %}">
+                            <i class="fas fa-database"></i> All Stations
                         </a>
                     </li>
                     <li class="nav-item">

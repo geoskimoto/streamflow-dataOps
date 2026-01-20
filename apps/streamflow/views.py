@@ -481,7 +481,8 @@ def station_search_ajax(request):
     query = request.GET.get('q', '').strip()
     state = request.GET.get('state', '').strip()
     huc = request.GET.get('huc', '').strip()
-    limit = int(request.GET.get('limit', 50))
+    limit = int(request.GET.get('limit', 100))
+    offset = int(request.GET.get('offset', 0))
     
     # Build query
     stations = MasterStation.objects.all()
@@ -499,8 +500,11 @@ def station_search_ajax(request):
     if huc:
         stations = stations.filter(huc_code__startswith=huc)
     
-    # Limit results
-    stations = stations.order_by('station_number')[:limit]
+    # Get total count before pagination
+    total_count = stations.count()
+    
+    # Apply ordering and pagination
+    stations = stations.order_by('station_number')[offset:offset + limit]
     
     # Convert to JSON
     results = [
@@ -516,7 +520,13 @@ def station_search_ajax(request):
         for station in stations
     ]
     
-    return JsonResponse({'stations': results})
+    return JsonResponse({
+        'stations': results,
+        'total': total_count,
+        'offset': offset,
+        'limit': limit,
+        'has_more': (offset + limit) < total_count
+    })
 
 
 def add_stations_to_config(request, pk):
@@ -552,7 +562,7 @@ def add_stations_to_config(request, pk):
                 PullConfigurationStation.objects.create(
                     configuration=config,
                     station_number=master_station.station_number,
-                    station_name=master_station.name,
+                    station_name=master_station.station_name,
                     huc_code=master_station.huc_code,
                     state=master_station.state_code,
                 )
@@ -693,6 +703,73 @@ class StationListView(ListView):
             'total': total_stations,
             'active': active_stations,
             'inactive': total_stations - active_stations,
+        }
+        
+        return context
+
+
+class MasterStationListView(ListView):
+    """List all master stations with search and filtering."""
+    
+    model = MasterStation
+    template_name = 'streamflow/master_station_list.html'
+    context_object_name = 'stations'
+    paginate_by = 100
+    
+    def get_queryset(self):
+        queryset = MasterStation.objects.all()
+        
+        # Search functionality
+        search = self.request.GET.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(station_number__icontains=search) |
+                Q(station_name__icontains=search)
+            )
+        
+        # Filter by agency
+        agency = self.request.GET.get('agency')
+        if agency:
+            queryset = queryset.filter(agency=agency)
+        
+        # Filter by state
+        state = self.request.GET.get('state')
+        if state:
+            queryset = queryset.filter(state_code=state)
+        
+        # Filter by HUC code
+        huc = self.request.GET.get('huc')
+        if huc:
+            queryset = queryset.filter(huc_code__startswith=huc)
+        
+        # Sort
+        sort = self.request.GET.get('sort', 'station_number')
+        queryset = queryset.order_by(sort)
+        
+        return queryset
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        
+        # Get unique values for filters
+        context['agencies'] = MasterStation.AGENCY_CHOICES
+        context['states'] = MasterStation.objects.exclude(
+            state_code=''
+        ).values_list('state_code', flat=True).distinct().order_by('state_code')
+        
+        # Pass filter values back to template
+        context['current_filters'] = {
+            'search': self.request.GET.get('search', ''),
+            'agency': self.request.GET.get('agency', ''),
+            'state': self.request.GET.get('state', ''),
+            'huc': self.request.GET.get('huc', ''),
+            'sort': self.request.GET.get('sort', 'station_number'),
+        }
+        
+        # Summary statistics
+        total_stations = MasterStation.objects.count()
+        context['stats'] = {
+            'total': total_stations,
         }
         
         return context
@@ -995,14 +1072,14 @@ def sync_master_stations(request):
                 station, created = Station.objects.get_or_create(
                     station_number=master.station_number,
                     defaults={
-                        'name': master.name or master.station_name or 'Unknown',
+                        'name': master.station_name or 'Unknown',
                         'agency': agency,
                         'latitude': master.latitude,
                         'longitude': master.longitude,
                         'state': master.state_code or '',
                         'huc_code': master.huc_code or '',
-                        'basin': master.river_basin or '',
-                        'catchment_area': master.drainage_area_sqkm,
+                        'basin': '',  # MasterStation doesn't have basin field
+                        'catchment_area': master.drainage_area_sqmi,
                         'is_active': True,
                     }
                 )

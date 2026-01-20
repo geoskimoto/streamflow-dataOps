@@ -10,7 +10,7 @@
         <div>
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
-                    <li class="breadcrumb-item"><a href="{% url 'station_list' %}">Stations</a></li>
+                    <li class="breadcrumb-item"><a href="{% url 'streamflow:station_list' %}">Stations</a></li>
                     <li class="breadcrumb-item active">{{ station.station_number }}</li>
                 </ol>
             </nav>
@@ -24,10 +24,10 @@
             </h2>
         </div>
         <div>
-            <a href="{% url 'station_update' station.station_number %}" class="btn btn-secondary">
+            <a href="{% url 'streamflow:station_update' station.station_number %}" class="btn btn-secondary">
                 <i class="fas fa-edit"></i> Edit
             </a>
-            <form method="post" action="{% url 'toggle_station_status' station.station_number %}" 
+            <form method="post" action="{% url 'streamflow:toggle_station_status' station.station_number %}" 
                   class="d-inline" onsubmit="return confirm('Toggle station status?');">
                 {% csrf_token %}
                 <button type="submit" class="btn btn-warning">
@@ -220,7 +220,7 @@
                     {% if configurations %}
                     <div class="list-group">
                         {% for config in configurations %}
-                        <a href="{% url 'configuration_detail' config.id %}" class="list-group-item list-group-item-action">
+                        <a href="{% url 'streamflow:configuration_detail' config.id %}" class="list-group-item list-group-item-action">
                             <div class="d-flex w-100 justify-content-between">
                                 <h6 class="mb-1">{{ config.name }}</h6>
                                 <small>
@@ -269,7 +269,7 @@
                                 {% for prog in progress %}
                                 <tr>
                                     <td>
-                                        <a href="{% url 'configuration_detail' prog.pull_configuration.id %}">
+                                        <a href="{% url 'streamflow:configuration_detail' prog.pull_configuration.id %}">
                                             {{ prog.pull_configuration.name }}
                                         </a>
                                     </td>

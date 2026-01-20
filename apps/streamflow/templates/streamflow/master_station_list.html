@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}All Stations{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="fas fa-database"></i> All Stations</h2>
+        <div class="text-muted">
+            <i class="fas fa-info-circle"></i> Master station list ({{ stats.total|default:0 }} total)
+        </div>
+    </div>
+
+    <!-- Search and Filter Form -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="fas fa-filter"></i> Search & Filter</h5>
+        </div>
+        <div class="card-body">
+            <form method="get" action="{% url 'streamflow:master_station_list' %}" class="row g-3">
+                <div class="col-md-3">
+                    <label for="search" class="form-label">Search</label>
+                    <input type="text" class="form-control" id="search" name="search" 
+                           placeholder="Station number or name" value="{{ current_filters.search }}">
+                </div>
+                
+                <div class="col-md-2">
+                    <label for="agency" class="form-label">Agency</label>
+                    <select class="form-select" id="agency" name="agency">
+                        <option value="">All Agencies</option>
+                        {% for value, label in agencies %}
+                        <option value="{{ value }}" {% if current_filters.agency == value %}selected{% endif %}>
+                            {{ label }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="col-md-2">
+                    <label for="state" class="form-label">State</label>
+                    <select class="form-select" id="state" name="state">
+                        <option value="">All States</option>
+                        {% for state in states %}
+                        <option value="{{ state }}" {% if current_filters.state == state %}selected{% endif %}>
+                            {{ state }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="col-md-2">
+                    <label for="huc" class="form-label">HUC Code</label>
+                    <input type="text" class="form-control" id="huc" name="huc" 
+                           placeholder="e.g., 02070010" value="{{ current_filters.huc }}">
+                </div>
+                
+                <div class="col-md-2">
+                    <label for="sort" class="form-label">Sort By</label>
+                    <select class="form-select" id="sort" name="sort">
+                        <option value="station_number" {% if current_filters.sort == 'station_number' %}selected{% endif %}>
+                            Station Number
+                        </option>
+                        <option value="station_name" {% if current_filters.sort == 'station_name' %}selected{% endif %}>
+                            Station Name
+                        </option>
+                        <option value="state_code" {% if current_filters.sort == 'state_code' %}selected{% endif %}>
+                            State
+                        </option>
+                        <option value="huc_code" {% if current_filters.sort == 'huc_code' %}selected{% endif %}>
+                            HUC Code
+                        </option>
+                    </select>
+                </div>
+                
+                <div class="col-md-1 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-search"></i> Filter
+                    </button>
+                </div>
+            </form>
+            
+            {% if request.GET %}
+            <div class="mt-2">
+                <a href="{% url 'streamflow:master_station_list' %}" class="btn btn-sm btn-outline-secondary">
+                    <i class="fas fa-times"></i> Clear Filters
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Stations Table -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">
+                <i class="fas fa-list"></i> Station List
+                {% if page_obj %}
+                <span class="badge bg-secondary ms-2">
+                    Showing {{ page_obj.start_index }}-{{ page_obj.end_index }} of {{ page_obj.paginator.count }}
+                </span>
+                {% endif %}
+            </h5>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover table-striped mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Station Number</th>
+                            <th>Station Name</th>
+                            <th>Agency</th>
+                            <th>State</th>
+                            <th>HUC Code</th>
+                            <th>Lat / Lon</th>
+                            <th>Drainage Area</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for station in page_obj %}
+                        <tr>
+                            <td>
+                                <strong>{{ station.station_number }}</strong>
+                            </td>
+                            <td>{{ station.station_name|truncatewords:10 }}</td>
+                            <td>
+                                <span class="badge bg-secondary">{{ station.agency }}</span>
+                            </td>
+                            <td>{{ station.state_code|default:"-" }}</td>
+                            <td>
+                                <small class="text-muted">{{ station.huc_code|default:"-" }}</small>
+                            </td>
+                            <td>
+                                {% if station.latitude and station.longitude %}
+                                <small class="text-muted">
+                                    {{ station.latitude|floatformat:4 }}, {{ station.longitude|floatformat:4 }}
+                                </small>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if station.drainage_area_sqmi %}
+                                <small class="text-muted">{{ station.drainage_area_sqmi|floatformat:2 }} mi²</small>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" class="text-center py-4 text-muted">
+                                <i class="fas fa-inbox fa-2x mb-2"></i>
+                                <p>No stations found. Try adjusting your filters.</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pagination -->
+    {% if page_obj.has_other_pages %}
+    <nav aria-label="Station pagination" class="mt-4">
+        <ul class="pagination justify-content-center">
+            {% if page_obj.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?{% for key, value in request.GET.items %}{% if key != 'page' %}{{ key }}={{ value }}&{% endif %}{% endfor %}page=1">
+                    <i class="fas fa-angle-double-left"></i> First
+                </a>
+            </li>
+            <li class="page-item">
+                <a class="page-link" href="?{% for key, value in request.GET.items %}{% if key != 'page' %}{{ key }}={{ value }}&{% endif %}{% endfor %}page={{ page_obj.previous_page_number }}">
+                    <i class="fas fa-angle-left"></i> Previous
+                </a>
+            </li>
+            {% else %}
+            <li class="page-item disabled">
+                <span class="page-link"><i class="fas fa-angle-double-left"></i> First</span>
+            </li>
+            <li class="page-item disabled">
+                <span class="page-link"><i class="fas fa-angle-left"></i> Previous</span>
+            </li>
+            {% endif %}
+
+            <li class="page-item active">
+                <span class="page-link">
+                    Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+                </span>
+            </li>
+
+            {% if page_obj.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?{% for key, value in request.GET.items %}{% if key != 'page' %}{{ key }}={{ value }}&{% endif %}{% endfor %}page={{ page_obj.next_page_number }}">
+                    Next <i class="fas fa-angle-right"></i>
+                </a>
+            </li>
+            <li class="page-item">
+                <a class="page-link" href="?{% for key, value in request.GET.items %}{% if key != 'page' %}{{ key }}={{ value }}&{% endif %}{% endfor %}page={{ page_obj.paginator.num_pages }}">
+                    Last <i class="fas fa-angle-double-right"></i>
+                </a>
+            </li>
+            {% else %}
+            <li class="page-item disabled">
+                <span class="page-link">Next <i class="fas fa-angle-right"></i></span>
+            </li>
+            <li class="page-item disabled">
+                <span class="page-link">Last <i class="fas fa-angle-double-right"></i></span>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+
+</div>
+{% endblock %}

@@ -6,18 +6,18 @@
 {% block content %}
 <div class="container-fluid mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2><i class="fas fa-map-marker-alt"></i> Stations</h2>
+        <h2><i class="fas fa-map-marker-alt"></i> Configured Stations</h2>
         <div class="btn-group">
-            <a href="{% url 'station_import' %}" class="btn btn-info">
+            <a href="{% url 'streamflow:station_import' %}" class="btn btn-info">
                 <i class="fas fa-file-upload"></i> Import CSV
             </a>
-            <a href="{% url 'station_sync' %}" class="btn btn-warning">
+            <a href="{% url 'streamflow:station_sync' %}" class="btn btn-warning">
                 <i class="fas fa-sync"></i> Sync Master
             </a>
-            <a href="{% url 'station_export_csv' %}?{{ request.GET.urlencode }}" class="btn btn-success">
+            <a href="{% url 'streamflow:station_export_csv' %}?{{ request.GET.urlencode }}" class="btn btn-success">
                 <i class="fas fa-download"></i> Export CSV
             </a>
-            <a href="{% url 'station_create' %}" class="btn btn-primary">
+            <a href="{% url 'streamflow:station_create' %}" class="btn btn-primary">
                 <i class="fas fa-plus"></i> Add Station
             </a>
         </div>
@@ -29,7 +29,7 @@
             <h5 class="mb-0"><i class="fas fa-filter"></i> Search & Filter</h5>
         </div>
         <div class="card-body">
-            <form method="get" action="{% url 'station_list' %}" class="row g-3">
+            <form method="get" action="{% url 'streamflow:station_list' %}" class="row g-3">
                 <div class="col-md-3">
                     <label for="search" class="form-label">Search</label>
                     <input type="text" class="form-control" id="search" name="search" 
@@ -79,7 +79,7 @@
             
             {% if request.GET %}
             <div class="mt-2">
-                <a href="{% url 'station_list' %}" class="btn btn-sm btn-outline-secondary">
+                <a href="{% url 'streamflow:station_list' %}" class="btn btn-sm btn-outline-secondary">
                     <i class="fas fa-times"></i> Clear Filters
                 </a>
             </div>
@@ -118,7 +118,7 @@
                         {% for station in page_obj %}
                         <tr>
                             <td>
-                                <a href="{% url 'station_detail' station.station_number %}" class="text-decoration-none">
+                                <a href="{% url 'streamflow:station_detail' station.station_number %}" class="text-decoration-none">
                                     <strong>{{ station.station_number }}</strong>
                                 </a>
                             </td>
@@ -151,15 +151,15 @@
                             </td>
                             <td>
                                 <div class="btn-group btn-group-sm" role="group">
-                                    <a href="{% url 'station_detail' station.station_number %}" 
+                                    <a href="{% url 'streamflow:station_detail' station.station_number %}" 
                                        class="btn btn-outline-primary" title="View Details">
                                         <i class="fas fa-eye"></i>
                                     </a>
-                                    <a href="{% url 'station_update' station.station_number %}" 
+                                    <a href="{% url 'streamflow:station_update' station.station_number %}" 
                                        class="btn btn-outline-secondary" title="Edit">
                                         <i class="fas fa-edit"></i>
                                     </a>
-                                    <form method="post" action="{% url 'toggle_station_status' station.station_number %}" 
+                                    <form method="post" action="{% url 'streamflow:toggle_station_status' station.station_number %}"
                                           class="d-inline" onsubmit="return confirm('Toggle station status?');">
                                         {% csrf_token %}
                                         <button type="submit" class="btn btn-outline-warning" 
@@ -174,7 +174,7 @@
                         <tr>
                             <td colspan="9" class="text-center py-4 text-muted">
                                 <i class="fas fa-inbox fa-2x mb-2"></i>
-                                <p>No stations found. Try adjusting your filters or <a href="{% url 'station_create' %}">add a new station</a>.</p>
+                                <p>No stations found. Try adjusting your filters or <a href="{% url 'streamflow:station_create' %}">add a new station</a>.</p>
                             </td>
                         </tr>
                         {% endfor %}

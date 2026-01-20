@@ -20,6 +20,7 @@ urlpatterns = [
     
     # Stations
     path('stations/', views.StationListView.as_view(), name='station_list'),
+    path('stations/all/', views.MasterStationListView.as_view(), name='master_station_list'),
     path('stations/new/', views.StationCreateView.as_view(), name='station_create'),
     path('stations/import/', views.station_import, name='station_import'),
     path('stations/sync/', views.sync_master_stations, name='station_sync'),
@@ -31,6 +32,7 @@ urlpatterns = [
     path('stations/search/ajax/', views.station_search_ajax, name='station_search_ajax'),
     path('configurations/<int:pk>/stations/add/', views.add_stations_to_config, name='add_stations'),
     path('configurations/<int:pk>/stations/<int:station_id>/remove/', views.remove_station_from_config, name='remove_station'),
+    path('configurations/<int:pk>/station/add/', views.add_station_to_config, name='add_station_to_config'),
     
     # Logs
     path('logs/', views.DataPullLogListView.as_view(), name='log_list'),

@@ -11,9 +11,9 @@
             <!-- Header -->
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
-                    <li class="breadcrumb-item"><a href="{% url 'station_list' %}">Stations</a></li>
+                    <li class="breadcrumb-item"><a href="{% url 'streamflow:station_list' %}">Stations</a></li>
                     {% if form.instance.pk %}
-                    <li class="breadcrumb-item"><a href="{% url 'station_detail' form.instance.station_number %}">{{ form.instance.station_number }}</a></li>
+                    <li class="breadcrumb-item"><a href="{% url 'streamflow:station_detail' form.instance.station_number %}">{{ form.instance.station_number }}</a></li>
                     <li class="breadcrumb-item active">Edit</li>
                     {% else %}
                     <li class="breadcrumb-item active">Add Station</li>
@@ -130,7 +130,7 @@
 
                         <!-- Form Actions -->
                         <div class="d-flex justify-content-between mt-4 pt-3 border-top">
-                            <a href="{% if form.instance.pk %}{% url 'station_detail' form.instance.station_number %}{% else %}{% url 'station_list' %}{% endif %}" 
+                            <a href="{% if form.instance.pk %}{% url 'streamflow:station_detail' form.instance.station_number %}{% else %}{% url 'streamflow:station_list' %}{% endif %}" 
                                class="btn btn-outline-secondary">
                                 <i class="fas fa-times"></i> Cancel
                             </a>

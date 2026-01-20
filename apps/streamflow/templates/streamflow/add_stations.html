@@ -80,7 +80,10 @@
             <div class="card">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <h5 class="mb-0">Available Stations</h5>
-                    <button class="btn btn-sm btn-outline-secondary" id="selectAllBtn">Select All</button>
+                    <div>
+                        <span id="resultInfo" class="text-muted me-3"></span>
+                        <button class="btn btn-sm btn-outline-secondary" id="selectAllBtn">Select All Visible</button>
+                    </div>
                 </div>
                 <div class="card-body">
                     <div id="loadingIndicator" class="text-center d-none">
@@ -92,6 +95,13 @@
                     
                     <div id="stationResults">
                         <p class="text-muted">Use the filters to search for stations.</p>
+                    </div>
+                    
+                    <div id="paginationControls" class="text-center mt-3 d-none">
+                        <button class="btn btn-primary" id="loadMoreBtn">
+                            <i class="fas fa-plus-circle"></i> Load More Stations
+                        </button>
+                        <p class="text-muted mt-2" id="paginationInfo"></p>
                     </div>
                 </div>
             </div>
@@ -149,6 +159,10 @@
 <script>
 let selectedStations = new Set();
 const currentStations = {{ current_station_numbers|safe }};
+let currentOffset = 0;
+let currentTotal = 0;
+let hasMore = false;
+let currentFilters = {};
 
 function updateSelectedCount() {
     const count = selectedStations.size;
@@ -178,14 +192,38 @@ function updateSelectedCount() {
     });
 }
 
-function loadStations() {
+function updatePaginationInfo() {
+    const resultsDiv = document.getElementById('stationResults');
+    const loadedCount = resultsDiv.querySelectorAll('.station-item').length;
+    
+    document.getElementById('resultInfo').textContent = 
+        `Showing ${loadedCount} of ${currentTotal} stations`;
+    
+    if (hasMore) {
+        document.getElementById('paginationControls').classList.remove('d-none');
+        document.getElementById('paginationInfo').textContent = 
+            `${currentTotal - loadedCount} more stations available`;
+    } else {
+        document.getElementById('paginationControls').classList.add('d-none');
+    }
+}
+
+function loadStations(append = false) {
     const state = document.getElementById('stateFilter').value;
     const huc = document.getElementById('hucFilter').value;
     const search = document.getElementById('searchBox').value;
     
+    // If not appending, reset offset and results
+    if (!append) {
+        currentOffset = 0;
+        document.getElementById('stationResults').innerHTML = '';
+    }
+    
+    // Save current filters
+    currentFilters = { state, huc, search };
+    
     // Show loading
     document.getElementById('loadingIndicator').classList.remove('d-none');
-    document.getElementById('stationResults').innerHTML = '';
     
     // Build query
     const params = new URLSearchParams();
@@ -193,19 +231,25 @@ function loadStations() {
     if (huc) params.append('huc', huc);
     if (search) params.append('q', search);
     params.append('limit', '100');
+    params.append('offset', currentOffset);
     
     fetch(`{% url 'streamflow:station_search_ajax' %}?${params.toString()}`)
         .then(response => response.json())
         .then(data => {
             document.getElementById('loadingIndicator').classList.add('d-none');
             
-            if (data.stations.length === 0) {
+            currentTotal = data.total;
+            hasMore = data.has_more;
+            currentOffset = data.offset + data.stations.length;
+            
+            if (!append && data.stations.length === 0) {
                 document.getElementById('stationResults').innerHTML = '<p class="text-muted">No stations found.</p>';
+                document.getElementById('resultInfo').textContent = '';
+                document.getElementById('paginationControls').classList.add('d-none');
                 return;
             }
             
             const resultsDiv = document.getElementById('stationResults');
-            resultsDiv.innerHTML = '';
             
             data.stations.forEach(station => {
                 const isCurrentStation = currentStations.includes(station.station_number);
@@ -251,6 +295,8 @@ function loadStations() {
                 
                 resultsDiv.appendChild(div);
             });
+            
+            updatePaginationInfo();
         })
         .catch(error => {
             document.getElementById('loadingIndicator').classList.add('d-none');
@@ -260,12 +306,17 @@ function loadStations() {
 }
 
 // Event listeners
-document.getElementById('applyFilters').addEventListener('click', loadStations);
+document.getElementById('applyFilters').addEventListener('click', () => loadStations(false));
+
+document.getElementById('loadMoreBtn').addEventListener('click', () => loadStations(true));
+
 document.getElementById('clearFilters').addEventListener('click', () => {
     document.getElementById('stateFilter').value = '';
     document.getElementById('hucFilter').value = '';
     document.getElementById('searchBox').value = '';
     document.getElementById('stationResults').innerHTML = '<p class="text-muted">Use the filters to search for stations.</p>';
+    document.getElementById('resultInfo').textContent = '';
+    document.getElementById('paginationControls').classList.add('d-none');
 });
 
 document.getElementById('selectAllBtn').addEventListener('click', () => {
