@@ -55,12 +55,12 @@ class StationViewSet(viewsets.ModelViewSet):
         
         # Get discharge observation stats
         discharge_stats = DischargeObservation.objects.filter(
-            station_number=station.station_number
+            station=station
         ).aggregate(
             total_count=Count('id'),
-            realtime_count=Count('id', filter=Q(data_type='realtime_15min')),
-            daily_count=Count('id', filter=Q(data_type='daily_mean')),
-            latest_timestamp=Max('timestamp')
+            realtime_count=Count('id', filter=Q(type='realtime_15min')),
+            daily_count=Count('id', filter=Q(type='daily_mean')),
+            latest_timestamp=Max('observed_at')
         )
         
         data = {

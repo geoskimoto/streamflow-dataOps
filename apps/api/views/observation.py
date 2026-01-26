@@ -109,31 +109,28 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
         Get statistical summary of observations.
         
         Query params:
-        - station_number: Required
+        - station_number: Optional filter
         - start_date: ISO format datetime
         - end_date: ISO format datetime
-        - data_type: realtime_15min or daily_mean
+        - type: realtime_15min or daily_mean
         """
         station_number = request.query_params.get('station_number')
-        if not station_number:
-            return Response(
-                {'error': 'station_number parameter is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
         
-        observations = self.get_queryset().filter(station_number=station_number)
+        observations = self.get_queryset()
+        if station_number:
+            observations = observations.filter(station__station_number=station_number)
         
         stats = observations.aggregate(
             count=Count('id'),
-            min_value=Min('value'),
-            max_value=Max('value'),
-            mean_value=Avg('value'),
-            start_date=Min('timestamp'),
-            end_date=Max('timestamp'),
+            min_value=Min('discharge'),
+            max_value=Max('discharge'),
+            mean_value=Avg('discharge'),
+            start_date=Min('observed_at'),
+            end_date=Max('observed_at'),
         )
         
         # Get latest observation
-        latest = observations.order_by('-timestamp').first()
+        latest = observations.order_by('-observed_at').first()
         
         data = {
             'station_number': station_number,
@@ -143,8 +140,8 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
             'min_value': stats['min_value'],
             'max_value': stats['max_value'],
             'mean_value': round(stats['mean_value'], 2) if stats['mean_value'] else None,
-            'latest_value': latest.value if latest else None,
-            'latest_timestamp': latest.timestamp if latest else None,
+            'latest_value': latest.discharge if latest else None,
+            'latest_timestamp': latest.observed_at if latest else None,
         }
         
         serializer = ObservationStatisticsSerializer(data)

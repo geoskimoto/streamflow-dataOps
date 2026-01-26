@@ -14,6 +14,11 @@ from .observation import (
     DischargeObservationSerializer,
     ObservationStatisticsSerializer,
 )
+from .forecast import (
+    ForecastRunSerializer,
+    ForecastRunListSerializer,
+    ForecastStatisticsSerializer,
+)
 from .log import (
     DataPullLogSerializer,
     DataPullLogListSerializer,
@@ -28,6 +33,9 @@ __all__ = [
     'PullConfigurationCreateSerializer',
     'DischargeObservationSerializer',
     'ObservationStatisticsSerializer',
+    'ForecastRunSerializer',
+    'ForecastRunListSerializer',
+    'ForecastStatisticsSerializer',
     'DataPullLogSerializer',
     'DataPullLogListSerializer',
 ]
