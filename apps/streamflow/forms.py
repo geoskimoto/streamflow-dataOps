@@ -14,7 +14,7 @@ class PullConfigurationForm(ModelForm):
     class Meta:
         model = PullConfiguration
         fields = [
-            'name', 'description', 'data_type', 'data_strategy',
+            'name', 'description', 'data_source', 'data_type', 'data_strategy',
             'pull_start_date', 'is_enabled', 'schedule_type', 'schedule_value'
         ]
         widgets = {
@@ -35,6 +35,7 @@ class PullConfigurationForm(ModelForm):
                 'placeholder': 'Configuration name',
                 'class': 'form-control'
             }),
+            'data_source': forms.Select(attrs={'class': 'form-select'}),
             'data_type': forms.Select(attrs={'class': 'form-select'}),
             'data_strategy': forms.Select(attrs={'class': 'form-select'}),
             'schedule_type': forms.Select(attrs={'class': 'form-select'}),
@@ -42,6 +43,7 @@ class PullConfigurationForm(ModelForm):
         labels = {
             'name': 'Configuration Name',
             'description': 'Description',
+            'data_source': 'Data Source',
             'data_type': 'Data Type',
             'data_strategy': 'Data Strategy',
             'pull_start_date': 'Start Date (Optional)',
@@ -51,7 +53,8 @@ class PullConfigurationForm(ModelForm):
         }
         help_texts = {
             'name': 'A unique, descriptive name for this configuration',
-            'data_type': 'Choose discharge, stage, or both',
+            'data_source': 'Select the data source (USGS, Environment Canada, NOAA RFC)',
+            'data_type': 'Choose discharge, stage, or forecast data type',
             'data_strategy': 'Full historical: pull all available data. Latest only: pull recent data only',
             'pull_start_date': 'Leave empty to start from earliest available data',
             'schedule_type': 'How frequently to run this configuration',

@@ -10,6 +10,7 @@ class Station(models.Model):
     AGENCY_CHOICES = [
         ("USGS", "USGS"),
         ("EC", "Environment Canada"),
+        ("NOAA_RFC", "NOAA River Forecast Center"),
     ]
 
     station_number = models.CharField(max_length=50, unique=True, db_index=True)
@@ -127,11 +128,13 @@ class PullConfiguration(models.Model):
         ("USGS", "USGS NWIS"),
         ("EC", "Environment Canada"),
         ("NOAA", "NOAA National Water Model"),
+        ("NOAA_RFC", "NOAA River Forecast Center"),
     ]
 
     DATA_TYPE_CHOICES = [
         ("realtime_15min", "Real-time 15 min"),
         ("daily_mean", "Daily Mean"),
+        ("forecast", "Forecast"),
     ]
 
     STRATEGY_CHOICES = [
@@ -260,6 +263,7 @@ class MasterStation(models.Model):
     AGENCY_CHOICES = [
         ("USGS", "USGS"),
         ("EC", "Environment Canada"),
+        ("NOAA_RFC", "NOAA River Forecast Center"),
     ]
 
     station_number = models.CharField(max_length=50, unique=True, db_index=True)
@@ -268,6 +272,8 @@ class MasterStation(models.Model):
     longitude = models.DecimalField(max_digits=11, decimal_places=8, null=True, blank=True)
     state_code = models.CharField(max_length=10, blank=True, db_index=True)
     huc_code = models.CharField(max_length=20, blank=True, db_index=True)
+    rfc_code = models.CharField(max_length=20, blank=True, db_index=True, help_text="River Forecast Center code (e.g., NWRFC, CNRFC)")
+    noaa_lid = models.CharField(max_length=50, unique=True, null=True, blank=True, db_index=True, help_text="NOAA Location ID")
     altitude_ft = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     drainage_area_sqmi = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     agency = models.CharField(max_length=20, choices=AGENCY_CHOICES, default="USGS")

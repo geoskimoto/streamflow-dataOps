@@ -179,6 +179,51 @@ def execute_pull_configuration(self, config_id: int):
                     except StationMapping.DoesNotExist:
                         logger.warning(f"No StationMapping found for USGS {station_number}")
                         continue
+
+                elif agency == "NOAA_RFC":
+                    # NOAA River Forecast Center - forecasts only
+                    client = NOAAClient()
+                    
+                    if config.data_type == "forecast":
+                        logger.info(f"Fetching RFC forecast for {station_number}")
+                        forecast_data = client.get_rfc_forecast(station_number)
+                        
+                        if forecast_data:
+                            # Get or create Station record
+                            from apps.streamflow.models import Station, ForecastRun
+                            
+                            station_obj, _ = Station.objects.get_or_create(
+                                station_number=station_number,
+                                defaults={
+                                    'name': config_station.station_name or f"NOAA Station {station_number}",
+                                    'agency': 'NOAA_RFC',
+                                }
+                            )
+                            
+                            # Create ForecastRun record
+                            forecast_run = ForecastRun.objects.create(
+                                station=station_obj,
+                                source='NOAA_RFC',
+                                run_date=forecast_data['run_date'],
+                                data=forecast_data['forecast_data'],
+                                rmse=forecast_data.get('rmse')
+                            )
+                            
+                            total_records += len(forecast_data['forecast_data'])
+                            successful_stations += 1
+                            
+                            logger.info(
+                                f"✓ Stored forecast run with {len(forecast_data['forecast_data'])} "
+                                f"data points for {station_number}"
+                            )
+                        else:
+                            logger.warning(f"No forecast data available for {station_number}")
+                            successful_stations += 1  # Still count as successful
+                        
+                        continue  # NOAA_RFC doesn't produce observations
+                    else:
+                        logger.error(f"NOAA_RFC only supports 'forecast' data type, got: {config.data_type}")
+                        continue
                 
                 else:
                     logger.error(f"Unknown agency: {agency}")

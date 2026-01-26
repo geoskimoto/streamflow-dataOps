@@ -1,0 +1,18 @@
+#!/bin/bash
+echo "========================================="
+echo "Celery Diagnostic Script"
+echo "========================================="
+echo ""
+echo "1. Testing Redis connection..."
+redis-cli -h localhost -p 6379 ping 2>&1 | head -1
+echo ""
+echo "2. Celery worker status:"
+pgrep -f "celery.*worker" > /dev/null && echo "   ✓ Running" || echo "   ✗ Not running"
+echo ""
+echo "3. Celery beat status:"
+pgrep -f "celery.*beat" > /dev/null && echo "   ✓ Running" || echo "   ✗ Not running"
+echo ""
+echo "========================================="
+echo "To start Celery:"
+echo "  celery -A config worker --loglevel=info"
+echo "========================================="

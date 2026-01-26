@@ -50,6 +50,18 @@
                 </div>
                 
                 <div class="col-md-2">
+                    <label for="rfc" class="form-label">RFC</label>
+                    <select class="form-select" id="rfc" name="rfc">
+                        <option value="">All RFCs</option>
+                        {% for rfc in rfcs %}
+                        <option value="{{ rfc }}" {% if current_filters.rfc == rfc %}selected{% endif %}>
+                            {{ rfc }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="col-md-2">
                     <label for="huc" class="form-label">HUC Code</label>
                     <input type="text" class="form-control" id="huc" name="huc" 
                            placeholder="e.g., 02070010" value="{{ current_filters.huc }}">

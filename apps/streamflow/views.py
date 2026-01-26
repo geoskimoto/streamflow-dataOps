@@ -481,6 +481,8 @@ def station_search_ajax(request):
     query = request.GET.get('q', '').strip()
     state = request.GET.get('state', '').strip()
     huc = request.GET.get('huc', '').strip()
+    rfc = request.GET.get('rfc', '').strip()
+    agency = request.GET.get('agency', '').strip()
     limit = int(request.GET.get('limit', 100))
     offset = int(request.GET.get('offset', 0))
     
@@ -500,6 +502,12 @@ def station_search_ajax(request):
     if huc:
         stations = stations.filter(huc_code__startswith=huc)
     
+    if rfc:
+        stations = stations.filter(rfc_code=rfc)
+    
+    if agency:
+        stations = stations.filter(agency=agency)
+    
     # Get total count before pagination
     total_count = stations.count()
     
@@ -514,6 +522,8 @@ def station_search_ajax(request):
             'station_name': station.station_name,
             'state_code': station.state_code,
             'huc_code': station.huc_code,
+            'rfc_code': station.rfc_code,
+            'agency': station.agency,
             'latitude': str(station.latitude) if station.latitude else None,
             'longitude': str(station.longitude) if station.longitude else None,
         }
@@ -737,6 +747,11 @@ class MasterStationListView(ListView):
         if state:
             queryset = queryset.filter(state_code=state)
         
+        # Filter by RFC
+        rfc = self.request.GET.get('rfc')
+        if rfc:
+            queryset = queryset.filter(rfc_code=rfc)
+        
         # Filter by HUC code
         huc = self.request.GET.get('huc')
         if huc:
@@ -756,12 +771,16 @@ class MasterStationListView(ListView):
         context['states'] = MasterStation.objects.exclude(
             state_code=''
         ).values_list('state_code', flat=True).distinct().order_by('state_code')
+        context['rfcs'] = MasterStation.objects.exclude(
+            rfc_code=''
+        ).values_list('rfc_code', flat=True).distinct().order_by('rfc_code')
         
         # Pass filter values back to template
         context['current_filters'] = {
             'search': self.request.GET.get('search', ''),
             'agency': self.request.GET.get('agency', ''),
             'state': self.request.GET.get('state', ''),
+            'rfc': self.request.GET.get('rfc', ''),
             'huc': self.request.GET.get('huc', ''),
             'sort': self.request.GET.get('sort', 'station_number'),
         }
