@@ -6,7 +6,16 @@
 {% block content %}
 <div class="container-fluid mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2><i class="fas fa-map-marker-alt"></i> Configured Stations</h2>
+        <div>
+            <h2><i class="fas fa-map-marker-alt"></i> Stations</h2>
+            <p class="text-muted mb-0">
+                {% if request.GET.configured_only == 'true' %}
+                    Showing only stations in active configurations
+                {% else %}
+                    Showing all stations in database
+                {% endif %}
+            </p>
+        </div>
         <div class="btn-group">
             <a href="{% url 'streamflow:station_import' %}" class="btn btn-info">
                 <i class="fas fa-file-upload"></i> Import CSV
@@ -30,6 +39,22 @@
         </div>
         <div class="card-body">
             <form method="get" action="{% url 'streamflow:station_list' %}" class="row g-3">
+                <!-- Configured Only Toggle - Full width at top -->
+                <div class="col-12">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="configured_only" 
+                               name="configured_only" value="true"
+                               {% if request.GET.configured_only == 'true' %}checked{% endif %}
+                               onchange="this.form.submit()">
+                        <label class="form-check-label fw-bold" for="configured_only">
+                            <i class="fas fa-check-circle"></i> Show only stations in active configurations
+                        </label>
+                        <small class="form-text text-muted d-block">
+                            Filter to stations that are part of at least one pull configuration
+                        </small>
+                    </div>
+                </div>
+                
                 <div class="col-md-3">
                     <label for="search" class="form-label">Search</label>
                     <input type="text" class="form-control" id="search" name="search" 
@@ -43,7 +68,7 @@
                         <option value="">All Agencies</option>
                         <option value="USGS" {% if request.GET.agency == 'USGS' %}selected{% endif %}>USGS</option>
                         <option value="EC" {% if request.GET.agency == 'EC' %}selected{% endif %}>Environment Canada</option>
-                        <option value="NOAA" {% if request.GET.agency == 'NOAA' %}selected{% endif %}>NOAA</option>
+                        <option value="NOAA_RFC" {% if request.GET.agency == 'NOAA_RFC' %}selected{% endif %}>NOAA RFC</option>
                     </select>
                 </div>
                 
@@ -56,34 +81,57 @@
                 
                 <div class="col-md-2">
                     <label for="huc_code" class="form-label">HUC Code</label>
-                    <input type="text" class="form-control" id="huc_code" name="huc_code" 
-                           value="{{ request.GET.huc_code }}" 
+                    <input type="text" class="form-control" id="huc_code" name="huc" 
+                           value="{{ request.GET.huc }}" 
                            placeholder="e.g., 02070010">
+                </div>
+                
+                <!-- NEW: RFC Filter -->
+                <div class="col-md-2">
+                    <label for="rfc" class="form-label">RFC</label>
+                    <select class="form-select" id="rfc" name="rfc">
+                        <option value="">All RFCs</option>
+                        {% for rfc in rfcs %}
+                        <option value="{{ rfc }}" {% if request.GET.rfc == rfc %}selected{% endif %}>
+                            {{ rfc }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <!-- NEW: Configuration Filter -->
+                <div class="col-md-2">
+                    <label for="configuration" class="form-label">Configuration</label>
+                    <select class="form-select" id="configuration" name="configuration">
+                        <option value="">All Configurations</option>
+                        {% for config in configurations %}
+                        <option value="{{ config.id }}" {% if request.GET.configuration == config.id|stringformat:'s' %}selected{% endif %}>
+                            {{ config.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
                 </div>
                 
                 <div class="col-md-2">
                     <label for="active" class="form-label">Status</label>
-                    <select class="form-select" id="active" name="active">
+                    <select class="form-select" id="active" name="is_active">
                         <option value="">All Stations</option>
-                        <option value="true" {% if request.GET.active == 'true' %}selected{% endif %}>Active Only</option>
-                        <option value="false" {% if request.GET.active == 'false' %}selected{% endif %}>Inactive Only</option>
+                        <option value="true" {% if request.GET.is_active == 'true' %}selected{% endif %}>Active Only</option>
+                        <option value="false" {% if request.GET.is_active == 'false' %}selected{% endif %}>Inactive Only</option>
                     </select>
                 </div>
                 
-                <div class="col-md-1 d-flex align-items-end">
-                    <button type="submit" class="btn btn-primary w-100">
+                <div class="col-md-12 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary me-2">
                         <i class="fas fa-search"></i> Filter
                     </button>
+                    {% if request.GET %}
+                    <a href="{% url 'streamflow:station_list' %}" class="btn btn-outline-secondary">
+                        <i class="fas fa-times"></i> Clear Filters
+                    </a>
+                    {% endif %}
                 </div>
             </form>
-            
-            {% if request.GET %}
-            <div class="mt-2">
-                <a href="{% url 'streamflow:station_list' %}" class="btn btn-sm btn-outline-secondary">
-                    <i class="fas fa-times"></i> Clear Filters
-                </a>
-            </div>
-            {% endif %}
         </div>
     </div>
 
@@ -91,7 +139,7 @@
     <div class="alert alert-info">
         <i class="fas fa-info-circle"></i>
         Showing {{ page_obj.start_index }} to {{ page_obj.end_index }} of {{ paginator.count }} station{{ paginator.count|pluralize }}
-        {% if request.GET.search or request.GET.agency or request.GET.state or request.GET.huc_code or request.GET.active %}
+        {% if request.GET.search or request.GET.agency or request.GET.state or request.GET.huc or request.GET.is_active or request.GET.rfc or request.GET.configuration or request.GET.configured_only %}
         (filtered)
         {% endif %}
     </div>

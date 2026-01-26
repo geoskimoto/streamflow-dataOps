@@ -19,6 +19,7 @@
 | Phase 6: NOAA RFC | 🟢 COMPLETE | 100% | Jan 26, 2026 | Jan 26, 2026 | NOAA River Forecast Center integration (996 stations) |
 | Phase 7: Frontend QA | 🟢 COMPLETE | 100% | Jan 26, 2026 | Jan 26, 2026 | Comprehensive UI/UX testing, 7 issues fixed |
 | Phase 8: Documentation | 🟢 COMPLETE | 100% | Jan 26, 2026 | Jan 26, 2026 | Organized docs structure, archived old files, updated README |
+| Phase 9: Environment Canada | 🟢 COMPLETE | 100% | Jan 26, 2026 | Jan 26, 2026 | MSC GeoMet API integration (2,324 BC stations), RFC filter functional |
 
 **Legend:**
 - ⚪ Not Started
@@ -596,3 +597,89 @@ None
 ---
 
 **Last Updated:** January 26, 2026, 7:50 PM
+
+---
+
+## Phase 8: Documentation Reorganization
+
+### Tasks Completed ✅
+- [x] Created Documentation/ folder for long-form guides
+- [x] Moved long guides to Documentation/ (COMPONENT_EXPLANATIONS.md, DEPLOYMENT.md, TESTING_GUIDE.md)
+- [x] Archived obsolete files to archive/ (OVERVIEW.md, legacy components, ARCHIVE_STATUS.md)
+- [x] Updated README.md with current project structure
+- [x] Created DEPRECATED_FILES.md to track removed files
+- [x] Fixed all broken documentation links
+- [x] Updated STATUS.md with current deployment state
+- [x] Cleaned workspace root directory
+
+### Status
+🟢 **COMPLETE** - Documentation organized and up-to-date
+
+---
+
+## Phase 9: Environment Canada Integration
+
+### Section 9.1: API Client Implementation
+- [x] Complete rewrite of CanadaClient for MSC GeoMet API
+- [x] Implemented get_realtime_data() - 15-minute observations
+- [x] Implemented get_daily_mean() - Daily discharge values
+- [x] Implemented get_station_info() - Station metadata
+- [x] Implemented get_stations_by_province() - Bulk station fetch
+- [x] Unit conversion: CMS_TO_CFS = 35.3147 constant
+- [x] Client-side date filtering (API workaround)
+- [x] Retry logic with exponential backoff
+- [x] GeoJSON response parsing
+
+### Section 9.2: Management Commands
+- [x] Created import_bc_stations command
+  - Province filtering (default BC)
+  - Active-only flag for real-time stations
+  - Drainage area conversion (km² → sq mi)
+  - Get-or-create pattern to avoid duplicates
+- [x] Fixed populate_station_mappings command
+  - Corrected StationMapping schema usage
+  - Source/target agency:id pattern
+  - Optional --clear flag
+  - RFC distribution reporting
+
+### Section 9.3: Frontend Fixes
+- [x] Fixed RFC filter in StationListView
+  - Updated query to use correct StationMapping schema
+  - Now properly filters by RFC code
+- [x] Added configured stations filter toggle
+  - Checkbox control with auto-submit
+  - Filters to PullConfigurationStation relationships
+  - Dynamic page subtitle
+- [x] Updated station list template
+  - Configured-only checkbox UI
+  - Filter form integration
+
+### Section 9.4: Documentation
+- [x] Created EC_INTEGRATION_SUMMARY.md (technical details)
+- [x] Created QUICK_START_EC.md (step-by-step guide)
+- [x] Created test_ec_client.py (testing script)
+- [x] Updated README.md:
+  - Added management commands section
+  - Updated data sources (EC details)
+  - Updated production stats (14,319 stations)
+  - Added January 2026 updates
+- [x] Updated DEPLOYMENT.md:
+  - Added "Latest Updates" section
+  - Added "Initial Setup Commands" guide
+  - Added EC integration fixes section
+  - Updated database stats
+
+### Results Achieved
+- **Database:** 14,319 MasterStations (USGS: 11,000 | EC: 2,324 | NOAA: 996)
+- **Mappings:** 309 StationMapping records created
+- **RFC Distribution:** NWRFC (200), None (109)
+- **BC Stations:** 2,324 available for import
+- **API Testing:** Daily mean data verified (Fraser River)
+- **Unit Conversion:** Tested accurate (1010 cms = 35,667.85 cfs)
+
+### Status
+🟢 **COMPLETE** - Environment Canada integration fully operational
+
+---
+
+**Last Updated:** January 26, 2026, Late Evening

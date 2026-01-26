@@ -57,8 +57,14 @@ python manage.py migrate
 # Create superuser
 python manage.py createsuperuser
 
-# Sync stations from configurations
-python manage.py sync_stations
+# Collect static files
+python manage.py collectstatic --noinput
+
+# Populate station mappings (enables RFC filter)
+python manage.py populate_station_mappings
+
+# Optional: Import BC stations from Environment Canada
+python manage.py import_bc_stations
 
 # Start development server
 python manage.py runserver
@@ -162,6 +168,42 @@ python manage.py test apps.streamflow.tests.test_models
 
 ---
 
+## 🛠️ Management Commands
+
+### Data Setup & Maintenance
+
+```bash
+# Populate StationMapping table (required for RFC filter)
+python manage.py populate_station_mappings
+
+# Import Environment Canada stations (British Columbia)
+python manage.py import_bc_stations
+
+# Import only active real-time BC stations
+python manage.py import_bc_stations --active-only (11,000+ stations)
+- **NOAA:** `NOAAClient` - River forecast center forecasts (1,000+ stations)
+- **Canada:** `CanadaClient` - Environment Canada hydrometric data (2,300+ BC stations)
+  - Uses MSC GeoMet API
+  - Metric units (cms) with automatic CFS conversion
+  - Real-time (15-min) and daily mean data
+python manage.py populate_station_mappings --clear
+```
+
+### Station Data Management
+
+```bash
+# Sync master stations to working stations
+python manage.py sync_stations
+
+# Import stations from CSV
+python manage.py import_stations data/stations.csv
+
+# Export stations to CSV
+python manage.py export_stations output.csv
+```
+
+---
+
 ## 🗄️ Database Models
 
 ### Core Models
@@ -204,14 +246,20 @@ NOAA_API_BASE_URL=https://api.weather.gov/
 
 ## 📈 Current Status
 
-### Production Data (as of January 26, 2026)
+### Master Stations:** 14,319 reference stations (USGS: 11,000 | EC: 2,324 | NOAA: 996)
+- **Station Mappings:** 309 Station-to-MasterStation links (RFC filter enabled)
+- **Production Data (as of January 26, 2026)
 
 - **Stations:** 309 active monitoring locations
 - **Observations:** 683 discharge records
 - **Forecasts:** 450 forecast runs with complete data
 - **Pull Configurations:** 4 active automated pulls
-- **API Status:** ✅ All endpoints tested and validated
+- **API Status:**  (January 2026)
 
+- ✅ Environment Canada integration (MSC GeoMet API)
+- ✅ StationMapping system for RFC filter
+- ✅ "Configured stations only" filter toggle
+- ✅ 2,324 BC stations available for sync
 ### Recent Updates
 
 - ✅ Complete REST API with forecast endpoints

@@ -679,6 +679,44 @@ class StationListView(ListView):
         elif is_active == 'false':
             queryset = queryset.filter(is_active=False)
         
+        # NEW: Filter by "configured only" (stations in at least one configuration)
+        configured_only = self.request.GET.get('configured_only')
+        if configured_only == 'true':
+            from .models import PullConfigurationStation
+            # Get all station numbers that are in at least one configuration
+            configured_station_numbers = PullConfigurationStation.objects.values_list(
+                'station_number', flat=True
+            ).distinct()
+            queryset = queryset.filter(station_number__in=configured_station_numbers)
+        
+        # Filter by RFC (query MasterStation via StationMapping)
+        rfc = self.request.GET.get('rfc')
+        if rfc:
+            from .models import StationMapping, MasterStation
+            # Get MasterStation IDs with this RFC code
+            master_ids = MasterStation.objects.filter(
+                rfc_code=rfc
+            ).values_list('station_number', flat=True)
+            
+            # Get Station IDs that map to these MasterStations
+            station_numbers = StationMapping.objects.filter(
+                source_agency="STATION",
+                target_agency="MASTER",
+                target_id__in=master_ids
+            ).values_list('source_id', flat=True)
+            
+            queryset = queryset.filter(station_number__in=station_numbers)
+        
+        # Filter by Configuration
+        configuration = self.request.GET.get('configuration')
+        if configuration:
+            from .models import PullConfigurationStation
+            # Get station numbers in this configuration
+            station_numbers = PullConfigurationStation.objects.filter(
+                configuration_id=configuration
+            ).values_list('station_number', flat=True).distinct()
+            queryset = queryset.filter(station_number__in=station_numbers)
+        
         # Annotate with observation count
         queryset = queryset.annotate(
             observation_count=Count('discharge_observations')
@@ -702,6 +740,20 @@ class StationListView(ListView):
             basin__isnull=False
         ).values_list('basin', flat=True).distinct().order_by('basin')[:50]
         
+        # NEW: Get distinct RFC codes from MasterStation
+        from .models import MasterStation
+        context['rfcs'] = MasterStation.objects.filter(
+            rfc_code__isnull=False
+        ).exclude(rfc_code='').values_list(
+            'rfc_code', flat=True
+        ).distinct().order_by('rfc_code')
+        
+        # NEW: Get active configurations
+        from .models import PullConfiguration
+        context['configurations'] = PullConfiguration.objects.filter(
+            is_enabled=True
+        ).order_by('name')
+        
         # Pass filter values back to template
         context['current_filters'] = {
             'search': self.request.GET.get('search', ''),
@@ -710,6 +762,9 @@ class StationListView(ListView):
             'basin': self.request.GET.get('basin', ''),
             'huc': self.request.GET.get('huc', ''),
             'is_active': self.request.GET.get('is_active', ''),
+            'rfc': self.request.GET.get('rfc', ''),
+            'configuration': self.request.GET.get('configuration', ''),
+            'configured_only': self.request.GET.get('configured_only', ''),  # NEW
             'sort': self.request.GET.get('sort', 'station_number'),
         }
         

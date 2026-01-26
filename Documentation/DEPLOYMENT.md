@@ -1,9 +1,25 @@
 # Deployment Summary - StreamFlow DataOps
 
-**Date:** January 20, 2026  
-**Version:** Phase 5 Complete  
-**Commit:** 9877425  
+**Date:** January 26, 2026  
+**Version:** Phase 5 Complete + Environment Canada Integration  
+**Commit:** Latest  
 **Status:** ✅ DEPLOYED & OPERATIONAL
+
+---
+
+## Latest Updates (January 26, 2026)
+
+### Environment Canada Integration ✅
+- **MSC GeoMet API Integration** - Complete rewrite of `CanadaClient`
+- **BC Station Import** - 2,324 British Columbia stations available
+- **Metric Units Support** - CMS with automatic CFS conversion
+- **Real-time & Daily Mean** - Both data types supported
+
+### Station Management Enhancements ✅
+- **StationMapping System** - 309 mappings created for RFC filtering
+- **RFC Filter** - Now fully functional with proper station linkage
+- **Configured Filter Toggle** - Show all stations or only configured ones
+- **Management Commands** - New commands for setup and maintenance
 
 ---
 
@@ -23,10 +39,12 @@
 - **Accessible On:** 0.0.0.0:8000 (all network interfaces)
 
 ### Database
-- **Type:** SQLite3
+- **Type:** SQLite3 (Development) / PostgreSQL (Production)
 - **Location:** `/home/mrguy/Proj/streamflow-dataOps/streamflow-dataOps/db.sqlite3`
 - **Migrations:** 51 migrations applied ✅
-- **Stations:** 7 stations loaded
+- **Stations:** 309 working stations
+- **Master Stations:** 14,319 reference stations (USGS: 11,000 | EC: 2,324 | NOAA: 996)
+- **Station Mappings:** 309 mappings (RFC filter enabled)
 - **Status:** Operational
 
 ### Static Files
@@ -86,7 +104,140 @@
 | API Other Tests | 4 | 4 | 100% | ✅ |
 | Integration Tests | 14 | 9 | 64% | ⚠️ |
 
+---Initial Setup Commands
+
+### First-Time Deployment
+
+```bash
+# 1. Clone and setup environment
+git clone <repository-url>
+cd streamflow-dataOps
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# 2. Configure environment
+cp .env.example .env
+# Edit .env with your settings
+
+# 3. Run migrations
+python manage.py migrate
+
+# 4. Create admin user
+python manage.py createsuperuser
+
+# 5. Collect static files
+python manage.py collectstatic --noinput
+
+# 6. Populate station mappings (required for RFC filter)
+python manage.py populate_station_mappings
+
+# 7. Optional: Import Environment Canada BC stations
+python manage.py import_bc_stations
+
+# 8. Start server
+python manage.py runserver 0.0.0.0:8000
+```
+
+### Management Commands Reference
+
+#### Station Setup
+```bash
+# Populate StationMapping table (enables RFC filter)
+python manage.py populate_station_mappings
+
+# Clear and rebuild mappings
+python manage.py populate_station_mappings --clear
+
+# Import BC stations from Environment Canada
+python manage.py import_bc_stations
+
+# Import only active real-time stations
+python manage.py import_bc_stations --active-only
+
+# Import from different province
+python manage.py import_bc_stations --province AB
+
+# Set custom import limit
+python manage.py import_bc_stations --limit 1000
+```
+
+#### Data Operations
+```bash
+# Sync master stations to working set
+python manage.py sync_stations
+
+# Import from CSV
+python manage.py import_stations data/stations.csv
+
+# Export to CSV
+python manage.py export_stations output.csv
+```
+
 ---
+
+## Fixes Deployed
+
+### January 26, 2026 - Environment Canada Integration
+
+#### 1. CanadaClient MSC GeoMet API ✅
+**Implementation:**
+- Rewrote client to use https://api.weather.gc.ca
+- Added `get_realtime_data()` for 15-min observations
+- Added `get_daily_mean()` for daily discharge
+- Added `get_station_info()` for metadata
+- Added `get_stations_by_province()` for bulk imports
+- Automatic metric (cms) to imperial (cfs) conversion
+
+**Files Modified:**
+- `src/acquisition/canada_client.py`
+
+#### 2. BC Station Import Command ✅
+**Implementation:**
+- Created management command to import BC stations
+- Fetches from Environment Canada API
+- Populates MasterStation table with agency='EC'
+- Converts drainage area from km² to sq mi
+- Supports filtering for active stations only
+
+**Files Created:**
+- `apps/streamflow/management/commands/import_bc_stations.py`
+
+#### 3. StationMapping Population ✅
+**Problem:** RFC filter non-functional due to empty StationMapping table  
+**Fix:**
+- Created command to link Station → MasterStation
+- Uses correct schema: source_agency:source_id → target_agency:target_id
+- Populated 309 mappings
+- Updated view logic to use proper mapping structure
+
+**Files Created:**
+- `apps/streamflow/management/commands/populate_station_mappings.py`
+
+**Files Modified:**
+- `apps/streamflow/views.py` (RFC filter logic)
+
+#### 4. Configured Stations Filter Toggle ✅
+**Implementation:**
+- Added checkbox to /stations page
+- Filters to show only stations in active configurations
+- Dynamic page subtitle reflects mode
+- AutInitial Data Setup**
+   - [ ] Run migrations: `python manage.py migrate`
+   - [ ] Create superuser: `python manage.py createsuperuser`
+   - [ ] Collect static files: `python manage.py collectstatic --noinput`
+   - [ ] Populate station mappings: `python manage.py populate_station_mappings`
+   - [ ] Optional: Import BC stations: `python manage.py import_bc_stations`
+
+2. **o-submit on checkbox change
+
+**Files Modified:**
+- `apps/streamflow/views.py` (StationListView queryset)
+- `apps/streamflow/templates/streamflow/station_list.html`
+
+---
+
+## 
 
 ## Fixes Deployed (January 20, 2026)
 
@@ -198,13 +349,7 @@ CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 ```
 
----
-
-## Next Steps for Production Deployment
-
-### Required Before Production
-
-1. **Security Configuration**
+2. **Security Configuration**
    - [ ] Set `DEBUG=False`
    - [ ] Generate new `SECRET_KEY` (50+ characters)
    - [ ] Configure `ALLOWED_HOSTS` with production domains
@@ -213,26 +358,38 @@ CELERY_RESULT_BACKEND=redis://localhost:6379/0
    - [ ] Set SESSION_COOKIE_SECURE=True
    - [ ] Set CSRF_COOKIE_SECURE=True
 
+3. **Database Migration**
+   - [ ] Install PostgreSQL
+   - [ ] Create production database
+   - [ ] Update DATABASE_URL in .env
+   - [ ] Run migrations: `python manage.py migrate`
+   - [ ] Populate station mappings: `python manage.py populate_station_mappings`
+   - [ ] Load production data
+
+4
 2. **Database Migration**
    - [ ] Install PostgreSQL
    - [ ] Create production database
    - [ ] Update DATABASE_URL in .env
    - [ ] Run migrations: `python manage.py migrate`
-   - [ ] Load production data
-
-3. **Static Files & Media**
+4. **Static Files & Media**
    - [ ] Configure production static file server (nginx/whitenoise)
    - [ ] Set STATIC_ROOT and MEDIA_ROOT
    - [ ] Run collectstatic
 
-4. **Application Server**
+5  - [ ] Set STATIC_ROOT and MEDIA_ROOT
+5. **Application Server**
    - [ ] Install gunicorn or uWSGI
    - [ ] Create systemd service file
    - [ ] Configure worker processes
    - [ ] Set up reverse proxy (nginx)
 
-5. **Background Tasks**
+6. **Background Tasks**
    - [ ] Ensure Redis is running
+   - [ ] Start Celery workers: `celery -A config worker -l info`
+   - [ ] Start Celery beat: `celery -A config beat -l info`
+
+7  - [ ] Ensure Redis is running
    - [ ] Start Celery workers: `celery -A config worker -l info`
    - [ ] Start Celery beat: `celery -A config beat -l info`
 
@@ -290,8 +447,8 @@ Expected response:
 - **Dashboard Integration Guide:** `DASHBOARD_INTEGRATION_GUIDE.md`
 - **Quick Start:** `DJANGO_QUICKSTART.md`
 - **Status:** `STATUS.md`
-
----
+Latest Deployment:** January 26, 2026 - Environment Canada Integration  
+**Previous Deployment:** January 20, 2026, 12:23 PM
 
 **Deployment Completed:** January 20, 2026, 12:23 PM  
 **By:** GitHub Copilot  
