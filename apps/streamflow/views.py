@@ -20,6 +20,7 @@ from .models import (
     Station,
     MasterStation,
     DischargeObservation,
+    ForecastRun,
     StationMapping,
 )
 from .forms import StationForm, PullConfigurationForm
@@ -38,10 +39,10 @@ class PullConfigurationListView(ListView):
     
     def get_queryset(self):
         queryset = PullConfiguration.objects.annotate(
-            station_count=Count('configuration_stations'),
+            station_count=Count('configuration_stations', distinct=True),
             latest_log=Max('logs__start_time'),
-            total_runs=Count('logs'),
-            successful_runs=Count('logs', filter=Q(logs__status='success'))
+            total_runs=Count('logs', distinct=True),
+            successful_runs=Count('logs', filter=Q(logs__status='success'), distinct=True)
         )
         
         # Search functionality
@@ -418,6 +419,11 @@ def dashboard(request):
         'station'
     ).order_by('-observed_at')[:15]
     
+    # Latest forecasts with station info
+    latest_forecasts = ForecastRun.objects.select_related(
+        'station'
+    ).order_by('-run_date')[:15]
+    
     # Configurations needing attention (failed recently)
     failed_configs = PullConfiguration.objects.filter(
         logs__status='failed',
@@ -464,6 +470,7 @@ def dashboard(request):
         
         # Recent data
         'latest_observations': latest_observations,
+        'latest_forecasts': latest_forecasts,
         'recent_logs': DataPullLog.objects.select_related('configuration').order_by('-start_time')[:15],
         
         # Alerts

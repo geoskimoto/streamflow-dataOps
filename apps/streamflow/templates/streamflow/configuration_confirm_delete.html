@@ -1,42 +1,122 @@
 {% extends "base.html" %}
+{% load static %}
 
-{% block title %}Confirm Delete | Streamflow DataOps{% endblock %}
+{% block title %}Delete Configuration{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-md-6 offset-md-3">
-        <div class="card">
-            <div class="card-header bg-danger text-white">
-                <h4 class="mb-0"><i class="bi bi-exclamation-triangle-fill"></i> Confirm Delete</h4>
-            </div>
-            <div class="card-body">
-                <p>Are you sure you want to delete the configuration "<strong>{{ object.name }}</strong>"?</p>
-                
-                <div class="alert alert-warning">
-                    <i class="bi bi-exclamation-triangle"></i>
-                    <strong>Warning:</strong> This will also delete:
-                    <ul class="mb-0">
-                        <li>All associated station links</li>
-                        <li>All execution logs</li>
-                        <li>All progress tracking data</li>
-                    </ul>
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h4 class="mb-0"><i class="fas fa-exclamation-triangle"></i> Delete Configuration</h4>
                 </div>
-                
-                <p class="text-muted">This action cannot be undone.</p>
-                
-                <form method="post">
-                    {% csrf_token %}
-                    <div class="d-flex justify-content-between">
-                        <a href="{% url 'streamflow:configuration_detail' object.id %}" class="btn btn-secondary">
-                            <i class="bi bi-x-circle"></i> Cancel
-                        </a>
-                        <button type="submit" class="btn btn-danger">
-                            <i class="bi bi-trash"></i> Delete Configuration
-                        </button>
+                <div class="card-body">
+                    <div class="alert alert-danger">
+                        <h5 class="alert-heading"><i class="fas fa-exclamation-circle"></i> Warning!</h5>
+                        <p class="mb-0">You are about to permanently delete the following configuration:</p>
                     </div>
-                </form>
+
+                    <div class="card mb-4">
+                        <div class="card-body">
+                            <h5 class="card-title">{{ object.name }}</h5>
+                            <p class="card-text text-muted">{{ object.description }}</p>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <p class="mb-1"><strong>Data Source:</strong> {{ object.get_data_source_display }}</p>
+                                    <p class="mb-1"><strong>Data Type:</strong> {{ object.get_data_type_display }}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p class="mb-1"><strong>Stations:</strong> {{ object.configuration_stations.count }}</p>
+                                    <p class="mb-1"><strong>Total Runs:</strong> {{ object.logs.count }}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-warning">
+                        <h6><i class="fas fa-info-circle"></i> This action will:</h6>
+                        <ul class="mb-0">
+                            <li>Permanently delete this configuration</li>
+                            <li>Remove all associated station assignments</li>
+                            <li>Delete all pull logs and history</li>
+                            <li><strong>This action CANNOT be undone!</strong></li>
+                        </ul>
+                    </div>
+
+                    <form method="post" id="deleteForm">
+                        {% csrf_token %}
+                        
+                        <div class="mb-3">
+                            <label for="confirmText" class="form-label">
+                                <strong>To confirm deletion, type exactly:</strong><br>
+                                <code class="text-danger fs-6">Yes, I'm sure I want to delete this configuration</code>
+                            </label>
+                            <input type="text" 
+                                   class="form-control form-control-lg" 
+                                   id="confirmText" 
+                                   name="confirm_text"
+                                   placeholder="Type the confirmation text here..."
+                                   autocomplete="off"
+                                   required>
+                            <div class="form-text text-danger" id="confirmError" style="display: none;">
+                                The text doesn't match. Please type exactly as shown above.
+                            </div>
+                        </div>
+
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <a href="{% url 'streamflow:configuration_list' %}" class="btn btn-secondary">
+                                <i class="fas fa-times"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-secondary" id="deleteButton" disabled>
+                                <i class="fas fa-trash"></i> Delete Configuration
+                            </button>
+                        </div>
+                    </form>
+                </div>
             </div>
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const confirmText = document.getElementById('confirmText');
+    const deleteButton = document.getElementById('deleteButton');
+    const confirmError = document.getElementById('confirmError');
+    const deleteForm = document.getElementById('deleteForm');
+    const requiredText = "Yes, I'm sure I want to delete this configuration";
+    
+    // Enable/disable button based on input
+    confirmText.addEventListener('input', function() {
+        if (this.value === requiredText) {
+            deleteButton.disabled = false;
+            deleteButton.classList.remove('btn-secondary');
+            deleteButton.classList.add('btn-danger');
+            confirmError.style.display = 'none';
+            confirmText.classList.remove('is-invalid');
+        } else {
+            deleteButton.disabled = true;
+            deleteButton.classList.remove('btn-danger');
+            deleteButton.classList.add('btn-secondary');
+        }
+    });
+    
+    // Final validation on submit
+    deleteForm.addEventListener('submit', function(e) {
+        if (confirmText.value !== requiredText) {
+            e.preventDefault();
+            confirmError.style.display = 'block';
+            confirmText.classList.add('is-invalid');
+            return false;
+        }
+        
+        // Show loading state
+        deleteButton.disabled = true;
+        deleteButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting...';
+    });
+});
+</script>
 {% endblock %}

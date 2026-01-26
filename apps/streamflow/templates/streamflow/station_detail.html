@@ -143,25 +143,25 @@
                     <div class="row text-center">
                         <div class="col-md-3">
                             <div class="border rounded p-3">
-                                <h3 class="text-primary">{{ stats.total_observations|default:0 }}</h3>
+                                <h3 class="text-primary">{{ observation_stats.total|default:0 }}</h3>
                                 <small class="text-muted">Total Observations</small>
                             </div>
                         </div>
                         <div class="col-md-3">
                             <div class="border rounded p-3">
-                                <h3 class="text-success">{{ stats.latest_obs_date|date:"Y-m-d"|default:"-" }}</h3>
+                                <h3 class="text-success">{{ observation_stats.latest|timesince|default:"-" }}</h3>
                                 <small class="text-muted">Latest Observation</small>
                             </div>
                         </div>
                         <div class="col-md-3">
                             <div class="border rounded p-3">
-                                <h3 class="text-info">{{ stats.avg_discharge|floatformat:2|default:"-" }}</h3>
+                                <h3 class="text-info">{{ observation_stats.avg_discharge|floatformat:2|default:"-" }}</h3>
                                 <small class="text-muted">Avg Discharge (cfs)</small>
                             </div>
                         </div>
                         <div class="col-md-3">
                             <div class="border rounded p-3">
-                                <h3 class="text-warning">{{ stats.max_discharge|floatformat:2|default:"-" }}</h3>
+                                <h3 class="text-warning">{{ observation_stats.max_discharge|floatformat:2|default:"-" }}</h3>
                                 <small class="text-muted">Max Discharge (cfs)</small>
                             </div>
                         </div>
@@ -181,17 +181,17 @@
                             <thead class="table-light">
                                 <tr>
                                     <th>Timestamp</th>
-                                    <th>Discharge (cfs)</th>
-                                    <th>Gage Height (ft)</th>
+                                    <th>Discharge</th>
+                                    <th>Type</th>
                                     <th>Quality</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for obs in recent_observations %}
                                 <tr>
-                                    <td>{{ obs.timestamp|date:"Y-m-d H:i" }}</td>
-                                    <td>{{ obs.discharge_cfs|floatformat:2|default:"-" }}</td>
-                                    <td>{{ obs.gage_height_ft|floatformat:2|default:"-" }}</td>
+                                    <td>{{ obs.observed_at|date:"Y-m-d H:i" }}</td>
+                                    <td>{{ obs.discharge|floatformat:2 }} {{ obs.unit }}</td>
+                                    <td><span class="badge bg-info">{{ obs.get_type_display }}</span></td>
                                     <td>
                                         <span class="badge bg-{% if obs.quality_code == 'A' %}success{% elif obs.quality_code == 'P' %}warning{% else %}secondary{% endif %}">
                                             {{ obs.quality_code|default:"U" }}
@@ -211,6 +211,47 @@
                 </div>
             </div>
 
+            <!-- Recent Forecasts Card -->
+            {% if recent_forecasts %}
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-chart-line"></i> Recent Forecasts</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Run Date</th>
+                                    <th>Source</th>
+                                    <th>Forecast Points</th>
+                                    <th>RMSE</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for forecast in recent_forecasts %}
+                                <tr style="cursor: pointer;" 
+                                    onclick="showForecastModal(
+                                        '{{ forecast.station.station_number }}',
+                                        '{{ forecast.station.name|escapejs }}',
+                                        '{{ forecast.run_date|date:"Y-m-d H:i" }}',
+                                        '{{ forecast.get_source_display }}',
+                                        {{ forecast.data|safe }},
+                                        '{{ forecast.rmse|default:"" }}'
+                                    )">
+                                    <td>{{ forecast.run_date|date:"Y-m-d H:i" }}</td>
+                                    <td><span class="badge bg-info">{{ forecast.get_source_display }}</span></td>
+                                    <td>{{ forecast.data|length }} points</td>
+                                    <td>{{ forecast.rmse|floatformat:2|default:"-" }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
             <!-- Pull Configurations Card -->
             <div class="card mb-4">
                 <div class="card-header">
@@ -219,22 +260,22 @@
                 <div class="card-body">
                     {% if configurations %}
                     <div class="list-group">
-                        {% for config in configurations %}
-                        <a href="{% url 'streamflow:configuration_detail' config.id %}" class="list-group-item list-group-item-action">
+                        {% for config_station in configurations %}
+                        <a href="{% url 'streamflow:configuration_detail' config_station.configuration.id %}" class="list-group-item list-group-item-action">
                             <div class="d-flex w-100 justify-content-between">
-                                <h6 class="mb-1">{{ config.name }}</h6>
+                                <h6 class="mb-1">{{ config_station.configuration.name }}</h6>
                                 <small>
-                                    {% if config.is_enabled %}
+                                    {% if config_station.configuration.is_enabled %}
                                     <span class="badge bg-success">Enabled</span>
                                     {% else %}
                                     <span class="badge bg-secondary">Disabled</span>
                                     {% endif %}
                                 </small>
                             </div>
-                            <p class="mb-1 text-muted small">{{ config.description|truncatewords:15 }}</p>
+                            <p class="mb-1 text-muted small">{{ config_station.configuration.description|truncatewords:15 }}</p>
                             <small class="text-muted">
-                                <i class="fas fa-database"></i> {{ config.data_type }} | 
-                                <i class="fas fa-clock"></i> {{ config.schedule_type }}
+                                <i class="fas fa-database"></i> {{ config_station.configuration.get_data_type_display }} | 
+                                <i class="fas fa-clock"></i> {{ config_station.configuration.get_schedule_type_display }}
                             </small>
                         </a>
                         {% endfor %}
@@ -287,4 +328,176 @@
         </div>
     </div>
 </div>
+
+<!-- Forecast Visualization Modal -->
+<div class="modal fade" id="forecastModal" tabindex="-1" aria-labelledby="forecastModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="forecastModalLabel">
+                    <i class="fas fa-chart-line"></i> <span id="modalStationName"></span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row mb-3">
+                    <div class="col-md-12">
+                        <div class="alert alert-info mb-3">
+                            <strong>Run Date:</strong> <span id="modalRunDate"></span> | 
+                            <strong>Source:</strong> <span id="modalSource"></span> | 
+                            <strong>RMSE:</strong> <span id="modalRMSE"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-lg-8">
+                        <div id="forecastChart" style="height: 450px;"></div>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="card">
+                            <div class="card-header bg-light">
+                                <h6 class="mb-0">Forecast Data</h6>
+                            </div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive" style="max-height: 450px; overflow-y: auto;">
+                                    <table class="table table-sm table-striped mb-0" id="forecastDataTable">
+                                        <thead class="table-light sticky-top">
+                                            <tr>
+                                                <th>Date/Time</th>
+                                                <th class="text-end">Value (cfs)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="forecastDataBody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<!-- Plotly.js -->
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
+
+<script>
+let pendingForecastData = null;
+
+function showForecastModal(stationNumber, stationName, runDate, source, forecastData, rmse) {
+    // Store the data to be populated when modal is fully shown
+    pendingForecastData = {
+        stationNumber: stationNumber,
+        stationName: stationName,
+        runDate: runDate,
+        source: source,
+        forecastData: forecastData,
+        rmse: rmse
+    };
+    
+    // Show modal - data will be populated in the 'shown.bs.modal' event
+    const modalElement = document.getElementById('forecastModal');
+    const modal = bootstrap.Modal.getInstance(modalElement) || new bootstrap.Modal(modalElement);
+    modal.show();
+}
+
+// Populate modal when it's fully shown
+document.getElementById('forecastModal').addEventListener('shown.bs.modal', function() {
+    if (!pendingForecastData) return;
+    
+    const data = pendingForecastData;
+    
+    // Update modal header info
+    document.getElementById('modalStationName').textContent = `${data.stationName} (${data.stationNumber})`;
+    document.getElementById('modalRunDate').textContent = data.runDate;
+    document.getElementById('modalSource').textContent = data.source;
+    document.getElementById('modalRMSE').textContent = data.rmse || 'N/A';
+    
+    // Prepare data for Plotly
+    const dates = data.forecastData.map(d => d.date);
+    const values = data.forecastData.map(d => d.value);
+    
+    // Create Plotly chart
+    const trace = {
+        x: dates,
+        y: values,
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: 'Forecast',
+        line: {
+            color: '#0d6efd',
+            width: 2
+        },
+        marker: {
+            color: '#0d6efd',
+            size: 6
+        },
+        hovertemplate: '<b>%{x}</b><br>Discharge: %{y:.2f} cfs<extra></extra>'
+    };
+    
+    const layout = {
+        title: {
+            text: 'Forecast Time Series',
+            font: {
+                size: 16,
+                color: '#333'
+            }
+        },
+        xaxis: {
+            title: 'Date/Time',
+            showgrid: true,
+            gridcolor: '#e0e0e0',
+            type: 'date'
+        },
+        yaxis: {
+            title: 'Discharge (cfs)',
+            showgrid: true,
+            gridcolor: '#e0e0e0'
+        },
+        hovermode: 'closest',
+        plot_bgcolor: '#fafafa',
+        paper_bgcolor: 'white',
+        margin: { l: 60, r: 30, t: 50, b: 60 },
+        showlegend: false
+    };
+    
+    const config = {
+        responsive: true,
+        displayModeBar: true,
+        displaylogo: false,
+        modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d']
+    };
+    
+    Plotly.newPlot('forecastChart', [trace], layout, config);
+    
+    // Populate data table
+    const tableBody = document.getElementById('forecastDataBody');
+    tableBody.innerHTML = '';
+    
+    data.forecastData.forEach(point => {
+        const date = new Date(point.date);
+        const formattedDate = date.toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        
+        const row = `
+            <tr>
+                <td>${formattedDate}</td>
+                <td class="text-end">${point.value.toFixed(2)}</td>
+            </tr>
+        `;
+        tableBody.insertAdjacentHTML('beforeend', row);
+    });
+});
+</script>
 {% endblock %}
