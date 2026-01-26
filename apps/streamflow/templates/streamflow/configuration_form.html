@@ -58,14 +58,19 @@
                     <div class="card-body">
                         <div class="row">
                             <div class="col-md-6 mb-3">
+                                {{ form.data_source|as_crispy_field }}
+                            </div>
+                            <div class="col-md-6 mb-3">
                                 {{ form.data_type|as_crispy_field }}
                             </div>
+                        </div>
+                        <div class="row">
                             <div class="col-md-6 mb-3">
                                 {{ form.data_strategy|as_crispy_field }}
                             </div>
-                        </div>
-                        <div class="mb-3">
-                            {{ form.pull_start_date|as_crispy_field }}
+                            <div class="col-md-6 mb-3">
+                                {{ form.pull_start_date|as_crispy_field }}
+                            </div>
                         </div>
                     </div>
                 </div>

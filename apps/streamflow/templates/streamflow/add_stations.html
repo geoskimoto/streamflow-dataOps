@@ -21,6 +21,18 @@
         <div class="col-md-12">
             <h2>Add Stations to "{{ configuration.name }}"</h2>
             <p class="text-muted">Search and select stations from the master list to add to this configuration.</p>
+            {% if configuration.data_source %}
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle"></i> <strong>Configuration Data Source:</strong> {{ configuration.get_data_source_display }}
+                {% if configuration.data_source == 'NOAA_RFC' %}
+                <span class="ms-2">— Consider filtering by River Forecast Center below to find relevant stations.</span>
+                {% elif configuration.data_source == 'USGS' %}
+                <span class="ms-2">— Showing USGS stations for streamflow observations.</span>
+                {% elif configuration.data_source == 'EC' %}
+                <span class="ms-2">— Showing Environment Canada stations (Canadian provinces).</span>
+                {% endif %}
+            </div>
+            {% endif %}
         </div>
     </div>
 
@@ -33,7 +45,38 @@
                 </div>
                 <div class="card-body">
                     <div class="mb-3">
-                        <label for="stateFilter" class="form-label">State</label>
+                        <label for="agencyFilter" class="form-label">Data Source / Agency</label>
+                        <select class="form-select" id="agencyFilter">
+                            <option value="">All Agencies</option>
+                            <option value="USGS">USGS</option>
+                            <option value="NOAA_RFC">NOAA River Forecast Center</option>
+                            <option value="EC">Environment Canada</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="rfcFilter" class="form-label">River Forecast Center</label>
+                        <select class="form-select" id="rfcFilter">
+                            <option value="">All RFCs</option>
+                            <option value="NWRFC">Northwest RFC (NWRFC)</option>
+                            <option value="CNRFC">California-Nevada RFC (CNRFC)</option>
+                            <option value="CBRFC">Colorado Basin RFC (CBRFC)</option>
+                            <option value="MBRFC">Missouri Basin RFC (MBRFC)</option>
+                            <option value="NCRFC">North Central RFC (NCRFC)</option>
+                            <option value="NERFC">Northeast RFC (NERFC)</option>
+                            <option value="MARFC">Middle Atlantic RFC (MARFC)</option>
+                            <option value="OHRFC">Ohio RFC (OHRFC)</option>
+                            <option value="LMRFC">Lower Mississippi RFC (LMRFC)</option>
+                            <option value="ABRFC">Arkansas-Red Basin RFC (ABRFC)</option>
+                            <option value="WGRFC">West Gulf RFC (WGRFC)</option>
+                            <option value="SERFC">Southeast RFC (SERFC)</option>
+                            <option value="APRFC">Alaska RFC (APRFC)</option>
+                        </select>
+                        <small class="text-muted">Only applies to NOAA RFC stations</small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="stateFilter" class="form-label">State/Province</label>
                         <select class="form-select" id="stateFilter">
                             <option value="">All States</option>
                             {% for state in states %}
@@ -44,7 +87,7 @@
                     
                     <div class="mb-3">
                         <label for="hucFilter" class="form-label">HUC Code</label>
-                        <input type="text" class="form-control" id="hucFilter" placeholder="e.g., 02070010">
+                        <input type="text" class="form-control" id="hucFilter" placeholder="e.g., 17 or 17010101">
                         <small class="text-muted">Enter partial HUC to filter</small>
                     </div>
                     
@@ -209,6 +252,8 @@ function updatePaginationInfo() {
 }
 
 function loadStations(append = false) {
+    const agency = document.getElementById('agencyFilter').value;
+    const rfc = document.getElementById('rfcFilter').value;
     const state = document.getElementById('stateFilter').value;
     const huc = document.getElementById('hucFilter').value;
     const search = document.getElementById('searchBox').value;
@@ -220,13 +265,15 @@ function loadStations(append = false) {
     }
     
     // Save current filters
-    currentFilters = { state, huc, search };
+    currentFilters = { agency, rfc, state, huc, search };
     
     // Show loading
     document.getElementById('loadingIndicator').classList.remove('d-none');
     
     // Build query
     const params = new URLSearchParams();
+    if (agency) params.append('agency', agency);
+    if (rfc) params.append('rfc', rfc);
     if (state) params.append('state', state);
     if (huc) params.append('huc', huc);
     if (search) params.append('q', search);
@@ -272,9 +319,11 @@ function loadStations(append = false) {
                             <strong class="station-number">${station.station_number}</strong>
                             ${isCurrentStation ? '<span class="badge bg-secondary ms-2">Already Added</span>' : ''}
                             ${isSelected ? '<span class="badge bg-primary ms-2">Selected</span>' : ''}
+                            ${station.agency ? '<span class="badge bg-info ms-2">' + station.agency + '</span>' : ''}
+                            ${station.rfc_code ? '<span class="badge bg-success ms-2">' + station.rfc_code + '</span>' : ''}
                         </div>
                         <div class="text-muted">
-                            <small>${station.state_code || ''} ${station.huc_code || ''}</small>
+                            <small>${station.state_code || ''} ${station.huc_code ? '| HUC: ' + station.huc_code : ''}</small>
                         </div>
                     </div>
                     <div class="text-muted">${station.station_name}</div>
@@ -311,6 +360,8 @@ document.getElementById('applyFilters').addEventListener('click', () => loadStat
 document.getElementById('loadMoreBtn').addEventListener('click', () => loadStations(true));
 
 document.getElementById('clearFilters').addEventListener('click', () => {
+    document.getElementById('agencyFilter').value = '';
+    document.getElementById('rfcFilter').value = '';
     document.getElementById('stateFilter').value = '';
     document.getElementById('hucFilter').value = '';
     document.getElementById('searchBox').value = '';
