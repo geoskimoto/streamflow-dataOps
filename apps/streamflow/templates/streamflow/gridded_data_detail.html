@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% load static %}
+{% load raster_filters %}
+
+{% block title %}{{ layer.variable.name|title }} - {{layer.date}}{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+    .raster-card { border-left: 4px solid #6f42c1; }
+    .raster-badge { background-color: #6f42c1; }
+    .text-raster { color: #6f42c1; }
+    #map { height: 400px; width: 100%; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2><i class="fas fa-layer-group"></i> {{ layer.variable.name|title }}</h2>
+            <p class="text-muted mb-0">
+                <span class="badge raster-badge">{{ layer.variable.dataset.name }}</span>
+                {{ layer.extent.name }} • {{ layer.timestamp|date:"Y-m-d H:i" }} UTC
+            </p>
+        </div>
+        <div>
+            <a href="{% url 'streamflow:gridded_data_list' %}" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left"></i> Back to List
+            </a>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Layer Details -->
+        <div class="col-md-6">
+            <div class="card raster-card mb-4">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0"><i class="fas fa-info-circle"></i> Layer Information</h5>
+                </div>
+                <div class="card-body">
+                    <dl class="row mb-0">
+                        <dt class="col-sm-4">Dataset:</dt>
+                        <dd class="col-sm-8">{{ layer.variable.dataset.name }}</dd>
+
+                        <dt class="col-sm-4">Variable:</dt>
+                        <dd class="col-sm-8">
+                            {{ layer.variable.name|title }}
+                            {% if layer.variable.description %}
+                            <br><small class="text-muted">{{ layer.variable.description }}</small>
+                            {% endif %}
+                        </dd>
+
+                        <dt class="col-sm-4">Date/Time:</dt>
+                        <dd class="col-sm-8">{{ layer.timestamp|date:"Y-m-d H:i:s" }} UTC</dd>
+
+                        <dt class="col-sm-4">Extent:</dt>
+                        <dd class="col-sm-8">{{ layer.extent.name }}</dd>
+
+                        <dt class="col-sm-4">Resolution:</dt>
+                        <dd class="col-sm-8">{{ layer.resolution_m|floatformat:0 }} meters</dd>
+
+                        <dt class="col-sm-4">Dimensions:</dt>
+                        <dd class="col-sm-8">{{ layer.width_pixels }} × {{ layer.height_pixels }} pixels</dd>
+
+                        <dt class="col-sm-4">File Size:</dt>
+                        <dd class="col-sm-8">
+                            {% if layer.file_size_bytes %}
+                            {{ layer.file_size_bytes|filesizeformat }}
+                            {% else %}
+                            <span class="text-muted">Unknown</span>
+                            {% endif %}
+                        </dd>
+
+                        <dt class="col-sm-4">Format:</dt>
+                        <dd class="col-sm-8">{{ layer.format }} ({{ layer.compression }})</dd>
+
+                        <dt class="col-sm-4">CRS:</dt>
+                        <dd class="col-sm-8">{{ layer.crs }}</dd>
+
+                        <dt class="col-sm-4">Valid:</dt>
+                        <dd class="col-sm-8">
+                            {% if layer.is_valid %}
+                            <span class="badge bg-success">Yes</span>
+                            {% else %}
+                            <span class="badge bg-danger">No</span>
+                            {% if layer.validation_errors %}
+                            <br><small class="text-danger">{{ layer.validation_errors }}</small>
+                            {% endif %}
+                            {% endif %}
+                        </dd>
+                    </dl>
+                </div>
+            </div>
+
+            <!-- Statistics -->
+            <div class="card raster-card mb-4">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0"><i class="fas fa-chart-bar"></i> Statistics</h5>
+                </div>
+                <div class="card-body">
+                    {% if layer.min_value and layer.max_value %}
+                    <dl class="row mb-0">
+                        <dt class="col-sm-4">Minimum:</dt>
+                        <dd class="col-sm-8">
+                            {{ layer.min_value|floatformat:4 }}
+                            {% if layer.variable.unit %}{{ layer.variable.unit }}{% endif %}
+                            {% if layer.variable.unit == 'K' %}
+                            <br><small class="text-muted">({{ layer.min_value|kelvin_to_fahrenheit }}°F)</small>
+                            {% endif %}
+                        </dd>
+
+                        <dt class="col-sm-4">Maximum:</dt>
+                        <dd class="col-sm-8">
+                            {{ layer.max_value|floatformat:4 }}
+                            {% if layer.variable.unit %}{{ layer.variable.unit }}{% endif %}
+                            {% if layer.variable.unit == 'K' %}
+                            <br><small class="text-muted">({{ layer.max_value|kelvin_to_fahrenheit }}°F)</small>
+                            {% endif %}
+                        </dd>
+
+                        <dt class="col-sm-4">Mean:</dt>
+                        <dd class="col-sm-8">
+                            {% if layer.mean_value %}
+                            {{ layer.mean_value|floatformat:4 }}
+                            {% if layer.variable.unit %}{{ layer.variable.unit }}{% endif %}
+                            {% if layer.variable.unit == 'K' %}
+                            <br><small class="text-muted">({{ layer.mean_value|kelvin_to_fahrenheit }}°F)</small>
+                            {% endif %}
+                            {% else %}
+                            <span class="text-muted">N/A</span>
+                            {% endif %}
+                        </dd>
+
+                        <dt class="col-sm-4">Std Dev:</dt>
+                        <dd class="col-sm-8">
+                            {% if layer.std_dev %}
+                            {{ layer.std_dev|floatformat:4 }}
+                            {% else %}
+                            <span class="text-muted">N/A</span>
+                            {% endif %}
+                        </dd>
+
+                        {% if layer.no_data_value %}
+                        <dt class="col-sm-4">NoData Value:</dt>
+                        <dd class="col-sm-8">{{ layer.no_data_value }}</dd>
+                        {% endif %}
+                    </dl>
+                    {% else %}
+                    <p class="text-muted mb-0">No statistics available for this layer.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Processing Info -->
+            {% if layer.processing_time_seconds %}
+            <div class="card raster-card">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0"><i class="fas fa-clock"></i> Processing</h5>
+                </div>
+                <div class="card-body">
+                    <p class="mb-0">
+                        <strong>Processing Time:</strong> 
+                        {{ layer.processing_time_seconds|floatformat:2 }} seconds
+                    </p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Map Viewer -->
+        <div class="col-md-6">
+            <div class="card raster-card mb-4">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0"><i class="fas fa-map"></i> Extent Preview</h5>
+                </div>
+                <div class="card-body">
+                    <div id="map"></div>
+                    <p class="text-muted mt-2 mb-0 small">
+                        <i class="fas fa-info-circle"></i> 
+                        Map shows the spatial extent of this raster layer.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Thumbnail -->
+            {% if layer.thumbnail_path %}
+            <div class="card raster-card">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0"><i class="fas fa-image"></i> Thumbnail</h5>
+                </div>
+                <div class="card-body text-center">
+                    <img src="/media/{{ layer.thumbnail_path }}" 
+                         alt="Raster thumbnail" 
+                         class="img-fluid"
+                         style="max-height: 300px;">
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- API Access Info -->
+    <div class="card raster-card mt-4">
+        <div class="card-header bg-light">
+            <h5 class="mb-0"><i class="fas fa-code"></i> API Access</h5>
+        </div>
+        <div class="card-body">
+            <p>Access this data programmatically via the REST API:</p>
+            <ul class="list-unstyled">
+                <li><strong>Layer Detail:</strong> <code>/api/v1/raster-layers/{{ layer.id }}/</code></li>
+                <li><strong>Download GeoTIFF:</strong> <code>/api/v1/raster-layers/{{ layer.id }}/download/</code></li>
+                {% if layer.thumbnail_path %}
+                <li><strong>Thumbnail:</strong> <code>/api/v1/raster-layers/{{ layer.id }}/thumbnail/</code></li>
+                {% endif %}
+                <li><strong>Extract Point Values:</strong> <code>POST /api/v1/raster-layers/extract_points/</code></li>
+            </ul>
+            <p class="mb-0">
+                <a href="/api/v1/docs/" target="_blank" class="btn btn-sm btn-outline-primary">
+                    <i class="fas fa-book"></i> View API Documentation
+                </a>
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    // Initialize map
+    var map = L.map('map');
+
+    // Add OpenStreetMap base layer
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        maxZoom: 19
+    }).addTo(map);
+
+    {% if bbox %}
+    // Extent bounds
+    var bounds = [[{{ bbox.1 }}, {{ bbox.0 }}], [{{ bbox.3 }}, {{ bbox.2 }}]];
+    
+    // Add rectangle for extent
+    L.rectangle(bounds, {
+        color: '#6f42c1',
+        weight: 2,
+        fillColor: '#6f42c1',
+        fillOpacity: 0.2
+    }).addTo(map);
+
+    // Fit map to extent
+    map.fitBounds(bounds);
+
+    // Add popup
+    var center = map.getCenter();
+    L.marker(center).addTo(map)
+        .bindPopup('<strong>{{ layer.extent.name }}</strong><br>{{ layer.variable.name|title }}')
+        .openPopup();
+    {% else %}
+    // Default view if no bbox
+    map.setView([45.0, -117.0], 6);
+    {% endif %}
+</script>
+{% endblock %}

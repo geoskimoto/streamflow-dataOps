@@ -4,7 +4,15 @@ from django import forms
 from django.forms import ModelForm, inlineformset_factory
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-from .models import PullConfiguration, PullConfigurationStation, MasterStation, Station
+from .models import (
+    PullConfiguration, 
+    PullConfigurationStation, 
+    MasterStation, 
+    Station,
+    RasterPullConfiguration,
+    RasterVariable,
+    SpatialExtent
+)
 import re
 
 
@@ -299,3 +307,91 @@ PullConfigurationStationFormSet = inlineformset_factory(
     extra=1,
     can_delete=True,
 )
+
+
+class RasterPullConfigurationForm(ModelForm):
+    """Form for creating/editing raster pull configurations."""
+    
+    from .models import RasterPullConfiguration
+    
+    class Meta:
+        model = RasterPullConfiguration
+        fields = [
+            'name', 'description', 'variables', 'extents',
+            'schedule_enabled', 'pull_frequency_hours', 'lookback_days',
+            'resampling_method', 'apply_compression', 'generate_thumbnails',
+            'validate_on_pull'
+        ]
+        widgets = {
+            'name': forms.TextInput(attrs={
+                'class': 'form-control',
+                'placeholder': 'e.g., HUC17 Daily RTMA'
+            }),
+            'description': forms.Textarea(attrs={
+                'class': 'form-control',
+                'rows': 3,
+                'placeholder': 'Describe the purpose of this configuration...'
+            }),
+            'variables': forms.CheckboxSelectMultiple(),
+            'extents': forms.CheckboxSelectMultiple(),
+            'pull_frequency_hours': forms.NumberInput(attrs={
+                'class': 'form-control',
+                'min': 1,
+                'max': 168
+            }),
+            'lookback_days': forms.NumberInput(attrs={
+                'class': 'form-control',
+                'min': 1,
+                'max': 365
+            }),
+            'resampling_method': forms.TextInput(attrs={
+                'class': 'form-control',
+                'placeholder': 'bilinear, nearest, cubic'
+            }),
+            'schedule_enabled': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'apply_compression': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'generate_thumbnails': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'validate_on_pull': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+        }
+        labels = {
+            'name': 'Configuration Name',
+            'description': 'Description',
+            'variables': 'Variables to Pull',
+            'extents': 'Spatial Extents',
+            'schedule_enabled': 'Enable Automatic Pulls',
+            'pull_frequency_hours': 'Pull Frequency (hours)',
+            'lookback_days': 'Lookback Period (days)',
+            'resampling_method': 'Resampling Method',
+            'apply_compression': 'Apply LZW Compression',
+            'generate_thumbnails': 'Generate Thumbnails',
+            'validate_on_pull': 'Validate After Pull',
+        }
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        # Add help text
+        self.fields['pull_frequency_hours'].help_text = 'How often to pull data (in hours)'
+        self.fields['lookback_days'].help_text = 'How many days back to check for data'
+        self.fields['resampling_method'].help_text = 'Options: bilinear, nearest, cubic'
+    
+    def clean(self):
+        cleaned_data = super().clean()
+        variables = cleaned_data.get('variables')
+        extents = cleaned_data.get('extents')
+        
+        # Validate that at least one variable and extent are selected
+        if not variables:
+            raise ValidationError('Select at least one variable.')
+        if not extents:
+            raise ValidationError('Select at least one spatial extent.')
+        
+        # Validate all variables are from the same dataset
+        if variables:
+            datasets = set(var.dataset for var in variables)
+            if len(datasets) > 1:
+                raise ValidationError('All variables must be from the same dataset.')
+            # Auto-populate dataset from variables
+            cleaned_data['dataset'] = list(datasets)[0]
+        
+        return cleaned_data

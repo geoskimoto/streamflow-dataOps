@@ -43,12 +43,15 @@ def pull_raster_data(self, config_id: int, start_date: Optional[str] = None,
         logger.error(f"Configuration not found: {config_id}")
         return {'error': 'Configuration not found'}
     
+    # Get task ID (may be None if running synchronously)
+    task_id = self.request.id if self and hasattr(self, 'request') else None
+    
     # Create pull log
     pull_log = RasterPullLog.objects.create(
         configuration=config,
         status='running',
         started_at=timezone.now(),
-        celery_task_id=self.request.id
+        celery_task_id=task_id or ''
     )
     
     try:
