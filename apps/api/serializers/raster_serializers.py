@@ -26,7 +26,7 @@ class RasterDatasetSerializer(serializers.ModelSerializer):
     
     def get_variable_count(self, obj):
         """Get count of variables for this dataset."""
-        return obj.rastervariable_set.count()
+        return obj.variables.count()
 
 
 class RasterVariableSerializer(serializers.ModelSerializer):
@@ -45,7 +45,7 @@ class RasterVariableSerializer(serializers.ModelSerializer):
     
     def get_layer_count(self, obj):
         """Get count of layers for this variable."""
-        return obj.rasterlayer_set.count()
+        return obj.layers.count()
 
 
 class SpatialExtentSerializer(serializers.ModelSerializer):
@@ -68,7 +68,7 @@ class SpatialExtentSerializer(serializers.ModelSerializer):
     
     def get_layer_count(self, obj):
         """Get count of layers for this extent."""
-        return obj.rasterlayer_set.count()
+        return obj.layers.count()
 
 
 class RasterLayerSerializer(serializers.ModelSerializer):

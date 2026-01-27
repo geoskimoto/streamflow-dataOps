@@ -193,10 +193,58 @@ StreamFlow DataOps integrates gridded satellite data from Google Earth Engine fo
 3. **Or configure service account (production):**
    ```env
    # .env file
-   GEE_SERVICE_ACCOUNT_KEY=/path/to/service-account-key.json
-   GEE_PROJECT_ID=your-gee-project-id
-   GEE_SERVICE_ACCOUNT_EMAIL=your-account@project.iam.gserviceaccount.com
+   GEE_SERVICE_ACCOUNT_KEY=./rtmaandsma-fe989e72b62e.json
+   GEE_PROJECT_ID=rtmaandsmap
+   GEE_SERVICE_ACCOUNT_EMAIL= gee-access@rtmaandsma.iam.gserviceaccount.com
    ```
+
+```
+1. Enable the Earth Engine API
+Before creating a service account, Google Cloud needs to know your project is allowed to use Earth Engine.
+
+Go to the Google Cloud Console.
+
+Ensure RTMAandSMAP is selected in the top project dropdown.
+
+Search for "Earth Engine API" in the top search bar and click Enable.
+
+2. Create the Service Account
+This will provide you with your GEE_SERVICE_ACCOUNT_EMAIL.
+
+Navigate to IAM & Admin > Service Accounts.
+
+Click + Create Service Account.
+
+Give it a name (e.g., gee-access-link). The console will automatically generate an email address like gee-access-link@rtmaandsmap.iam.gserviceaccount.com. Copy this email.
+
+Click Create and Continue.
+
+Grant Access: Under "Role," search for and select Earth Engine Resource Viewer (or Earth Engine Admin if you need to write/delete assets).
+
+Click Done.
+
+3. Generate the JSON Key
+This provides the GEE_SERVICE_ACCOUNT_KEY file.
+
+In the Service Accounts list, click on the email address you just created.
+
+Go to the Keys tab.
+
+Click Add Key > Create new key.
+
+Select JSON and click Create.
+
+A .json file will download to your computer. Move this to your project folder (but don't commit it to GitHub!). The full path to this file is your GEE_SERVICE_ACCOUNT_KEY.
+
+4. Register the Service Account with GEE
+This is the step most people miss. Even with a key, Earth Engine won't let the account in unless it's registered on their specific allowlist.
+
+Go to the Earth Engine Register Page.
+
+Follow the prompts to register a "Non-commercial" or "Commercial" project.
+
+When asked, ensure you register the Service Account Email you created in Step 2.
+```
 
 ### Raster Management Commands
 
