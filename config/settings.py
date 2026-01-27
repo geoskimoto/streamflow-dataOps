@@ -41,7 +41,7 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
-    "django.contrib.staticfiles",
+    "django.contrib.staticfiles",    "django.contrib.gis",  # PostGIS support    "django.contrib.gis",
     "django.contrib.humanize",
     
     # Third party apps
@@ -97,16 +97,16 @@ WSGI_APPLICATION = "config.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-# Support both PostgreSQL and SQLite
-DB_ENGINE = os.getenv("DB_ENGINE", "sqlite")
+# Use PostgreSQL with PostGIS
+DB_ENGINE = os.getenv("DB_ENGINE", "postgresql")
 
 if DB_ENGINE == "postgresql":
     DATABASES = {
         "default": {
-            "ENGINE": "django.db.backends.postgresql",
+            "ENGINE": "django.contrib.gis.db.backends.postgis",
             "NAME": os.getenv("DB_NAME", "streamflow_db"),
-            "USER": os.getenv("DB_USER", "postgres"),
-            "PASSWORD": os.getenv("DB_PASSWORD", ""),
+            "USER": os.getenv("DB_USER", "streamflow_user"),
+            "PASSWORD": os.getenv("DB_PASSWORD", "streamflow_dev_pass"),
             "HOST": os.getenv("DB_HOST", "localhost"),
             "PORT": os.getenv("DB_PORT", "5432"),
         }
@@ -212,3 +212,35 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8000",
 ]
 CORS_ALLOW_CREDENTIALS = True
+
+# ============================================================================
+# Raster Data & Google Earth Engine Configuration
+# ============================================================================
+
+# GEE Authentication
+GEE_SERVICE_ACCOUNT_KEY = os.getenv('GEE_SERVICE_ACCOUNT_KEY', None)
+GEE_PROJECT_ID = os.getenv('GEE_PROJECT_ID', None)
+GEE_SERVICE_ACCOUNT_EMAIL = os.getenv('GEE_SERVICE_ACCOUNT_EMAIL', None)
+
+# Raster File Storage
+RASTER_ROOT = BASE_DIR / 'data' / 'rasters'
+RASTER_URL = '/media/rasters/'
+RASTER_MAX_FILE_SIZE_MB = 500
+
+# Ensure raster directory exists
+RASTER_ROOT.mkdir(parents=True, exist_ok=True)
+
+# Raster Processing Options
+RASTER_DEFAULT_COMPRESSION = 'LZW'
+RASTER_THUMBNAIL_SIZE = (256, 256)
+RASTER_DEFAULT_CRS = 'EPSG:4326'
+
+# Spatial Extents (will be defined in database, these are defaults)
+WESTERN_US_BBOX = [-125.0, 31.0, -102.0, 49.0]  # [minLon, minLat, maxLon, maxLat]
+HUC17_BBOX = [-124.7, 41.5, -108.0, 49.0]  # Columbia River Basin approximate
+
+# GEE Dataset IDs
+GEE_DATASETS = {
+    'RTMA': 'NOAA/NWS/RTMA',
+    'SMAP_SPL4': 'NASA/SMAP/SPL4SMGP/008',
+}
