@@ -21,6 +21,8 @@ from rasterio.transform import from_bounds
 from rasterio import MemoryFile
 from rasterio.crs import CRS
 
+from src.acquisition.earthdata_processor import EarthDataRasterProcessor
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,6 +67,7 @@ class EarthDataClient:
         self.password = password or os.getenv('EARTHDATA_PASSWORD')
         self.authenticated = False
         self.auth = None
+        self.processor = EarthDataRasterProcessor()
         self._initialize()
     
     def _initialize(self):
@@ -136,15 +139,17 @@ class EarthDataClient:
         self,
         granule,
         output_dir: Path,
-        timeout: int = 300
+        timeout: int = 300,
+        max_retries: int = 3
     ) -> Path:
         """
-        Download a single granule.
+        Download a single granule with retry logic.
         
         Args:
             granule: Granule object from search_granules()
             output_dir: Directory to save downloaded file
             timeout: Download timeout in seconds
+            max_retries: Maximum retry attempts
             
         Returns:
             Path to downloaded file
@@ -152,26 +157,32 @@ class EarthDataClient:
         if not self.authenticated:
             raise EarthDataAuthenticationError("Not authenticated")
         
-        try:
-            output_dir = Path(output_dir)
-            output_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Download using earthaccess
-            files = earthaccess.download(
-                granules=[granule],
-                local_path=str(output_dir)
-            )
-            
-            if files and len(files) > 0:
-                downloaded_file = Path(files[0])
-                logger.info(f"Downloaded: {downloaded_file.name}")
-                return downloaded_file
-            else:
-                raise EarthDataError("Download failed - no files returned")
+        for attempt in range(max_retries):
+            try:
+                output_dir = Path(output_dir)
+                output_dir.mkdir(parents=True, exist_ok=True)
                 
-        except Exception as e:
-            logger.error(f"Download failed: {e}")
-            raise EarthDataError(f"Download failed: {e}")
+                # Download using earthaccess
+                files = earthaccess.download(
+                    granules=[granule],
+                    local_path=str(output_dir)
+                )
+                
+                if files and len(files) > 0:
+                    downloaded_file = Path(files[0])
+                    logger.info(f"Downloaded: {downloaded_file.name} (attempt {attempt+1}/{max_retries})")
+                    return downloaded_file
+                else:
+                    raise EarthDataError("Download failed - no files returned")
+                    
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                    logger.warning(f"Download attempt {attempt+1} failed: {e}. Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Download failed after {max_retries} attempts: {e}")
+                    raise EarthDataError(f"Download failed after {max_retries} attempts: {e}")
     
     def get_smap_data(
         self,
@@ -221,10 +232,10 @@ class EarthDataClient:
             temp_dir = output_path.parent / 'temp'
             downloaded = self.download_granule(granules[0], temp_dir)
             
-            # Extract data from HDF5
-            metadata = self._extract_smap_to_geotiff(
-                hdf5_path=downloaded,
-                band_name=band_name,
+            # Process HDF5 to GeoTIFF
+            metadata = self.processor.process_smap_hdf5(
+                input_path=downloaded,
+                variable=band_name,
                 bbox=bbox,
                 output_path=output_path
             )
@@ -232,6 +243,8 @@ class EarthDataClient:
             # Cleanup temp file
             if downloaded.exists():
                 downloaded.unlink()
+            if temp_dir.exists() and not list(temp_dir.iterdir()):
+                temp_dir.rmdir()
             
             return metadata
             
@@ -344,16 +357,18 @@ class EarthDataClient:
             
             # Download granule
             temp_dir = output_path.parent / 'temp'
-            downloaded = self.download_granule(granules[0], temp_dir)
-            
-            # Extract precipitation data
-            metadata = self._extract_gpm_to_geotiff(
-                nc_path=downloaded,
+            doProcess NetCDF to GeoTIFF
+            metadata = self.processor.process_gpm_netcdf(
+                input_path=downloaded,
                 bbox=bbox,
                 output_path=output_path
             )
             
             # Cleanup
+            if downloaded.exists():
+                downloaded.unlink()
+            if temp_dir.exists() and not list(temp_dir.iterdir()):
+                temp_dir.rmdir
             if downloaded.exists():
                 downloaded.unlink()
             
