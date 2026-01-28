@@ -19,6 +19,7 @@ from apps.streamflow.models import (
 )
 from src.acquisition.gee_client import GEEClient, GEEClientError
 from src.acquisition.earthdata_client import EarthDataClient, EarthDataError
+from src.acquisition.nomads_client import NomadsClient, NomadsError
 from src.acquisition.raster_processor import RasterProcessor, RasterProcessorError
 
 logger = logging.getLogger(__name__)
@@ -186,6 +187,12 @@ def _pull_variable_extent(
         except EarthDataError as e:
             logger.error(f"Failed to initialize EarthDataClient: {e}")
             return stats
+    elif dataset.data_source == 'nomads':
+        try:
+            client = NomadsClient()
+        except NomadsError as e:
+            logger.error(f"Failed to initialize NomadsClient: {e}")
+            return stats
     elif dataset.data_source == 'gee':
         try:
             client = GEEClient()
@@ -288,6 +295,16 @@ def _pull_single_layer(
     # Route to appropriate data fetching method
     if dataset.data_source == 'earthdata':
         success = _fetch_earthdata_layer(
+            client,
+            dataset,
+            variable,
+            timestamp,
+            bbox,
+            file_path,
+            config
+        )
+    elif dataset.data_source == 'nomads':
+        success = _fetch_nomads_layer(
             client,
             dataset,
             variable,
@@ -493,6 +510,52 @@ def _fetch_gee_layer(
         
     except GEEClientError as e:
         logger.error(f"GEE fetch failed: {e}")
+        return False
+
+
+def _fetch_nomads_layer(
+    client: NomadsClient,
+    dataset,
+    variable,
+    timestamp: datetime,
+    bbox: List[float],
+    file_path: Path,
+    config
+) -> bool:
+    """Fetch layer from NOAA NOMADS."""
+    try:
+        # Map variable names to NOMADS variable names
+        if 'rtma' in dataset.collection_id.lower():
+            var_map = {
+                'temperature': 'temperature',
+                'precipitation': 'precipitation',
+                'wind_speed': 'wind_speed',
+                'wind_u': 'wind_u',
+                'wind_v': 'wind_v',
+                'pressure': 'pressure'
+            }
+            nomads_var = var_map.get(variable.name, variable.gee_band_name)
+            
+            metadata = client.get_rtma_data(
+                variable=nomads_var,
+                timestamp=timestamp,
+                bbox=bbox,
+                output_path=file_path
+            )
+            
+        else:
+            logger.warning(f"Unknown NOMADS dataset: {dataset.collection_id}")
+            return False
+        
+        if metadata is None:
+            logger.warning(f"No NOMADS data available for {variable.name} at {timestamp}")
+            return False
+        
+        logger.info(f"NOMADS fetch complete: {metadata}")
+        return True
+        
+    except NomadsError as e:
+        logger.error(f"NOMADS fetch failed: {e}")
         return False
 
 
