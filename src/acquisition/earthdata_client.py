@@ -8,6 +8,7 @@ This module provides a unified interface for accessing NASA EarthData datasets:
 
 import os
 import logging
+import time
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Tuple
@@ -65,6 +66,14 @@ class EarthDataClient:
         """
         self.username = username or os.getenv('EARTHDATA_USERNAME')
         self.password = password or os.getenv('EARTHDATA_PASSWORD')
+        
+        if not self.username or not self.password:
+            raise EarthDataAuthenticationError(
+                "NASA EarthData credentials not provided. "
+                "Set EARTHDATA_USERNAME and EARTHDATA_PASSWORD environment variables "
+                "or pass username/password parameters."
+            )
+        
         self.authenticated = False
         self.auth = None
         self.processor = EarthDataRasterProcessor()
@@ -357,7 +366,9 @@ class EarthDataClient:
             
             # Download granule
             temp_dir = output_path.parent / 'temp'
-            doProcess NetCDF to GeoTIFF
+            downloaded = self.download_granule(granules[0], temp_dir)
+            
+            # Process NetCDF to GeoTIFF
             metadata = self.processor.process_gpm_netcdf(
                 input_path=downloaded,
                 bbox=bbox,
