@@ -80,15 +80,23 @@ class RasterProcessor:
                 elif expected_crs and str(src.crs) != expected_crs:
                     errors.append(f"CRS mismatch: expected {expected_crs}, got {src.crs}")
                 
-                # Check bounds
+                # Check bounds - allow actual bounds to be larger (contains requested area)
                 if expected_bbox:
                     bounds = src.bounds
                     tolerance = 0.1  # Allow small differences
-                    if (abs(bounds.left - expected_bbox[0]) > tolerance or
-                        abs(bounds.bottom - expected_bbox[1]) > tolerance or
-                        abs(bounds.right - expected_bbox[2]) > tolerance or
-                        abs(bounds.top - expected_bbox[3]) > tolerance):
-                        errors.append(f"Bounds mismatch: expected {expected_bbox}, got {list(bounds)}")
+                    
+                    # Check that requested bbox is contained within actual bounds
+                    # Actual bounds should be: left <= expected_left, bottom <= expected_bottom,
+                    # right >= expected_right, top >= expected_top
+                    bbox_contained = (
+                        bounds.left <= (expected_bbox[0] + tolerance) and
+                        bounds.bottom <= (expected_bbox[1] + tolerance) and
+                        bounds.right >= (expected_bbox[2] - tolerance) and
+                        bounds.top >= (expected_bbox[3] - tolerance)
+                    )
+                    
+                    if not bbox_contained:
+                        errors.append(f"Bounds invalid: requested {expected_bbox} not contained in {list(bounds)}")
                 
                 # Check data validity
                 data = src.read(1, masked=True)

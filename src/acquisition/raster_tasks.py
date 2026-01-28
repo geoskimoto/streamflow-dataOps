@@ -346,7 +346,7 @@ def _pull_single_layer(
     )
     
     # Compress if configured
-    if config.compression_enabled:
+    if config.apply_compression:
         file_path = processor.compress_raster(
             file_path,
             compression=config.compression_method or 'LZW'
@@ -372,7 +372,7 @@ def _pull_single_layer(
     layer.file_path = str(file_path.relative_to(settings.RASTER_ROOT))
     layer.file_size_bytes = file_path.stat().st_size
     layer.format = 'GeoTIFF'
-    layer.compression = config.compression_method if config.compression_enabled else None
+    layer.compression = 'lzw' if config.apply_compression else None
     layer.resolution_m = stats['resolution'][0]
     layer.width_pixels = stats['width']
     layer.height_pixels = stats['height']
