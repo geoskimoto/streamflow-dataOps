@@ -18,6 +18,7 @@ from apps.streamflow.models import (
     SpatialExtent
 )
 from src.acquisition.gee_client import GEEClient, GEEClientError
+from src.acquisition.earthdata_client import EarthDataClient, EarthDataError
 from src.acquisition.raster_processor import RasterProcessor, RasterProcessorError
 
 logger = logging.getLogger(__name__)
@@ -57,8 +58,7 @@ def pull_raster_data(self, config_id: int, start_date: Optional[str] = None,
     try:
         logger.info(f"Starting raster pull for config {config.name} (ID: {config_id})")
         
-        # Initialize clients
-        gee_client = GEEClient()
+        # Initialize clients (will be created per data source)
         processor = RasterProcessor()
         
         # Determine date range
@@ -92,7 +92,6 @@ def pull_raster_data(self, config_id: int, start_date: Optional[str] = None,
             for extent in extents:
                 try:
                     result = _pull_variable_extent(
-                        gee_client,
                         processor,
                         config,
                         variable,
@@ -159,7 +158,6 @@ def pull_raster_data(self, config_id: int, start_date: Optional[str] = None,
 
 
 def _pull_variable_extent(
-    gee_client: GEEClient,
     processor: RasterProcessor,
     config: RasterPullConfiguration,
     variable: RasterVariable,
@@ -170,6 +168,8 @@ def _pull_variable_extent(
     """
     Pull data for a specific variable and extent.
     
+    Routes to appropriate client based on dataset data_source.
+    
     Returns:
         Dictionary with pull statistics
     """
@@ -177,6 +177,24 @@ def _pull_variable_extent(
     
     dataset = variable.dataset
     bbox = extent.bbox
+    
+    # Initialize appropriate client based on data source
+    client = None
+    if dataset.data_source == 'earthdata':
+        try:
+            client = EarthDataClient()
+        except EarthDataError as e:
+            logger.error(f"Failed to initialize EarthDataClient: {e}")
+            return stats
+    elif dataset.data_source == 'gee':
+        try:
+            client = GEEClient()
+        except GEEClientError as e:
+            logger.error(f"Failed to initialize GEEClient: {e}")
+            return stats
+    else:
+        logger.error(f"Unsupported data source: {dataset.data_source}")
+        return stats
     
     # Determine temporal resolution
     if dataset.temporal_resolution == 'hourly':
@@ -187,7 +205,7 @@ def _pull_variable_extent(
             
             try:
                 success = _pull_single_layer(
-                    gee_client,
+                    client,
                     processor,
                     config,
                     variable,
@@ -214,7 +232,7 @@ def _pull_variable_extent(
             
             try:
                 success = _pull_single_layer(
-                    gee_client,
+                    client,
                     processor,
                     config,
                     variable,
@@ -237,7 +255,7 @@ def _pull_variable_extent(
 
 
 def _pull_single_layer(
-    gee_client: GEEClient,
+    client,  # Can be EarthDataClient or GEEClient
     processor: RasterProcessor,
     config: RasterPullConfiguration,
     variable: RasterVariable,
@@ -246,7 +264,7 @@ def _pull_single_layer(
     bbox: List[float]
 ) -> bool:
     """
-    Pull a single raster layer.
+    Pull a single raster layer using appropriate client.
     
     Returns:
         True if pulled successfully, False if skipped
@@ -262,67 +280,38 @@ def _pull_single_layer(
         logger.debug(f"Layer already exists: {variable.name} at {timestamp}")
         return False  # Skipped
     
-    # Fetch image from GEE
+    # Fetch data based on client type
     dataset = variable.dataset
-    
-    if 'RTMA' in dataset.gee_collection_id:
-        # Map variable name to RTMA variable
-        rtma_var_map = {
-            'temperature': 'temperature',
-            'precipitation': 'precipitation',
-            'wind_speed': 'wind_speed'
-        }
-        rtma_var = rtma_var_map.get(variable.name)
-        if not rtma_var:
-            logger.warning(f"Unknown RTMA variable: {variable.name}")
-            return False
-        
-        image = gee_client.get_rtma_image(
-            variable=rtma_var,
-            timestamp=timestamp,
-            bbox=bbox,
-            resolution=config.target_resolution_m or dataset.resolution_m
-        )
-        
-    elif 'SMAP' in dataset.gee_collection_id:
-        # Map variable name to SMAP variable
-        smap_var_map = {
-            'soil_moisture_surface': 'soil_moisture_surface',
-            'soil_moisture_rootzone': 'soil_moisture_rootzone'
-        }
-        smap_var = smap_var_map.get(variable.name)
-        if not smap_var:
-            logger.warning(f"Unknown SMAP variable: {variable.name}")
-            return False
-        
-        image = gee_client.get_smap_image(
-            variable=smap_var,
-            date=timestamp.date(),
-            bbox=bbox,
-            resolution=config.target_resolution_m or dataset.resolution_m
-        )
-    else:
-        logger.warning(f"Unknown dataset: {dataset.gee_collection_id}")
-        return False
-    
-    if image is None:
-        logger.warning(f"No data available for {variable.name} at {timestamp}")
-        return False
-    
-    # Generate file path
     file_path = _generate_file_path(variable, extent, timestamp)
     file_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # Export to GeoTIFF
-    export_start = timezone.now()
-    metadata = gee_client.export_to_geotiff(
-        image=image,
-        output_path=file_path,
-        bbox=bbox,
-        scale=config.target_resolution_m or dataset.resolution_m,
-        crs='EPSG:4326'
-    )
-    export_time = (timezone.now() - export_start).total_seconds()
+    # Route to appropriate data fetching method
+    if dataset.data_source == 'earthdata':
+        success = _fetch_earthdata_layer(
+            client,
+            dataset,
+            variable,
+            timestamp,
+            bbox,
+            file_path,
+            config
+        )
+    elif dataset.data_source == 'gee':
+        success = _fetch_gee_layer(
+            client,
+            dataset,
+            variable,
+            timestamp,
+            bbox,
+            file_path,
+            config
+        )
+    else:
+        logger.error(f"Unsupported data source: {dataset.data_source}")
+        return False
+    
+    if not success:
+        return False
     
     # Process raster
     process_start = timezone.now()
@@ -352,7 +341,6 @@ def _pull_single_layer(
         thumbnail_path = processor.generate_thumbnail(file_path)
     
     process_time = (timezone.now() - process_start).total_seconds()
-    total_time = export_time + process_time
     
     # Create or update RasterLayer record
     if existing:
@@ -379,7 +367,7 @@ def _pull_single_layer(
     layer.no_data_value = stats['nodata']
     layer.is_valid = is_valid
     layer.validation_errors = errors if not is_valid else None
-    layer.processing_time_seconds = total_time
+    layer.processing_time_seconds = process_time
     layer.thumbnail_path = str(thumbnail_path.relative_to(settings.RASTER_ROOT)) if thumbnail_path else None
     layer.save()
     
@@ -387,12 +375,138 @@ def _pull_single_layer(
     return True
 
 
+def _fetch_earthdata_layer(
+    client: EarthDataClient,
+    dataset,
+    variable,
+    timestamp: datetime,
+    bbox: List[float],
+    file_path: Path,
+    config
+) -> bool:
+    """Fetch layer from NASA EarthData."""
+    try:
+        # Map variable names to EarthData variable names
+        if 'SMAP' in dataset.collection_id:
+            var_map = {
+                'soil_moisture_surface': 'sm_surface',
+                'soil_moisture_rootzone': 'sm_rootzone'
+            }
+            earthdata_var = var_map.get(variable.name, variable.gee_band_name)
+            
+            metadata = client.get_smap_data(
+                variable=earthdata_var,
+                date=timestamp,
+                bbox=bbox,
+                output_path=file_path
+            )
+            
+        elif 'GPM' in dataset.collection_id or 'IMERG' in dataset.collection_id:
+            metadata = client.get_gpm_data(
+                date=timestamp,
+                bbox=bbox,
+                output_path=file_path
+            )
+            
+        else:
+            logger.warning(f"Unknown EarthData dataset: {dataset.collection_id}")
+            return False
+        
+        if metadata is None:
+            logger.warning(f"No EarthData data available for {variable.name} at {timestamp}")
+            return False
+        
+        logger.info(f"EarthData fetch complete: {metadata}")
+        return True
+        
+    except EarthDataError as e:
+        logger.error(f"EarthData fetch failed: {e}")
+        return False
+
+
+def _fetch_gee_layer(
+    client: GEEClient,
+    dataset,
+    variable,
+    timestamp: datetime,
+    bbox: List[float],
+    file_path: Path,
+    config
+) -> bool:
+    """Fetch layer from Google Earth Engine (legacy)."""
+    try:
+        if 'RTMA' in dataset.collection_id:
+            # Map variable name to RTMA variable
+            rtma_var_map = {
+                'temperature': 'temperature',
+                'precipitation': 'precipitation',
+                'wind_speed': 'wind_speed'
+            }
+            rtma_var = rtma_var_map.get(variable.name)
+            if not rtma_var:
+                logger.warning(f"Unknown RTMA variable: {variable.name}")
+                return False
+            
+            image = client.get_rtma_image(
+                variable=rtma_var,
+                timestamp=timestamp,
+                bbox=bbox,
+                resolution=config.target_resolution_m or dataset.resolution_m
+            )
+            
+        elif 'SMAP' in dataset.collection_id:
+            # Map variable name to SMAP variable
+            smap_var_map = {
+                'soil_moisture_surface': 'soil_moisture_surface',
+                'soil_moisture_rootzone': 'soil_moisture_rootzone'
+            }
+            smap_var = smap_var_map.get(variable.name)
+            if not smap_var:
+                logger.warning(f"Unknown SMAP variable: {variable.name}")
+                return False
+            
+            image = client.get_smap_image(
+                variable=smap_var,
+                date=timestamp.date(),
+                bbox=bbox,
+                resolution=config.target_resolution_m or dataset.resolution_m
+            )
+        else:
+            logger.warning(f"Unknown GEE dataset: {dataset.collection_id}")
+            return False
+        
+        if image is None:
+            logger.warning(f"No GEE data available for {variable.name} at {timestamp}")
+            return False
+        
+        # Export to GeoTIFF
+        metadata = client.export_to_geotiff(
+            image=image,
+            output_path=file_path,
+            bbox=bbox,
+            scale=config.target_resolution_m or dataset.resolution_m,
+            crs='EPSG:4326'
+        )
+        
+        logger.info(f"GEE fetch complete: {metadata}")
+        return True
+        
+    except GEEClientError as e:
+        logger.error(f"GEE fetch failed: {e}")
+        return False
+
+
 def _generate_file_path(variable: RasterVariable, extent: SpatialExtent, timestamp: datetime) -> Path:
     """Generate file path for raster layer."""
     dataset = variable.dataset
     
-    # Extract dataset name from GEE collection ID
-    dataset_name = dataset.gee_collection_id.split('/')[-1]
+    # Extract dataset name from collection ID (works for both GEE and EarthData)
+    if '/' in dataset.collection_id:
+        # GEE format: NOAA/NWS/RTMA
+        dataset_name = dataset.collection_id.split('/')[-1]
+    else:
+        # EarthData format: SPL4SMGP_008
+        dataset_name = dataset.collection_id
     
     # Format timestamp
     if dataset.temporal_resolution == 'hourly':
