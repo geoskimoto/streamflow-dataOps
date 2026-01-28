@@ -16,9 +16,14 @@ import os
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+env_path = Path(__file__).parent / '.env'
+load_dotenv(dotenv_path=env_path)
 
 # Add project root to path
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
@@ -39,7 +44,7 @@ def test_authentication():
         
         if client.authenticated:
             print("✅ Successfully authenticated with NASA EarthData")
-            print(f"   Auth method: {'Environment' if client.username else '.netrc'}")
+            print(f"   Username: {client.username or '[from .netrc]'}")
             return client
         else:
             print("❌ Authentication failed")
@@ -49,14 +54,13 @@ def test_authentication():
         print(f"❌ Authentication error: {e}")
         print("\nTo fix:")
         print("1. Create NASA EarthData account: https://urs.earthdata.nasa.gov/users/new")
-        print("2. Either:")
-        print("   a) Create ~/.netrc file:")
-        print("      machine urs.earthdata.nasa.gov")
-        print("          login your_username")
-        print("          password your_password")
-        print("   b) Set environment variables:")
-        print("      export EARTHDATA_USERNAME=your_username")
-        print("      export EARTHDATA_PASSWORD=your_password")
+        print("2. Add credentials to .env file in project root:")
+        print("   EARTHDATA_USERNAME=your_username")
+        print("   EARTHDATA_PASSWORD=your_password")
+        print("\nAlternatively, create ~/.netrc file:")
+        print("   machine urs.earthdata.nasa.gov")
+        print("       login your_username")
+        print("       password your_password")
         return None
 
 def test_smap_search(client):

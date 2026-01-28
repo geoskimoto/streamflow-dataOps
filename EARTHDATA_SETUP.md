@@ -34,9 +34,24 @@ Some datasets require application approval:
 
 ## Step 3: Configure Authentication
 
-Choose one of these two methods:
+### Add Credentials to .env File (Recommended for Development)
 
-### Method A: .netrc File (Recommended)
+Edit the `.env` file in your project root:
+
+```bash
+# Open .env file
+nano .env
+
+# Add these lines (replace with your actual credentials):
+EARTHDATA_USERNAME=your_username
+EARTHDATA_PASSWORD=your_password
+```
+
+The `.env` file is already configured in `.gitignore` so your credentials won't be committed.
+
+### Alternative Methods:
+
+#### Method A: .netrc File (For Production)
 
 Create or edit `~/.netrc` file:
 
@@ -54,7 +69,7 @@ chmod 600 ~/.netrc
 
 **Important**: Replace `your_username` and `your_password` with your actual credentials.
 
-### Method B: Environment Variables
+#### Method B: System Environment Variables
 
 Add to your `.env` file or shell profile:
 
