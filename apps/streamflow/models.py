@@ -317,14 +317,58 @@ class StationMapping(models.Model):
 
 
 class RasterDataset(models.Model):
-    """Stores metadata about available GEE raster datasets."""
+    """Stores metadata about available raster datasets from various sources."""
 
-    name = models.CharField(max_length=100, unique=True, db_index=True, help_text="Human-readable dataset name (e.g., 'RTMA', 'SMAP SPL4')")
-    gee_collection_id = models.CharField(max_length=255, help_text="Google Earth Engine collection ID (e.g., 'NOAA/NWS/RTMA')")
+    DATA_SOURCE_CHOICES = [
+        ('earthdata', 'NASA EarthData'),
+        ('nomads', 'NOAA NOMADS'),
+        ('gee', 'Google Earth Engine (deprecated)'),
+    ]
+
+    name = models.CharField(
+        max_length=100,
+        unique=True,
+        db_index=True,
+        help_text="Human-readable dataset name (e.g., 'RTMA', 'SMAP SPL4')"
+    )
+    data_source = models.CharField(
+        max_length=20,
+        choices=DATA_SOURCE_CHOICES,
+        default='earthdata',
+        help_text="Data source provider"
+    )
+    collection_id = models.CharField(
+        max_length=255,
+        help_text="Collection/dataset ID (GEE: 'NOAA/NWS/RTMA', EarthData: 'SPL4SMGP_008', NOMADS: 'rtma2p5')"
+    )
+    daac = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="NASA DAAC archive (e.g., NSIDC_CPRD, GES_DISC, LPDAAC_ECS) - EarthData only"
+    )
+    file_format = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
+        help_text="Native file format (HDF5, NetCDF4, GRIB2, GeoTIFF)"
+    )
+    access_url_pattern = models.CharField(
+        max_length=500,
+        blank=True,
+        null=True,
+        help_text="URL pattern for direct access (NOMADS) or base URL"
+    )
     description = models.TextField(blank=True)
     resolution_m = models.IntegerField(help_text="Native resolution in meters")
-    temporal_resolution = models.CharField(max_length=50, help_text="e.g., 'hourly', 'daily', '3-hourly'")
-    update_frequency = models.CharField(max_length=50, help_text="How often new data is available")
+    temporal_resolution = models.CharField(
+        max_length=50,
+        help_text="e.g., 'hourly', 'daily', '3-hourly'"
+    )
+    update_frequency = models.CharField(
+        max_length=50,
+        help_text="How often new data is available"
+    )
     
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -335,7 +379,7 @@ class RasterDataset(models.Model):
         ordering = ["name"]
 
     def __str__(self):
-        return f"{self.name} ({self.gee_collection_id})"
+        return f"{self.name} ({self.data_source}: {self.collection_id})"
 
 
 class RasterVariable(models.Model):

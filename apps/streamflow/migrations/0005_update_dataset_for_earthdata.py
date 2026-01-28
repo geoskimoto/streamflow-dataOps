@@ -3,10 +3,42 @@
 from django.db import migrations, models
 
 
+def update_existing_datasets(apps, schema_editor):
+    """Update existing RasterDataset records with new field values."""
+    RasterDataset = apps.get_model('streamflow', 'RasterDataset')
+    
+    # Update SMAP dataset
+    smap = RasterDataset.objects.filter(name='SMAP_L4_Soil_Moisture').first()
+    if smap:
+        smap.data_source = 'earthdata'
+        smap.collection_id = 'SPL4SMGP_008'
+        smap.daac = 'NSIDC_CPRD'
+        smap.file_format = 'HDF5'
+        smap.save()
+    
+    # Update GPM dataset (if exists)
+    gpm = RasterDataset.objects.filter(name__icontains='GPM').first()
+    if gpm:
+        gpm.data_source = 'earthdata'
+        gpm.collection_id = 'GPM_3IMERGDF_07'
+        gpm.daac = 'GES_DISC'
+        gpm.file_format = 'NetCDF4'
+        gpm.save()
+    
+    # Update RTMA dataset
+    rtma = RasterDataset.objects.filter(name__icontains='RTMA').first()
+    if rtma:
+        rtma.data_source = 'nomads'
+        rtma.collection_id = 'rtma2p5'
+        rtma.file_format = 'GRIB2'
+        rtma.access_url_pattern = 'https://nomads.ncep.noaa.gov/pub/data/nccf/com/rtma/prod/'
+        rtma.save()
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('streamflow', '0004_auto_20250117_1805'),
+        ('streamflow', '0004_rasterdataset_rasterpullconfiguration_spatialextent_and_more'),
     ]
 
     operations = [
@@ -75,35 +107,3 @@ class Migration(migrations.Migration):
             reverse_code=migrations.RunPython.noop,
         ),
     ]
-
-
-def update_existing_datasets(apps, schema_editor):
-    """Update existing RasterDataset records with new field values."""
-    RasterDataset = apps.get_model('streamflow', 'RasterDataset')
-    
-    # Update SMAP dataset
-    smap = RasterDataset.objects.filter(name='SMAP_L4_Soil_Moisture').first()
-    if smap:
-        smap.data_source = 'earthdata'
-        smap.collection_id = 'SPL4SMGP_008'
-        smap.daac = 'NSIDC_CPRD'
-        smap.file_format = 'HDF5'
-        smap.save()
-    
-    # Update GPM dataset (if exists)
-    gpm = RasterDataset.objects.filter(name__icontains='GPM').first()
-    if gpm:
-        gpm.data_source = 'earthdata'
-        gpm.collection_id = 'GPM_3IMERGDF_07'
-        gpm.daac = 'GES_DISC'
-        gpm.file_format = 'NetCDF4'
-        gpm.save()
-    
-    # Update RTMA dataset
-    rtma = RasterDataset.objects.filter(name__icontains='RTMA').first()
-    if rtma:
-        rtma.data_source = 'nomads'
-        rtma.collection_id = 'rtma2p5'
-        rtma.file_format = 'GRIB2'
-        rtma.access_url_pattern = 'https://nomads.ncep.noaa.gov/pub/data/nccf/com/rtma/prod/'
-        rtma.save()
