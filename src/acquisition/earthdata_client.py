@@ -70,15 +70,17 @@ class EarthDataClient:
     def _initialize(self):
         """Initialize authentication with EarthData."""
         try:
-            # earthaccess handles .netrc automatically
-            if self.username and self.password:
-                self.auth = earthaccess.login(
-                    strategy="environment",
-                    persist=True
-                )
-            else:
-                # Try .netrc or environment variables
-                self.auth = earthaccess.login(persist=True)
+            # Set environment variables for earthaccess
+            if self.username:
+                os.environ['EARTHDATA_USERNAME'] = self.username
+            if self.password:
+                os.environ['EARTHDATA_PASSWORD'] = self.password
+            
+            # earthaccess will use environment variables
+            self.auth = earthaccess.login(
+                strategy="environment",
+                persist=False
+            )
             
             if self.auth:
                 self.authenticated = True

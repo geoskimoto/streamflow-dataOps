@@ -78,11 +78,7 @@ export EARTHDATA_USERNAME=your_username
 export EARTHDATA_PASSWORD=your_password
 ```
 
-For Django development, add to `.env`:
-```
-EARTHDATA_USERNAME=your_username
-EARTHDATA_PASSWORD=your_password
-```
+**Note**: The project's `.env` file is the easiest method for development.
 
 ---
 

@@ -72,8 +72,9 @@ def test_smap_search(client):
     try:
         # Search for SMAP data over HUC17 (Columbia River Basin)
         bbox = [-124.7, 41.5, -108.0, 49.0]
-        end_date = datetime.now() - timedelta(days=2)  # SMAP has latency
-        start_date = end_date - timedelta(days=1)
+        # Use known good date (system clock is in 2026, use 2024 data)
+        end_date = datetime(2024, 6, 1)
+        start_date = datetime(2024, 5, 31)
         
         print(f"Searching for SMAP data:")
         print(f"  Collection: {client.COLLECTIONS['SMAP_SPL4']}")
@@ -117,8 +118,9 @@ def test_gpm_search(client):
     try:
         # Search for GPM data
         bbox = [-124.7, 41.5, -108.0, 49.0]
-        end_date = datetime.now() - timedelta(days=120)  # GPM Final has 3.5 month latency
-        start_date = end_date - timedelta(days=1)
+        # Use known good date (GPM Final has data through mid-2024)
+        end_date = datetime(2024, 6, 1)
+        start_date = datetime(2024, 5, 31)
         
         print(f"Searching for GPM IMERG data:")
         print(f"  Collection: {client.COLLECTIONS['GPM_IMERG']}")
@@ -160,9 +162,9 @@ def test_availability_check(client):
     
     bbox = [-124.7, 41.5, -108.0, 49.0]
     
-    # Test SMAP
-    end_date = datetime.now() - timedelta(days=2)
-    start_date = end_date - timedelta(days=7)
+    # Test SMAP (use known good date)
+    end_date = datetime(2024, 6, 1)
+    start_date = datetime(2024, 5, 25)
     
     print("Checking SMAP availability...")
     smap_avail = client.check_data_availability(
@@ -177,9 +179,9 @@ def test_availability_check(client):
     else:
         print(f"❌ SMAP: {smap_avail['message']}")
     
-    # Test GPM
-    end_date = datetime.now() - timedelta(days=120)
-    start_date = end_date - timedelta(days=7)
+    # Test GPM (use known good date)
+    end_date = datetime(2024, 6, 1)
+    start_date = datetime(2024, 5, 25)
     
     print("\nChecking GPM availability...")
     gpm_avail = client.check_data_availability(
