@@ -598,6 +598,7 @@ def _fetch_nomads_layer(
     try:
         # Map variable names to NOMADS variable names
         if 'rtma' in dataset.collection_id.lower():
+            # RTMA (Real-Time Mesoscale Analysis)
             var_map = {
                 'temperature': 'temperature',
                 'tmp2m': 'temperature',  # 2m temperature
@@ -614,6 +615,30 @@ def _fetch_nomads_layer(
             nomads_var = var_map.get(variable.name, variable.gee_band_name)
             
             metadata = client.get_rtma_data(
+                variable=nomads_var,
+                timestamp=timestamp,
+                bbox=bbox,
+                output_path=file_path
+            )
+            
+        elif 'urma' in dataset.collection_id.lower() or 'urma' in dataset.name.lower():
+            # URMA (UnRestricted Mesoscale Analysis)
+            var_map = {
+                'temperature': 'temperature',
+                'tmp2m': 'temperature',  # 2m temperature
+                'dpt2m': 'temperature',  # dewpoint temperature
+                'precipitation': 'precipitation',
+                'wind_speed': 'wind_speed',
+                'wind_u': 'wind_u',
+                'wind_v': 'wind_v',
+                'ugrd10m': 'wind_u',  # U-component at 10m
+                'vgrd10m': 'wind_v',  # V-component at 10m
+                'pressure': 'pressure',
+                'pres': 'pressure'  # surface pressure
+            }
+            nomads_var = var_map.get(variable.name, variable.gee_band_name)
+            
+            metadata = client.get_urma_data(
                 variable=nomads_var,
                 timestamp=timestamp,
                 bbox=bbox,

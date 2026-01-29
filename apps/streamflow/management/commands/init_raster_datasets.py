@@ -165,6 +165,24 @@ class Command(BaseCommand):
                     {'name': 'precip_6hr', 'description': '6-hour accumulated precipitation', 'units': 'mm', 'standard_name': 'precipitation_amount', 'gee_band_name': 'apcp'},
                 ]
             },
+            {
+                'name': 'NOAA_URMA',
+                'data_source': 'nomads',
+                'collection_id': 'urma2p5',
+                'description': 'NOAA UnRestricted Mesoscale Analysis - 2.5km CONUS analysis (hourly)',
+                'resolution_m': 2500,
+                'temporal_resolution': 'hourly',
+                'update_frequency': 'hourly',
+                'file_format': 'GRIB2',
+                'is_active': True,
+                'variables': [
+                    {'name': 'tmp2m', 'description': '2-meter Temperature', 'units': 'K', 'standard_name': 'air_temperature'},
+                    {'name': 'dpt2m', 'description': '2-meter Dewpoint Temperature', 'units': 'K', 'standard_name': 'dew_point_temperature'},
+                    {'name': 'ugrd10m', 'description': '10-meter U Wind Component', 'units': 'm/s', 'standard_name': 'eastward_wind'},
+                    {'name': 'vgrd10m', 'description': '10-meter V Wind Component', 'units': 'm/s', 'standard_name': 'northward_wind'},
+                    {'name': 'pres', 'description': 'Surface Pressure', 'units': 'Pa', 'standard_name': 'surface_air_pressure'},
+                ]
+            },
         ]
         
         self.stdout.write("\n" + "="*80)
@@ -320,6 +338,27 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.SUCCESS("  ✓ Stage IV hourly configuration"))
             except RasterDataset.DoesNotExist:
                 self.stdout.write(self.style.WARNING("  ! Stage IV dataset not found, skipping configuration"))
+            
+            # URMA hourly configuration
+            try:
+                urma_dataset = RasterDataset.objects.get(name='NOAA_URMA')
+                urma_config, created = RasterPullConfiguration.objects.get_or_create(
+                    name='URMA_Hourly_Western_US',
+                    dataset=urma_dataset,
+                    defaults={
+                        'description': 'Hourly URMA temperature and wind for Western US',
+                        'pull_frequency_hours': 1,
+                        'lookback_days': 1,
+                        'is_active': True
+                    }
+                )
+                if created:
+                    # Add all URMA variables
+                    urma_config.variables.add(*urma_dataset.variables.all())
+                    urma_config.extents.add(extent_objects['Western_US'])
+                    self.stdout.write(self.style.SUCCESS("  ✓ URMA hourly configuration"))
+            except RasterDataset.DoesNotExist:
+                self.stdout.write(self.style.WARNING("  ! URMA dataset not found, skipping configuration"))
         
         # Summary
         if not dry_run:

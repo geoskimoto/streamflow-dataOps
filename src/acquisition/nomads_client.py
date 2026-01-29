@@ -44,7 +44,11 @@ class NomadsClient:
     RTMA_PATH = "rtma/prod/"
     RTMA_RESOLUTION = 2500  # meters
     
-    # Variable mappings
+    # URMA paths and configuration
+    URMA_PATH = "urma/prod/"
+    URMA_RESOLUTION = 2500  # meters (same as RTMA)
+    
+    # Variable mappings (shared between RTMA and URMA)
     RTMA_VARIABLES = {
         'temperature': {
             'grib_name': '2t',
@@ -535,4 +539,136 @@ class NomadsClient:
             
         except Exception as e:
             logger.error(f"Failed to check RTMA availability: {e}")
+            return False
+    
+    def get_urma_data(
+        self,
+        variable: str,
+        timestamp: datetime,
+        bbox: List[float],
+        output_path: Path,
+        timeout: int = 300
+    ) -> Dict:
+        """
+        Fetch URMA data and convert to GeoTIFF.
+        
+        URMA (UnRestricted Mesoscale Analysis) is similar to RTMA but uses
+        only unrestricted data sources.
+        
+        Args:
+            variable: Variable name ('temperature', 'precipitation', 'wind_speed')
+            timestamp: Timestamp for data (hourly)
+            bbox: Bounding box [min_lon, min_lat, max_lon, max_lat] in WGS84
+            output_path: Path to save output GeoTIFF
+            timeout: Download timeout in seconds
+            
+        Returns:
+            Metadata dictionary with statistics
+        """
+        if variable not in self.RTMA_VARIABLES:  # URMA uses same variables as RTMA
+            raise NomadsError(f"Unknown URMA variable: {variable}")
+        
+        # Round to nearest hour
+        timestamp = timestamp.replace(minute=0, second=0, microsecond=0)
+        
+        # Build GRIB2 file URL
+        url = self._build_urma_url(timestamp)
+        
+        # Download GRIB2 file
+        temp_dir = output_path.parent / 'temp'
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        grib_path = temp_dir / f"urma_{timestamp.strftime('%Y%m%d_%H')}00.grib2"
+        
+        try:
+            self._download_file(url, grib_path, timeout=timeout)
+            
+            # Extract variable and convert to GeoTIFF (same as RTMA)
+            metadata = self._extract_rtma_to_geotiff(
+                grib_path=grib_path,
+                variable=variable,
+                bbox=bbox,
+                output_path=output_path
+            )
+            
+            # Add timestamp and variable to metadata
+            metadata['timestamp'] = timestamp.isoformat()
+            metadata['variable'] = variable
+            metadata['source'] = 'URMA'
+            
+            return metadata
+            
+        finally:
+            # Cleanup temp file
+            if grib_path.exists():
+                grib_path.unlink()
+            if temp_dir.exists() and not list(temp_dir.iterdir()):
+                temp_dir.rmdir()
+    
+    def _build_urma_url(self, timestamp: datetime) -> str:
+        """
+        Build URL for URMA GRIB2 file.
+        
+        URMA URL format:
+        https://nomads.ncep.noaa.gov/pub/data/nccf/com/urma/prod/
+        urma2p5.YYYYMMDD/urma2p5.tHHz.2dvaranl_ndfd.grb2_wexp
+        
+        Note: URMA files use same naming as RTMA (with _wexp suffix)
+        """
+        date_str = timestamp.strftime('%Y%m%d')
+        hour_str = timestamp.strftime('%H')
+        
+        # URMA file path with _wexp suffix (same format as RTMA)
+        file_path = f"urma2p5.{date_str}/urma2p5.t{hour_str}z.2dvaranl_ndfd.grb2_wexp"
+        
+        url = urljoin(self.NOMADS_BASE + self.URMA_PATH, file_path)
+        return url
+    
+    def check_urma_availability(
+        self,
+        timestamp: datetime,
+        max_age_hours: int = 48
+    ) -> bool:
+        """
+        Check if URMA data is available for given timestamp.
+        
+        URMA is typically available within 1-2 hours of observation time,
+        similar to RTMA.
+        
+        Args:
+            timestamp: Desired data timestamp
+            max_age_hours: Maximum age in hours to check back
+            
+        Returns:
+            True if data is available
+        """
+        # Round to hour
+        timestamp = timestamp.replace(minute=0, second=0, microsecond=0)
+        
+        # URMA data is near-real-time, check if timestamp is recent enough
+        now = datetime.now(timezone.utc)
+        # Make sure timestamp is timezone-aware for comparison
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        age_hours = (now - timestamp).total_seconds() / 3600
+        
+        if age_hours > max_age_hours:
+            logger.warning(f"Requested data is {age_hours:.1f} hours old (max: {max_age_hours})")
+            return False
+        
+        # Check if URL exists
+        url = self._build_urma_url(timestamp)
+        
+        try:
+            response = self.session.head(url, timeout=10)
+            available = response.status_code == 200
+            
+            if available:
+                logger.info(f"URMA data available for {timestamp}")
+            else:
+                logger.info(f"URMA data not yet available for {timestamp} (status: {response.status_code})")
+            
+            return available
+            
+        except Exception as e:
+            logger.error(f"Failed to check URMA availability: {e}")
             return False
