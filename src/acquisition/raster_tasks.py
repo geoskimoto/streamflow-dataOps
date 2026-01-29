@@ -64,8 +64,14 @@ def pull_raster_data(self, config_id: int, start_date: Optional[str] = None,
         
         # Determine date range
         if start_date and end_date:
+            # Parse ISO format strings and make timezone-aware
             start_dt = datetime.fromisoformat(start_date)
             end_dt = datetime.fromisoformat(end_date)
+            # Ensure timezone-aware
+            if start_dt.tzinfo is None:
+                start_dt = timezone.make_aware(start_dt)
+            if end_dt.tzinfo is None:
+                end_dt = timezone.make_aware(end_dt)
         else:
             # Use lookback days
             end_dt = timezone.now()
@@ -420,6 +426,28 @@ def _fetch_earthdata_layer(
             
         elif 'GPM' in dataset.collection_id or 'IMERG' in dataset.collection_id:
             metadata = client.get_gpm_data(
+                date=timestamp,
+                bbox=bbox,
+                output_path=file_path
+            )
+            
+        elif 'MOD11A1' in dataset.collection_id or 'MYD11A1' in dataset.collection_id:
+            # MODIS Land Surface Temperature
+            # Determine product from collection_id
+            product = 'MOD11A1' if 'MOD11A1' in dataset.collection_id else 'MYD11A1'
+            
+            # Map variable names to MODIS variable names
+            modis_var_map = {
+                'lst_day': 'LST_Day_1km',
+                'lst_night': 'LST_Night_1km',
+                'land_surface_temperature_day': 'LST_Day_1km',
+                'land_surface_temperature_night': 'LST_Night_1km'
+            }
+            modis_var = modis_var_map.get(variable.name, variable.gee_band_name or 'LST_Day_1km')
+            
+            metadata = client.get_modis_data(
+                product=product,
+                variable=modis_var,
                 date=timestamp,
                 bbox=bbox,
                 output_path=file_path

@@ -389,6 +389,105 @@ class EarthDataClient:
             logger.error(f"Failed to get GPM data: {e}")
             raise EarthDataError(f"GPM data fetch failed: {e}")
     
+    def get_modis_data(
+        self,
+        product: str,
+        variable: str,
+        date: datetime,
+        bbox: List[float],
+        output_path: Path
+    ) -> Dict:
+        """
+        Fetch MODIS Land Surface Temperature data.
+        
+        MODIS data comes in tiles using sinusoidal projection.
+        Multiple tiles may be needed to cover the bbox.
+        
+        Args:
+            product: Product name ('MOD11A1' for Terra, 'MYD11A1' for Aqua)
+            variable: Variable name ('LST_Day_1km' or 'LST_Night_1km')
+            date: Date to fetch
+            bbox: Bounding box [min_lon, min_lat, max_lon, max_lat]
+            output_path: Path to save GeoTIFF
+            
+        Returns:
+            Dictionary with metadata
+        """
+        # Map product to collection ID
+        collection_map = {
+            'MOD11A1': self.COLLECTIONS['MODIS_LST_TERRA'],
+            'MYD11A1': self.COLLECTIONS['MODIS_LST_AQUA'],
+        }
+        
+        if product not in collection_map:
+            raise ValueError(f"Unknown MODIS product: {product}")
+        
+        collection_id = collection_map[product]
+        
+        try:
+            # Search for granules
+            # MODIS tiles cover the bbox - may need multiple tiles
+            granules = self.search_granules(
+                collection_id=collection_id,
+                bbox=bbox,
+                start_date=date,
+                end_date=date + timedelta(days=1),
+                limit=10  # May need multiple tiles
+            )
+            
+            if not granules:
+                logger.warning(f"No MODIS data found for {date.date()}")
+                return None
+            
+            logger.info(f"Found {len(granules)} MODIS tiles for {date.date()}")
+            
+            # Download all tiles
+            temp_dir = output_path.parent / 'temp'
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            
+            tile_paths = []
+            for granule in granules:
+                try:
+                    downloaded = self.download_granule(granule, temp_dir)
+                    tile_paths.append(downloaded)
+                except Exception as e:
+                    logger.warning(f"Failed to download MODIS tile: {e}")
+                    continue
+            
+            if not tile_paths:
+                raise EarthDataError("Failed to download any MODIS tiles")
+            
+            # Process tiles to GeoTIFF
+            if len(tile_paths) == 1:
+                # Single tile - direct processing
+                metadata = self.processor.process_modis_hdf4(
+                    input_path=tile_paths[0],
+                    variable=variable,
+                    bbox=bbox,
+                    output_path=output_path
+                )
+            else:
+                # Multiple tiles - mosaic them
+                metadata = self.processor.mosaic_modis_tiles(
+                    tile_paths=tile_paths,
+                    variable=variable,
+                    bbox=bbox,
+                    output_path=output_path
+                )
+            
+            # Cleanup temp files
+            for tile_path in tile_paths:
+                if tile_path.exists():
+                    tile_path.unlink()
+            if temp_dir.exists() and not list(temp_dir.iterdir()):
+                temp_dir.rmdir()
+            
+            return metadata
+            
+        except Exception as e:
+            logger.error(f"Failed to get MODIS data: {e}")
+            raise EarthDataError(f"MODIS data fetch failed: {e}")
+    
     def _extract_gpm_to_geotiff(
         self,
         nc_path: Path,

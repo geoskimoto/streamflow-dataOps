@@ -335,6 +335,127 @@ class EarthDataRasterProcessor:
             logger.error(f"Failed to process MODIS data: {e}")
             raise RasterProcessorError(f"MODIS processing failed: {e}")
     
+    def mosaic_modis_tiles(
+        self,
+        tile_paths: List[Path],
+        variable: str,
+        bbox: List[float],
+        output_path: Path
+    ) -> Dict:
+        """
+        Mosaic multiple MODIS HDF4 tiles into a single GeoTIFF.
+        
+        Args:
+            tile_paths: List of paths to MODIS HDF4 files
+            variable: Variable name (e.g., 'LST_Day_1km')
+            bbox: Bounding box [min_lon, min_lat, max_lon, max_lat]
+            output_path: Output GeoTIFF path
+            
+        Returns:
+            Metadata dict with statistics
+        """
+        try:
+            from rasterio.merge import merge
+            
+            logger.info(f"Mosaicking {len(tile_paths)} MODIS tiles")
+            
+            # Open all tiles
+            src_files = []
+            subdatasets = []
+            
+            for tile_path in tile_paths:
+                subdataset = f'HDF4_EOS:EOS_GRID:"{tile_path}":MODIS_Grid_Daily_1km_LST:{variable}'
+                try:
+                    src = rasterio.open(subdataset)
+                    src_files.append(src)
+                    subdatasets.append(subdataset)
+                except Exception as e:
+                    logger.warning(f"Failed to open MODIS tile {tile_path}: {e}")
+                    continue
+            
+            if not src_files:
+                raise RasterProcessorError("No valid MODIS tiles to mosaic")
+            
+            # Merge tiles
+            mosaic, mosaic_transform = merge(src_files, bounds=bbox)
+            
+            # Apply MODIS LST scale factor
+            if 'LST' in variable:
+                mosaic = mosaic.astype(float) * 0.02  # Convert to Kelvin
+                mosaic[mosaic == 0] = np.nan  # Fill value
+            
+            # Close source files
+            for src in src_files:
+                src.close()
+            
+            # Get CRS from first tile
+            with rasterio.open(subdatasets[0]) as src:
+                src_crs = src.crs
+            
+            # Reproject to WGS84
+            dst_crs = self.output_crs
+            transform, width, height = calculate_default_transform(
+                src_crs, dst_crs, mosaic.shape[2], mosaic.shape[1],
+                left=bbox[0], bottom=bbox[1],
+                right=bbox[2], top=bbox[3]
+            )
+            
+            # Create output array
+            dst_data = np.empty((height, width), dtype=np.float32)
+            
+            # Reproject
+            reproject(
+                source=mosaic[0],
+                destination=dst_data,
+                src_transform=mosaic_transform,
+                src_crs=src_crs,
+                dst_transform=transform,
+                dst_crs=dst_crs,
+                resampling=Resampling.bilinear,
+                src_nodata=np.nan,
+                dst_nodata=np.nan
+            )
+            
+            # Calculate statistics
+            valid_data = dst_data[~np.isnan(dst_data)]
+            stats = {
+                'min': float(np.min(valid_data)) if len(valid_data) > 0 else None,
+                'max': float(np.max(valid_data)) if len(valid_data) > 0 else None,
+                'mean': float(np.mean(valid_data)) if len(valid_data) > 0 else None,
+                'std': float(np.std(valid_data)) if len(valid_data) > 0 else None,
+                'count': int(len(valid_data)),
+                'tiles': len(tile_paths),
+                'units': 'Kelvin',
+                'long_name': variable,
+            }
+            
+            # Write to GeoTIFF
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with rasterio.open(
+                output_path,
+                'w',
+                driver='GTiff',
+                height=height,
+                width=width,
+                count=1,
+                dtype=dst_data.dtype,
+                crs=dst_crs,
+                transform=transform,
+                compress='lzw',
+                nodata=np.nan
+            ) as dst:
+                dst.write(dst_data, 1)
+                dst.update_tags(**{k: str(v) for k, v in stats.items()})
+            
+            logger.info(f"Mosaicked {len(tile_paths)} MODIS tiles to {output_path}")
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Failed to mosaic MODIS tiles: {e}")
+            raise RasterProcessorError(f"MODIS mosaicking failed: {e}")
+    
     def calculate_statistics(self, geotiff_path: Path) -> Dict:
         """
         Calculate statistics from a GeoTIFF file.
