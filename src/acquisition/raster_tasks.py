@@ -15,6 +15,7 @@ from apps.streamflow.models import (
     RasterPullLog,
     RasterLayer,
     RasterVariable,
+    RasterDataset,
     SpatialExtent
 )
 from src.acquisition.gee_client import GEEClient, GEEClientError
@@ -23,6 +24,14 @@ from src.acquisition.nomads_client import NomadsClient, NomadsError
 from src.acquisition.raster_processor import RasterProcessor, RasterProcessorError
 
 logger = logging.getLogger(__name__)
+
+# Import monitoring tasks
+from src.acquisition.monitoring_tasks import (
+    cleanup_old_layers,
+    cleanup_old_pull_logs,
+    monitor_pull_health,
+    generate_health_report
+)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
@@ -719,48 +728,79 @@ def cleanup_old_rasters(days: int = 365, dry_run: bool = False) -> Dict:
 
 
 @shared_task
-def scheduled_raster_pulls() -> Dict:
+def scheduled_raster_pulls(
+    data_source: Optional[str] = None,
+    dataset_name: Optional[str] = None
+) -> Dict:
     """
-    Run all active raster pull configurations.
+    Run scheduled raster pulls for specific data source or dataset.
     
-    This task is called by Celery Beat on a schedule.
+    Called by Celery Beat on different schedules for different data sources.
+    
+    Args:
+        data_source: Filter by data source (earthdata, nomads, gee)
+        dataset_name: Filter by specific dataset name
     
     Returns:
         Dictionary with execution statistics
     """
     try:
-        # Get all active configurations
-        configs = RasterPullConfiguration.objects.filter(schedule_enabled=True)
+        # Build query for active configurations
+        query = {'is_active': True}
+        
+        if dataset_name:
+            # Get dataset by name
+            try:
+                dataset = RasterDataset.objects.get(name=dataset_name)
+                query['dataset'] = dataset
+                logger.info(f"Running scheduled pulls for dataset: {dataset_name}")
+            except RasterDataset.DoesNotExist:
+                logger.error(f"Dataset not found: {dataset_name}")
+                return {'error': f'Dataset not found: {dataset_name}'}
+        
+        elif data_source:
+            # Get all datasets for this data source
+            datasets = RasterDataset.objects.filter(
+                data_source=data_source,
+                is_active=True
+            )
+            if not datasets.exists():
+                logger.warning(f"No active datasets found for data source: {data_source}")
+                return {'configs_total': 0, 'configs_run': 0}
+            
+            query['dataset__in'] = datasets
+            logger.info(f"Running scheduled pulls for data source: {data_source} ({datasets.count()} datasets)")
+        
+        # Get matching configurations
+        configs = RasterPullConfiguration.objects.filter(**query)
         
         stats = {
+            'data_source': data_source,
+            'dataset_name': dataset_name,
             'configs_total': configs.count(),
-            'configs_run': 0,
+            'configs_queued': 0,
             'configs_skipped': 0,
             'configs_failed': 0,
         }
         
         for config in configs:
             try:
-                # Check if we should run based on pull frequency
-                if config.last_pull_attempt:
-                    hours_since_last = (timezone.now() - config.last_pull_attempt).total_seconds() / 3600
-                    if hours_since_last < config.pull_frequency_hours:
-                        logger.debug(f"Skipping {config.name}: last pull {hours_since_last:.1f} hours ago")
-                        stats['configs_skipped'] += 1
-                        continue
-                
                 # Queue pull task
                 pull_raster_data.delay(config.id)
-                stats['configs_run'] += 1
-                logger.info(f"Queued pull task for {config.name}")
+                stats['configs_queued'] += 1
+                logger.info(f"Queued pull task for {config.name} (Dataset: {config.dataset.name})")
                 
             except Exception as e:
                 logger.error(f"Error queueing pull for {config.name}: {e}")
                 stats['configs_failed'] += 1
         
-        logger.info(f"Scheduled pulls: {stats['configs_run']} queued, {stats['configs_skipped']} skipped, {stats['configs_failed']} failed")
+        logger.info(
+            f"Scheduled pulls complete: {stats['configs_queued']} queued, "
+            f"{stats['configs_skipped']} skipped, {stats['configs_failed']} failed"
+        )
         return stats
         
     except Exception as e:
         logger.exception(f"Error in scheduled_raster_pulls: {e}")
         return {'error': str(e)}
+

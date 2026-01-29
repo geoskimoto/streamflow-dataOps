@@ -172,6 +172,29 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 
+# Task execution settings
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 3600  # 1 hour hard limit
+CELERY_TASK_SOFT_TIME_LIMIT = 3300  # 55 minutes soft limit
+CELERY_TASK_ALWAYS_EAGER = False  # Set to True for synchronous testing
+
+# Result backend settings
+CELERY_RESULT_EXTENDED = True
+CELERY_RESULT_EXPIRES = 86400  # Results expire after 24 hours
+
+# Monitoring and alerting
+CELERY_SEND_TASK_ERROR_EMAILS = True
+CELERY_TASK_SEND_SENT_EVENT = True
+
+# Email alerting configuration
+ALERT_EMAIL_ENABLED = os.getenv('ALERT_EMAIL_ENABLED', 'False').lower() == 'true'
+ALERT_EMAIL_RECIPIENTS = os.getenv('ALERT_EMAIL_RECIPIENTS', '').split(',')
+ALERT_EMAIL_FROM = os.getenv('ALERT_EMAIL_FROM', 'noreply@streamflow-dataops.org')
+
+# Raster pull alerting thresholds
+RASTER_PULL_FAILURE_THRESHOLD = 3  # Alert after 3 consecutive failures
+RASTER_PULL_MAX_AGE_HOURS = 48  # Alert if no successful pull in 48 hours
+
 # Django REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
