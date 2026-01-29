@@ -25,7 +25,36 @@
 
 ## Active Issues
 
-### None - All Critical Issues Resolved! 🎉
+### [#007] MODIS HDF4 Processing - Rasterio Compatibility Issue
+**Date Reported:** January 29, 2026  
+**Status:** 🔴 Open - Blocked  
+**Severity:** High  
+**Phase:** Phase 11 - Raster Acquisition  
+**Reporter:** System Testing  
+**Description:** Rasterio Python library cannot open HDF4_EOS subdatasets for MODIS data processing. While command-line `gdalinfo` successfully opens and reads the HDF4 files, rasterio.open() fails with "No such file or directory" error when attempting to open HDF4_EOS subdataset paths.
+
+**Technical Details:**
+- Files successfully download from NASA EarthData (3-5 MB HDF4 files)
+- Command-line GDAL works: `gdalinfo 'HDF4_EOS:EOS_GRID:"path":MODIS_Grid_Daily_1km_LST:LST_Day_1km'` ✅
+- Python rasterio fails: `rasterio.open('HDF4_EOS:EOS_GRID:"path":MODIS_Grid_Daily_1km_LST:LST_Day_1km')` ❌
+- Error message: "No such file or directory"
+- GDAL HDF4 drivers confirmed available: `gdalinfo --formats | grep HDF4` shows HDF4/HDF4Image support
+
+**Impact:** 
+- MODIS LST (Terra & Aqua) datasets non-functional (2/5 raster data sources)
+- Land surface temperature data unavailable
+- 40% of planned raster data sources blocked
+
+**Workaround:** None currently implemented
+
+**Proposed Solutions:**
+1. **Install Python GDAL bindings** (`python-gdal` or `gdal` package) and rewrite processor to use GDAL directly
+2. **Upgrade rasterio** to newer version with better HDF4 support
+3. **Alternative preprocessing** - Convert HDF4 to GeoTIFF using command-line GDAL before processing with rasterio
+
+**Dependencies:** Python environment (miniconda3), GDAL library (system has HDF4 support)
+
+**Priority:** High - blocking 40% of raster data functionality
 
 ---
 

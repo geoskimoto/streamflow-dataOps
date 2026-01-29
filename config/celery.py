@@ -12,8 +12,12 @@ app = Celery("streamflow_dataops")
 # Load task modules from all registered Django apps
 app.config_from_object("django.conf:settings", namespace="CELERY")
 
-# Auto-discover tasks in installed apps
-app.autodiscover_tasks()
+# Auto-discover tasks in installed apps AND src/ directory
+# Use lambda to delay evaluation until Django is ready
+app.autodiscover_tasks(lambda: ['src.acquisition'] + [n.name for n in __import__('django').apps.apps.get_app_configs()])
+
+# Explicitly include raster_tasks module (autodiscover only finds tasks.py)
+app.conf.include = ['src.acquisition.raster_tasks']
 
 # Celery Beat schedule for periodic tasks
 app.conf.beat_schedule = {

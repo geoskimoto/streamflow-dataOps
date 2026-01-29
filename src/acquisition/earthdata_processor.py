@@ -253,13 +253,35 @@ class EarthDataRasterProcessor:
             Metadata dict with statistics
         """
         try:
+            # Verify input file exists
+            if not input_path.exists():
+                raise RasterProcessorError(f"MODIS file does not exist: {input_path}")
+            
+            # Verify file is readable
+            if not input_path.is_file():
+                raise RasterProcessorError(f"MODIS path is not a file: {input_path}")
+            
+            logger.info(f"Processing MODIS file: {input_path} (size: {input_path.stat().st_size} bytes)")
+            
             # MODIS HDF4 requires special handling
-            # For now, use gdal through rasterio
+            # Rasterio has issues with HDF4_EOS subdataset paths
+            # Need to use absolute path as string without Path object
             
-            # HDF4 subdataset path format
-            subdataset = f'HDF4_EOS:EOS_GRID:"{input_path}":MODIS_Grid_Daily_1km_LST:{variable}'
+            # HDF4 subdataset path format - must use absolute string path
+            file_str = str(input_path.resolve())
+            subdataset = f'HDF4_EOS:EOS_GRID:"{file_str}":MODIS_Grid_Daily_1km_LST:{variable}'
             
-            with rasterio.open(subdataset) as src:
+            logger.info(f"Opening MODIS subdataset: {subdataset}")
+            
+            # Try to open with rasterio - if this fails, it's a rasterio/GDAL version issue
+            try:
+                src = rasterio.open(subdataset)
+            except Exception as e:
+                logger.error(f"Rasterio failed to open HDF4 subdataset: {e}")
+                logger.info("This is a known issue with rasterio and HDF4_EOS. Skipping MODIS processing.")
+                raise RasterProcessorError(f"Rasterio cannot open HDF4_EOS subdatasets: {e}")
+            
+            with src:
                 # Read data
                 data = src.read(1)
                 src_crs = src.crs

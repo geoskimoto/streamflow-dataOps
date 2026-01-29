@@ -42,10 +42,10 @@ class EarthDataClient:
     
     # Collection IDs (short names for CMR API)
     COLLECTIONS = {
-        'SMAP_SPL4': 'SPL4SMGP_008',
-        'GPM_IMERG': 'GPM_3IMERGDF_07',
-        'MODIS_LST_TERRA': 'MOD11A1',  # Version 061 implied
-        'MODIS_LST_AQUA': 'MYD11A1',
+        'SMAP_SPL4': 'SPL4SMGP',  # SMAP L4 Global Soil Moisture
+        'GPM_IMERG': 'GPM_3IMERGDF',  # GPM IMERG Final Daily
+        'MODIS_LST_TERRA': 'MOD11A1',  # MODIS Terra LST Daily
+        'MODIS_LST_AQUA': 'MYD11A1',  # MODIS Aqua LST Daily
     }
     
     # DAAC providers
@@ -103,6 +103,74 @@ class EarthDataClient:
         except Exception as e:
             logger.error(f"EarthData authentication failed: {e}")
             raise EarthDataAuthenticationError(f"Authentication failed: {e}")
+    
+    def find_latest_available_date(
+        self,
+        collection_id: str,
+        bbox: List[float],
+        days_back: int = 14
+    ) -> Optional[datetime]:
+        """
+        Find the most recent date with available data by searching backwards.
+        
+        Args:
+            collection_id: Collection short name (e.g., 'SPL4SMGP_008')
+            bbox: Bounding box [min_lon, min_lat, max_lon, max_lat]
+            days_back: How many days back to search (default: 14)
+            
+        Returns:
+            Most recent date with data, or None if no data found
+        """
+        if not self.authenticated:
+            raise EarthDataAuthenticationError("Not authenticated")
+        
+        try:
+            from datetime import timedelta
+            
+            # Search from today backwards
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days_back)
+            
+            logger.info(f"Searching for latest {collection_id} data from {start_date.date()} to {end_date.date()}")
+            
+            # Search with wider date range
+            results = earthaccess.search_data(
+                short_name=collection_id,
+                bounding_box=tuple(bbox),
+                temporal=(start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')),
+                count=50  # Get recent granules
+            )
+            
+            if not results:
+                logger.warning(f"No data found for {collection_id} in last {days_back} days")
+                return None
+            
+            # Extract dates from granules and find most recent
+            dates = []
+            for granule in results:
+                try:
+                    # Get temporal extent from granule metadata
+                    temporal = granule.get('umm', {}).get('TemporalExtent', {})
+                    range_dt = temporal.get('RangeDateTime', {})
+                    if range_dt and 'BeginningDateTime' in range_dt:
+                        date_str = range_dt['BeginningDateTime']
+                        date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                        dates.append(date)
+                except Exception as e:
+                    logger.debug(f"Could not parse date from granule: {e}")
+                    continue
+            
+            if dates:
+                latest = max(dates)
+                logger.info(f"Latest available data for {collection_id}: {latest.date()}")
+                return latest
+            else:
+                logger.warning(f"Could not determine dates for {collection_id} granules")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to find latest date: {e}")
+            return None
     
     def search_granules(
         self,

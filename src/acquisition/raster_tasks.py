@@ -36,7 +36,7 @@ from src.acquisition.monitoring_tasks import (
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def pull_raster_data(self, config_id: int, start_date: Optional[str] = None, 
-                     end_date: Optional[str] = None) -> Dict:
+                     end_date: Optional[str] = None, pull_log_id: Optional[int] = None) -> Dict:
     """
     Pull raster data for a configuration.
     
@@ -44,6 +44,7 @@ def pull_raster_data(self, config_id: int, start_date: Optional[str] = None,
         config_id: RasterPullConfiguration ID
         start_date: Optional start date (ISO format)
         end_date: Optional end date (ISO format)
+        pull_log_id: Optional existing RasterPullLog ID (created by trigger view)
         
     Returns:
         Dictionary with pull statistics
@@ -57,14 +58,33 @@ def pull_raster_data(self, config_id: int, start_date: Optional[str] = None,
     # Get task ID (may be None if running synchronously)
     task_id = self.request.id if self and hasattr(self, 'request') else None
     
-    # Create pull log
-    pull_log = RasterPullLog.objects.create(
-        configuration=config,
-        status='running',
-        started_at=timezone.now(),
-        celery_task_id=task_id or ''
-    )
+    # Use existing pull log if provided, otherwise create new one
+    if pull_log_id:
+        try:
+            pull_log = RasterPullLog.objects.get(id=pull_log_id)
+            pull_log.status = 'running'
+            pull_log.started_at = timezone.now()  # Update with actual start time
+            if task_id:
+                pull_log.celery_task_id = task_id
+            pull_log.save()
+        except RasterPullLog.DoesNotExist:
+            logger.warning(f"Pull log {pull_log_id} not found, creating new one")
+            pull_log = RasterPullLog.objects.create(
+                configuration=config,
+                status='running',
+                started_at=timezone.now(),
+                celery_task_id=task_id or ''
+            )
+    else:
+        # Create new pull log
+        pull_log = RasterPullLog.objects.create(
+            configuration=config,
+            status='running',
+            started_at=timezone.now(),
+            celery_task_id=task_id or ''
+        )
     
+    # Wrap entire task in try-catch to ensure log is always updated
     try:
         logger.info(f"Starting raster pull for config {config.name} (ID: {config_id})")
         
@@ -158,19 +178,28 @@ def pull_raster_data(self, config_id: int, start_date: Optional[str] = None,
     except Exception as e:
         logger.exception(f"Error in pull_raster_data: {e}")
         
-        # Update pull log
+        # Update pull log with full error details
+        import traceback
         pull_log.completed_at = timezone.now()
         pull_log.status = 'failed'
         pull_log.error_message = str(e)
+        pull_log.error_traceback = traceback.format_exc()
         pull_log.calculate_duration()
         pull_log.save()
         
-        # Retry task
-        try:
-            raise self.retry(exc=e)
-        except self.MaxRetriesExceededError:
-            logger.error(f"Max retries exceeded for config {config_id}")
-            return {'error': str(e), 'retries_exceeded': True}
+        # Update config last attempt time
+        config.last_pull_attempt = timezone.now()
+        config.save()
+        
+        # Retry task if retries available
+        if self and hasattr(self, 'request') and self.request.retries < self.max_retries:
+            try:
+                raise self.retry(exc=e)
+            except Exception:
+                pass  # MaxRetriesExceededError or retry failed
+        
+        logger.error(f"Task failed for config {config_id}, retries: {self.request.retries if self and hasattr(self, 'request') else 0}")
+        return {'error': str(e), 'retries_exceeded': True}
 
 
 def _pull_variable_extent(
@@ -364,12 +393,12 @@ def _pull_single_layer(
     if config.apply_compression:
         file_path = processor.compress_raster(
             file_path,
-            compression=config.compression_method or 'LZW'
+            compression='LZW'  # Default compression method
         )
     
     # Generate thumbnail if configured
     thumbnail_path = None
-    if config.thumbnail_enabled:
+    if getattr(config, 'generate_thumbnails', False):
         thumbnail_path = processor.generate_thumbnail(file_path)
     
     process_time = (timezone.now() - process_start).total_seconds()
@@ -419,21 +448,26 @@ def _fetch_earthdata_layer(
     """Fetch layer from NASA EarthData."""
     try:
         # Map variable names to EarthData variable names
-        if 'SMAP' in dataset.collection_id:
-            var_map = {
-                'soil_moisture_surface': 'sm_surface',
-                'soil_moisture_rootzone': 'sm_rootzone'
+        if 'SPL4SMGP' in dataset.collection_id or 'SMAP' in dataset.name:
+            # SMAP L4 Soil Moisture
+            # Map variable names to SMAP variable names expected by earthdata_client
+            smap_var_map = {
+                'sm_surface': 'soil_moisture_surface',
+                'sm_rootzone': 'soil_moisture_rootzone',
+                'sm_profile': 'soil_moisture_surface',  # Use surface as fallback
+                'soil_moisture_surface': 'soil_moisture_surface',
+                'soil_moisture_rootzone': 'soil_moisture_rootzone'
             }
-            earthdata_var = var_map.get(variable.name, variable.gee_band_name)
+            smap_var = smap_var_map.get(variable.name, variable.gee_band_name or 'soil_moisture_surface')
             
             metadata = client.get_smap_data(
-                variable=earthdata_var,
+                variable=smap_var,
                 date=timestamp,
                 bbox=bbox,
                 output_path=file_path
             )
             
-        elif 'GPM' in dataset.collection_id or 'IMERG' in dataset.collection_id:
+        elif 'GPM' in dataset.collection_id or 'IMERG' in dataset.collection_id or 'GPM' in dataset.name:
             metadata = client.get_gpm_data(
                 date=timestamp,
                 bbox=bbox,
@@ -565,11 +599,16 @@ def _fetch_nomads_layer(
         if 'rtma' in dataset.collection_id.lower():
             var_map = {
                 'temperature': 'temperature',
+                'tmp2m': 'temperature',  # 2m temperature
+                'dpt2m': 'temperature',  # dewpoint temperature (treated as temp for now)
                 'precipitation': 'precipitation',
                 'wind_speed': 'wind_speed',
                 'wind_u': 'wind_u',
                 'wind_v': 'wind_v',
-                'pressure': 'pressure'
+                'ugrd10m': 'wind_u',  # U-component at 10m
+                'vgrd10m': 'wind_v',  # V-component at 10m
+                'pressure': 'pressure',
+                'pres': 'pressure'  # surface pressure
             }
             nomads_var = var_map.get(variable.name, variable.gee_band_name)
             

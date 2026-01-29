@@ -138,6 +138,12 @@ class PullConfiguration(models.Model):
         ("forecast", "Forecast"),
     ]
 
+    FORECAST_TYPE_CHOICES = [
+        ("short", "Short-range (3-7 days)"),
+        ("medium", "Medium-range (up to 10 days)"),
+        ("long", "Long-range (up to 30 days)"),
+    ]
+
     STRATEGY_CHOICES = [
         ("append", "Append"),
         ("overwrite", "Overwrite"),
@@ -154,6 +160,13 @@ class PullConfiguration(models.Model):
     description = models.TextField(blank=True)
     data_source = models.CharField(max_length=20, choices=DATA_SOURCE_CHOICES, default="USGS")
     data_type = models.CharField(max_length=20, choices=DATA_TYPE_CHOICES)
+    forecast_type = models.CharField(
+        max_length=20,
+        choices=FORECAST_TYPE_CHOICES,
+        default="short",
+        blank=True,
+        help_text="Forecast duration (only applies to forecast data type)"
+    )
     data_strategy = models.CharField(max_length=20, choices=STRATEGY_CHOICES)
     pull_start_date = models.DateTimeField()
     is_enabled = models.BooleanField(default=True)
@@ -484,7 +497,7 @@ class RasterLayer(models.Model):
     no_data_value = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     
     # Metadata
-    thumbnail_path = models.CharField(max_length=500, blank=True, help_text="Path to thumbnail image")
+    thumbnail_path = models.CharField(max_length=500, blank=True, null=True, help_text="Path to thumbnail image")
     checksum_md5 = models.CharField(max_length=32, blank=True, help_text="File integrity checksum")
     
     # Status tracking
