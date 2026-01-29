@@ -364,13 +364,22 @@ class EarthDataRasterProcessor:
             subdatasets = []
             
             for tile_path in tile_paths:
-                subdataset = f'HDF4_EOS:EOS_GRID:"{tile_path}":MODIS_Grid_Daily_1km_LST:{variable}'
+                # Ensure Path object and file exists
+                tile_path = Path(tile_path)
+                if not tile_path.exists():
+                    logger.warning(f"MODIS tile file not found: {tile_path}")
+                    continue
+                
+                subdataset = f'HDF4_EOS:EOS_GRID:"{str(tile_path)}":MODIS_Grid_Daily_1km_LST:{variable}'
+                logger.debug(f"Opening subdataset: {subdataset}")
+                
                 try:
                     src = rasterio.open(subdataset)
                     src_files.append(src)
                     subdatasets.append(subdataset)
+                    logger.info(f"Successfully opened MODIS tile: {tile_path.name}")
                 except Exception as e:
-                    logger.warning(f"Failed to open MODIS tile {tile_path}: {e}")
+                    logger.error(f"Failed to open MODIS tile {tile_path}: {e}")
                     continue
             
             if not src_files:

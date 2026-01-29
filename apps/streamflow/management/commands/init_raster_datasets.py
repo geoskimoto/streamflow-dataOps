@@ -100,7 +100,7 @@ class Command(BaseCommand):
             {
                 'name': 'MODIS_LST_Terra',
                 'data_source': 'earthdata',
-                'collection_id': 'MOD11A1_061',
+                'collection_id': 'MOD11A1',
                 'daac': 'LPDAAC_ECS',
                 'description': 'MODIS/Terra Land Surface Temperature (MOD11A1) - Daily 1km LST',
                 'resolution_m': 1000,
@@ -118,7 +118,7 @@ class Command(BaseCommand):
             {
                 'name': 'MODIS_LST_Aqua',
                 'data_source': 'earthdata',
-                'collection_id': 'MYD11A1_061',
+                'collection_id': 'MYD11A1',
                 'daac': 'LPDAAC_ECS',
                 'description': 'MODIS/Aqua Land Surface Temperature (MYD11A1) - Daily 1km LST',
                 'resolution_m': 1000,
@@ -170,8 +170,11 @@ class Command(BaseCommand):
                     name=name,
                     defaults={
                         'description': extent_data['description'],
+                        'min_lon': bbox[0],
+                        'min_lat': bbox[1],
+                        'max_lon': bbox[2],
+                        'max_lat': bbox[3],
                         'geometry': polygon,
-                        'bbox': bbox
                     }
                 )
                 extent_objects[name] = extent

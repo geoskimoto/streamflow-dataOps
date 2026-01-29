@@ -40,12 +40,12 @@ class EarthDataAuthenticationError(EarthDataError):
 class EarthDataClient:
     """Client for interacting with NASA EarthData API."""
     
-    # Collection IDs
+    # Collection IDs (short names for CMR API)
     COLLECTIONS = {
         'SMAP_SPL4': 'SPL4SMGP_008',
         'GPM_IMERG': 'GPM_3IMERGDF_07',
-        'MODIS_LST_TERRA': 'MOD11A1_061',
-        'MODIS_LST_AQUA': 'MYD11A1_061',
+        'MODIS_LST_TERRA': 'MOD11A1',  # Version 061 implied
+        'MODIS_LST_AQUA': 'MYD11A1',
     }
     
     # DAAC providers

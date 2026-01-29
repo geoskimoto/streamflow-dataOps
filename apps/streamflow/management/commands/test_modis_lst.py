@@ -116,6 +116,12 @@ class Command(BaseCommand):
             self.stdout.write("Step 2: Searching for MODIS granules...")
             try:
                 collection_id = client.COLLECTIONS[f'MODIS_LST_{"TERRA" if product == "MOD11A1" else "AQUA"}']
+                
+                self.stdout.write(f"  Collection ID: {collection_id}")
+                self.stdout.write(f"  Date range: {target_date.strftime('%Y-%m-%d')} to {(target_date + timedelta(days=1)).strftime('%Y-%m-%d')}")
+                self.stdout.write(f"  Bounding box: {bbox}")
+                self.stdout.write("")
+                
                 granules = client.search_granules(
                     collection_id=collection_id,
                     bbox=bbox,
@@ -125,12 +131,28 @@ class Command(BaseCommand):
                 )
                 
                 if not granules:
-                    self.stdout.write(self.style.WARNING("⚠ No granules found"))
-                    self.stdout.write("This may be expected if:")
-                    self.stdout.write("  - Data not yet available for recent dates")
-                    self.stdout.write("  - Bbox outside MODIS coverage")
-                    self.stdout.write("  - NASA CMR API having issues")
-                    return
+                    self.stdout.write(self.style.WARNING("⚠ No granules found with standard search"))
+                    self.stdout.write("")
+                    self.stdout.write("Trying alternate collection ID format (without version)...")
+                    
+                    # Try without .061 suffix
+                    alt_collection = product  # Just 'MOD11A1'
+                    self.stdout.write(f"  Trying: {alt_collection}")
+                    granules = client.search_granules(
+                        collection_id=alt_collection,
+                        bbox=bbox,
+                        start_date=target_date,
+                        end_date=target_date + timedelta(days=1),
+                        limit=10
+                    )
+                    
+                    if not granules:
+                        self.stdout.write(self.style.WARNING("⚠ No granules found"))
+                        self.stdout.write("This may be expected if:")
+                        self.stdout.write("  - Data not yet available for recent dates")
+                        self.stdout.write("  - Bbox outside MODIS coverage")
+                        self.stdout.write("  - NASA CMR API having issues")
+                        return
                 
                 self.stdout.write(self.style.SUCCESS(f"✓ Found {len(granules)} granule(s)"))
                 
