@@ -15,7 +15,7 @@ import logging
 import time
 import requests
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Tuple
 from urllib.parse import urljoin
 
@@ -509,7 +509,10 @@ class NomadsClient:
         timestamp = timestamp.replace(minute=0, second=0, microsecond=0)
         
         # RTMA data is near-real-time, check if timestamp is recent enough
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
+        # Make sure timestamp is timezone-aware for comparison
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
         age_hours = (now - timestamp).total_seconds() / 3600
         
         if age_hours > max_age_hours:

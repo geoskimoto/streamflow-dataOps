@@ -40,9 +40,11 @@ class RasterAPIEndpointsTest(TestCase):
         # Create test data
         self.dataset = RasterDataset.objects.create(
             name='TEST_RTMA',
-            gee_collection_id='TEST/COLLECTION',
+            data_source='nomads',
+            collection_id='rtma2p5',
             resolution_m=2500,
-            temporal_resolution='hourly'
+            temporal_resolution='hourly',
+            file_format='GRIB2'
         )
         
         self.variable = RasterVariable.objects.create(
@@ -203,9 +205,11 @@ class RasterFrontendSeleniumTest(LiveServerTestCase):
         # Create test data
         self.dataset = RasterDataset.objects.create(
             name='RTMA',
-            gee_collection_id='NOAA/NWS/RTMA',
+            data_source='nomads',
+            collection_id='rtma2p5',
             resolution_m=2500,
-            temporal_resolution='hourly'
+            temporal_resolution='hourly',
+            file_format='GRIB2'
         )
         
         self.variable = RasterVariable.objects.create(
@@ -358,9 +362,11 @@ class RasterAPIResponseFormatTest(TestCase):
         
         self.dataset = RasterDataset.objects.create(
             name='RTMA',
-            gee_collection_id='NOAA/NWS/RTMA',
+            data_source='nomads',
+            collection_id='rtma2p5',
             resolution_m=2500,
-            temporal_resolution='hourly'
+            temporal_resolution='hourly',
+            file_format='GRIB2'
         )
         
         self.variable = RasterVariable.objects.create(
@@ -407,7 +413,7 @@ class RasterAPIResponseFormatTest(TestCase):
         
         # Check required fields
         required_fields = [
-            'id', 'name', 'gee_collection_id', 'description',
+            'id', 'name', 'collection_id', 'description',
             'resolution_m', 'temporal_resolution', 'is_active'
         ]
         
