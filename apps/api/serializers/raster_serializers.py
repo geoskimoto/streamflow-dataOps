@@ -19,9 +19,10 @@ class RasterDatasetSerializer(serializers.ModelSerializer):
     class Meta:
         model = RasterDataset
         fields = [
-            'id', 'name', 'gee_collection_id', 'description',
+            'id', 'name', 'collection_id', 'description',
             'resolution_m', 'temporal_resolution', 'update_frequency',
-            'is_active', 'variable_count', 'created_at', 'updated_at'
+            'is_active', 'variable_count', 'created_at', 'updated_at',
+            'data_source', 'daac', 'file_format'
         ]
     
     def get_variable_count(self, obj):
