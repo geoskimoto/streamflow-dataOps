@@ -150,6 +150,21 @@ class Command(BaseCommand):
                     {'name': 'randomError', 'description': 'Random Error Estimate', 'units': 'mm/hr', 'standard_name': 'precipitation_flux'},
                 ]
             },
+            {
+                'name': 'NCEP_StageIV_QPE',
+                'data_source': 'nomads',
+                'collection_id': 'pcpanl/prod',
+                'description': 'NCEP Stage IV Quantitative Precipitation Estimate - quality-controlled CONUS mosaic',
+                'resolution_m': 4000,
+                'temporal_resolution': 'hourly',
+                'update_frequency': 'hourly',
+                'file_format': 'GRIB2',
+                'is_active': True,
+                'variables': [
+                    {'name': 'precip_1hr', 'description': '1-hour accumulated precipitation', 'units': 'mm', 'standard_name': 'precipitation_amount', 'gee_band_name': 'apcp'},
+                    {'name': 'precip_6hr', 'description': '6-hour accumulated precipitation', 'units': 'mm', 'standard_name': 'precipitation_amount', 'gee_band_name': 'apcp'},
+                ]
+            },
         ]
         
         self.stdout.write("\n" + "="*80)
@@ -216,8 +231,8 @@ class Command(BaseCommand):
                         name=var_data['name'],
                         defaults={
                             'description': var_data['description'],
-                            'units': var_data['units'],
-                            'standard_name': var_data.get('standard_name', '')
+                            'unit': var_data['units'],
+                            'gee_band_name': var_data.get('gee_band_name', var_data['name'])
                         }
                     )
                     
@@ -239,7 +254,7 @@ class Command(BaseCommand):
                 dataset=rtma_dataset,
                 defaults={
                     'description': 'Hourly RTMA temperature and wind for Western US',
-                    'schedule_type': 'hourly',
+                    'pull_frequency_hours': 1,
                     'lookback_days': 1,
                     'is_active': True
                 }
@@ -258,7 +273,7 @@ class Command(BaseCommand):
                 dataset=smap_dataset,
                 defaults={
                     'description': 'Daily SMAP soil moisture for Pacific Northwest',
-                    'schedule_type': 'daily',
+                    'pull_frequency_hours': 24,
                     'lookback_days': 2,
                     'is_active': True
                 }
@@ -275,7 +290,7 @@ class Command(BaseCommand):
                 dataset=modis_terra_dataset,
                 defaults={
                     'description': 'Daily MODIS Terra LST for Western US',
-                    'schedule_type': 'daily',
+                    'pull_frequency_hours': 24,
                     'lookback_days': 3,
                     'is_active': True
                 }
@@ -284,6 +299,27 @@ class Command(BaseCommand):
                 modis_terra_config.variables.add(*modis_terra_dataset.variables.filter(name__contains='LST'))
                 modis_terra_config.extents.add(extent_objects['Western_US'])
                 self.stdout.write(self.style.SUCCESS("  ✓ MODIS Terra daily configuration"))
+            
+            # Stage IV hourly configuration
+            try:
+                stage4_dataset = RasterDataset.objects.get(name='NCEP_StageIV_QPE')
+                stage4_config, created = RasterPullConfiguration.objects.get_or_create(
+                    name='StageIV_Hourly_Western_US',
+                    dataset=stage4_dataset,
+                    defaults={
+                        'description': 'Hourly Stage IV QPE precipitation for Western US',
+                        'pull_frequency_hours': 1,
+                        'lookback_days': 1,
+                        'is_active': True
+                    }
+                )
+                if created:
+                    # Add 1-hour precipitation variable
+                    stage4_config.variables.add(*stage4_dataset.variables.filter(name='precip_1hr'))
+                    stage4_config.extents.add(extent_objects['Western_US'])
+                    self.stdout.write(self.style.SUCCESS("  ✓ Stage IV hourly configuration"))
+            except RasterDataset.DoesNotExist:
+                self.stdout.write(self.style.WARNING("  ! Stage IV dataset not found, skipping configuration"))
         
         # Summary
         if not dry_run:

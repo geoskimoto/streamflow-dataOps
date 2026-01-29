@@ -21,6 +21,7 @@ from apps.streamflow.models import (
 from src.acquisition.gee_client import GEEClient, GEEClientError
 from src.acquisition.earthdata_client import EarthDataClient, EarthDataError
 from src.acquisition.nomads_client import NomadsClient, NomadsError
+from src.acquisition.nomads_stage4_client import Stage4QPEClient, Stage4Error
 from src.acquisition.raster_processor import RasterProcessor, RasterProcessorError
 
 logger = logging.getLogger(__name__)
@@ -619,6 +620,27 @@ def _fetch_nomads_layer(
                 output_path=file_path
             )
             
+        elif 'pcpanl' in dataset.collection_id.lower() or 'stage4' in dataset.name.lower() or 'stage_iv' in dataset.name.lower():
+            # NCEP Stage IV QPE
+            stage4_client = Stage4QPEClient()
+            
+            # Determine accumulation period based on variable name
+            if variable.name in ['precip_1hr', 'apcp_1hr', 'precipitation_1hr', 'precipitation_1-hour']:
+                metadata = stage4_client.get_hourly_precip(
+                    timestamp=timestamp,
+                    bbox=bbox,
+                    output_path=file_path
+                )
+            elif variable.name in ['precip_6hr', 'apcp_6hr', 'precipitation_6hr', 'precipitation_6-hour']:
+                metadata = stage4_client.get_6hourly_precip(
+                    timestamp=timestamp,
+                    bbox=bbox,
+                    output_path=file_path
+                )
+            else:
+                logger.warning(f"Unknown Stage IV variable: {variable.name}")
+                return False
+            
         else:
             logger.warning(f"Unknown NOMADS dataset: {dataset.collection_id}")
             return False
@@ -630,7 +652,7 @@ def _fetch_nomads_layer(
         logger.info(f"NOMADS fetch complete: {metadata}")
         return True
         
-    except NomadsError as e:
+    except (NomadsError, Stage4Error) as e:
         logger.error(f"NOMADS fetch failed: {e}")
         return False
 

@@ -97,7 +97,7 @@ class Command(BaseCommand):
             # NOMADS only has recent data (last 1-2 days)
             end_date = timezone.now() - timedelta(hours=6)  # 6 hours ago
             if dataset.temporal_resolution == 'hourly':
-                # For hourly data (RTMA), pull just 2 hours
+                # For hourly data (RTMA, Stage IV), pull just 2 hours
                 start_date = end_date - timedelta(hours=2)
             else:
                 start_date = end_date - timedelta(days=1)
