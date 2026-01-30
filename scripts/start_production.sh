@@ -81,7 +81,7 @@ if command -v tmux &> /dev/null; then
     
     # Window 4: Flower monitoring
     tmux new-window -t $SESSION -n flower
-    tmux send-keys -t $SESSION:flower "celery -A config flower --port=5555" C-m
+    tmux send-keys -t $SESSION:flower "celery -A config flower --port=5555 --broker=redis://localhost:6379/0" C-m
     
     echo -e "${GREEN}✓ All services started in tmux session '$SESSION'${NC}"
     echo ""
@@ -95,7 +95,7 @@ elif command -v screen &> /dev/null; then
     screen -dmS django python manage.py runserver 0.0.0.0:8000
     screen -dmS celery-worker celery -A config worker -l info --concurrency=4
     screen -dmS celery-beat celery -A config beat -l info
-    screen -dmS flower celery -A config flower --port=5555
+    screen -dmS flower celery -A config flower --port=5555 --broker=redis://localhost:6379/0 --broker=redis://localhost:6379/0
     
     echo -e "${GREEN}✓ All services started in screen sessions${NC}"
     echo ""
@@ -110,7 +110,7 @@ else
     echo "  Terminal 1: python manage.py runserver"
     echo "  Terminal 2: celery -A config worker -l info"
     echo "  Terminal 3: celery -A config beat -l info"
-    echo "  Terminal 4: celery -A config flower --port=5555"
+    echo "  Terminal 4: celery -A config flower --port=5555 --broker=redis://localhost:6379/0"
     exit 1
 fi
 
@@ -121,7 +121,7 @@ echo "=================================================="
 echo ""
 echo "🌐 Django Admin:     http://localhost:8000/admin/"
 echo "🔌 REST API:         http://localhost:8000/api/v1/"
-echo "📊 API Documentation: http://localhost:8000/api/v1/schema/swagger-ui/"
+echo "📊 API Documentation: http://localhost:8000/api/v1/docs/"
 echo "🌸 Flower Monitor:   http://localhost:5555/"
 echo ""
 echo "=================================================="

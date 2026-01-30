@@ -330,64 +330,88 @@ class SystemDiagnostics:
             }
     
     @staticmethod
-    def check_external_apis() -> Dict[str, List[Dict[str, Any]]]:
-        """Test external API connectivity."""
+    def check_data_providers() -> Dict[str, List[Dict[str, Any]]]:
+        """Test connectivity to data provider APIs."""
         import requests
         import time
         
-        apis = [
+        providers = [
             {
                 'name': 'USGS NWIS',
                 'url': 'https://waterservices.usgs.gov/nwis/iv/',
                 'params': {'format': 'json', 'sites': '01646500', 'parameterCd': '00060', 'period': 'P1D'},
-                'timeout': 10
+                'timeout': 10,
+                'description': 'USGS stream gauge data'
             },
             {
                 'name': 'NOAA Weather API',
                 'url': 'https://api.weather.gov/gridpoints/SEW/124,67',
                 'params': {},
-                'timeout': 10
+                'timeout': 10,
+                'description': 'NOAA RFC forecast data'
             },
             {
                 'name': 'Environment Canada',
                 'url': 'https://geo.weather.gc.ca/geomet',
                 'params': {'service': 'WMS', 'version': '1.3.0', 'request': 'GetCapabilities'},
-                'timeout': 10
+                'timeout': 15,
+                'description': 'Environment Canada stream gauges'
+            },
+            {
+                'name': 'NOAA NOMADS',
+                'url': 'https://nomads.ncep.noaa.gov/pub/data/nccf/com/rtma/prod/',
+                'params': {},
+                'timeout': 10,
+                'description': 'RTMA real-time mesoscale analysis'
+            },
+            {
+                'name': 'NASA EarthData',
+                'url': 'https://urs.earthdata.nasa.gov/api/users/test',
+                'params': {},
+                'timeout': 10,
+                'description': 'SMAP, MODIS, GPM data access'
             }
         ]
         
         results = []
-        for api in apis:
+        for provider in providers:
             try:
                 start = time.time()
                 response = requests.get(
-                    api['url'],
-                    params=api['params'],
-                    timeout=api['timeout']
+                    provider['url'],
+                    params=provider['params'],
+                    timeout=provider['timeout'],
+                    allow_redirects=True
                 )
                 latency = round((time.time() - start) * 1000, 2)
                 
+                # For EarthData, getting redirected is normal
+                is_ok = response.status_code in [200, 301, 302, 401, 403]
+                
                 results.append({
-                    'name': api['name'],
-                    'status': 'healthy' if response.status_code == 200 else 'warning',
-                    'online': response.status_code == 200,
+                    'name': provider['name'],
+                    'status': 'healthy' if is_ok else 'warning',
+                    'online': is_ok,
                     'status_code': response.status_code,
                     'latency_ms': latency,
-                    'message': f'Response time: {latency}ms'
+                    'description': provider['description'],
+                    'message': f'✓ {latency}ms' if is_ok else f'Status {response.status_code}'
                 })
             except requests.Timeout:
                 results.append({
-                    'name': api['name'],
+                    'name': provider['name'],
                     'status': 'error',
                     'online': False,
-                    'message': 'Request timeout'
+                    'description': provider['description'],
+                    'message': '✗ Request timeout'
                 })
             except Exception as e:
                 results.append({
-                    'name': api['name'],
+                    'name': provider['name'],
                     'status': 'error',
                     'online': False,
-                    'message': f'Error: {str(e)}'
+                    'description': provider['description'],
+                    'message': f'✗ {str(e)[:50]}'
                 })
         
         return {'apis': results}

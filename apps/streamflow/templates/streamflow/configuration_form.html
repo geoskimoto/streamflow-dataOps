@@ -65,9 +65,14 @@
                             </div>
                         </div>
                         <div class="row">
+                            <div class="col-md-6 mb-3" id="forecastTypeField">
+                                {{ form.forecast_type|as_crispy_field }}
+                            </div>
                             <div class="col-md-6 mb-3">
                                 {{ form.data_strategy|as_crispy_field }}
                             </div>
+                        </div>
+                        <div class="row">
                             <div class="col-md-6 mb-3">
                                 {{ form.pull_start_date|as_crispy_field }}
                             </div>
@@ -126,12 +131,24 @@
                 <div class="card-body">
                     <h6 class="text-primary"><i class="fas fa-chart-line"></i> Data Types</h6>
                     <dl>
-                        <dt>Discharge</dt>
-                        <dd class="text-muted">Water flow in cubic feet per second (cfs)</dd>
-                        <dt>Stage</dt>
-                        <dd class="text-muted">Water level/height in feet</dd>
-                        <dt>Both</dt>
-                        <dd class="text-muted">Pull both discharge and stage data</dd>
+                        <dt>Real-time 15 min</dt>
+                        <dd class="text-muted">15-minute interval observed data</dd>
+                        <dt>Daily Mean</dt>
+                        <dd class="text-muted">Daily average values</dd>
+                        <dt>Forecast</dt>
+                        <dd class="text-muted">Predicted future values (NOAA RFC)</dd>
+                    </dl>
+
+                    <hr>
+
+                    <h6 class="text-warning"><i class="fas fa-crystal-ball"></i> Forecast Ranges</h6>
+                    <dl>
+                        <dt>Short-range</dt>
+                        <dd class="text-muted">3-7 day forecasts, highest accuracy</dd>
+                        <dt>Medium-range</dt>
+                        <dd class="text-muted">Up to 10 days, moderate accuracy</dd>
+                        <dt>Long-range</dt>
+                        <dd class="text-muted">Up to 30 days, probabilistic</dd>
                     </dl>
 
                     <hr>
@@ -179,6 +196,8 @@
 document.addEventListener('DOMContentLoaded', function() {
     const scheduleType = document.getElementById('{{ form.schedule_type.id_for_label }}');
     const cronField = document.getElementById('cronScheduleField');
+    const dataType = document.getElementById('{{ form.data_type.id_for_label }}');
+    const forecastTypeField = document.getElementById('forecastTypeField');
     
     function toggleCronField() {
         if (scheduleType.value === 'custom') {
@@ -188,11 +207,21 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
+    function toggleForecastTypeField() {
+        if (dataType.value === 'forecast') {
+            forecastTypeField.style.display = 'block';
+        } else {
+            forecastTypeField.style.display = 'none';
+        }
+    }
+    
     // Initial state
     toggleCronField();
+    toggleForecastTypeField();
     
     // Listen for changes
     scheduleType.addEventListener('change', toggleCronField);
+    dataType.addEventListener('change', toggleForecastTypeField);
 });
 </script>
 {% endblock %}

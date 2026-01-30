@@ -464,7 +464,7 @@ for stat in stats:
 ## Additional Resources
 
 - **Django Admin:** http://localhost:8000/admin/
-- **API Documentation:** http://localhost:8000/api/v1/schema/swagger-ui/
+- **API Documentation:** http://localhost:8000/api/v1/docs/
 - **Flower Dashboard:** http://localhost:5555/
 - **Celery Documentation:** https://docs.celeryq.dev/
 - **Flower Documentation:** https://flower.readthedocs.io/

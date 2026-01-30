@@ -138,9 +138,10 @@ class RasterPullConfigurationSerializer(serializers.ModelSerializer):
             'variable_names', 'extent_names', 'description',
             'schedule_enabled', 'schedule_cron', 'pull_frequency_hours',
             'lookback_days', 'max_age_hours', 'resampling_method',
-            'target_resolution_m', 'compression_enabled',
-            'compression_method', 'thumbnail_enabled',
-            'last_successful_pull', 'last_pull_attempt'
+            'target_resolution_m', 'apply_compression',
+            'generate_thumbnails', 'validate_on_pull', 'calculate_statistics',
+            'is_active', 'last_successful_pull', 'last_pull_attempt',
+            'created_at', 'updated_at'
         ]
     
     def get_variable_names(self, obj):

@@ -1,6 +1,7 @@
 """API URL Configuration."""
 
 from django.urls import path, include
+from django.views.generic import RedirectView
 from rest_framework.routers import DefaultRouter
 from drf_spectacular.views import (
     SpectacularAPIView,
@@ -47,6 +48,9 @@ urlpatterns = [
     path('schema/', SpectacularAPIView.as_view(), name='schema'),
     path('docs/', SpectacularSwaggerView.as_view(url_name='api:schema'), name='swagger-ui'),
     path('redoc/', SpectacularRedocView.as_view(url_name='api:schema'), name='redoc'),
+    
+    # Legacy redirects (backwards compatibility)
+    path('schema/swagger-ui/', RedirectView.as_view(pattern_name='api:swagger-ui', permanent=True), name='legacy-swagger'),
     
     # API endpoints
     path('', include(router.urls)),

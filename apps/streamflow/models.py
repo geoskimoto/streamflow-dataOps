@@ -34,6 +34,17 @@ class Station(models.Model):
     record_start_date = models.DateTimeField(null=True, blank=True)
     record_end_date = models.DateTimeField(null=True, blank=True)
 
+    # Historical Data Population Tracking
+    historical_data_populated_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='Timestamp when complete historical data was populated'
+    )
+    historical_record_count = models.IntegerField(
+        default=0,
+        help_text='Count of historical records populated'
+    )
+
     # Status
     is_active = models.BooleanField(default=True)
     last_updated = models.DateTimeField(auto_now=True)
@@ -100,6 +111,12 @@ class ForecastRun(models.Model):
         ("NOAA_RFC", "NOAA River Forecast Center"),
     ]
 
+    FORECAST_TYPE_CHOICES = [
+        ("short", "Short-range (3-7 days)"),
+        ("medium", "Medium-range (up to 10 days)"),
+        ("long", "Long-range (up to 30 days)"),
+    ]
+
     station = models.ForeignKey(
         Station,
         on_delete=models.CASCADE,
@@ -107,19 +124,32 @@ class ForecastRun(models.Model):
         db_index=True,
     )
     source = models.CharField(max_length=50, choices=SOURCE_CHOICES)
-    run_date = models.DateTimeField(db_index=True)
+    run_date = models.DateTimeField(db_index=True, help_text="When forecast was issued")
+    forecast_type = models.CharField(
+        max_length=20,
+        choices=FORECAST_TYPE_CHOICES,
+        default="short",
+        help_text="Forecast duration type"
+    )
     data = models.JSONField(help_text="Array of { date: string, value: number }")
     rmse = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True, help_text="Accuracy metric")
 
     class Meta:
         db_table = "forecast_runs"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["station", "source", "run_date", "forecast_type"],
+                name="unique_forecast_run",
+            )
+        ]
         indexes = [
             models.Index(fields=["station", "run_date"], name="idx_station_run_date"),
+            models.Index(fields=["station", "run_date", "forecast_type"], name="idx_station_run_date_type"),
         ]
         ordering = ["-run_date"]
 
     def __str__(self):
-        return f"{self.station.station_number} - {self.source} - {self.run_date}"
+        return f"{self.station.station_number} - {self.source} - {self.forecast_type} - {self.run_date}"
 
 
 class PullConfiguration(models.Model):

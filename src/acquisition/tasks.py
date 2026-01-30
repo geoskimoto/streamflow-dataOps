@@ -164,7 +164,8 @@ def execute_pull_configuration(self, config_id: int):
                             continue
                         
                         client = NOAAClient()
-                        forecast_data = client.get_forecast(hads_id, forecast_type="short")
+                        forecast_type = getattr(config, 'forecast_type', 'short')
+                        forecast_data = client.get_forecast(hads_id, forecast_type=forecast_type)
                         
                         if forecast_data:
                             # Store as forecast, not observation
@@ -348,7 +349,8 @@ def execute_forecast_pull(config_id: int):
                     continue
 
                 # Fetch forecast data
-                forecast_data = noaa_client.get_forecast(hads_id, forecast_type="short")
+                forecast_type = getattr(config, 'forecast_type', 'short')
+                forecast_data = noaa_client.get_forecast(hads_id, forecast_type=forecast_type)
 
                 if forecast_data:
                     # Store forecast

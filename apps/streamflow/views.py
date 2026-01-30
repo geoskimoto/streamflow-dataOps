@@ -1442,8 +1442,9 @@ def raster_config_delete(request, config_id):
 
 def trigger_raster_pull(request, config_id):
     """Trigger manual raster data pull."""
-    from .models import RasterPullConfiguration
+    from .models import RasterPullConfiguration, RasterPullLog
     from src.acquisition.raster_tasks import pull_raster_data
+    from django.utils import timezone
     import traceback
     
     config = get_object_or_404(RasterPullConfiguration, id=config_id)
@@ -1470,30 +1471,38 @@ def trigger_raster_pull(request, config_id):
                         f'{result.get("failed", 0)} failed, {result.get("skipped", 0)} skipped'
                     )
             else:
+                # Create log entry BEFORE queuing task (so failures are tracked)
+                pull_log = RasterPullLog.objects.create(
+                    configuration=config,
+                    status='pending',
+                    started_at=timezone.now()
+                )
+                
                 # Try async first (requires Celery worker)
                 try:
-                    task = pull_raster_data.delay(config.id)
+                    task = pull_raster_data.delay(config.id, pull_log_id=pull_log.id)
+                    pull_log.celery_task_id = task.id
+                    pull_log.status = 'running'
+                    pull_log.save()
+                    
                     messages.success(
                         request,
                         f'Async pull triggered for "{config.name}". Task ID: {task.id}'
                     )
                 except Exception as celery_error:
-                    # Celery not available, fallback to sync
-                    logger.warning(f"Celery not available, running sync: {celery_error}")
-                    messages.warning(
-                        request,
-                        'Celery worker not available. Running synchronous pull instead... This may take a moment.'
-                    )
-                    result = pull_raster_data(config.id)
+                    # Update log with error
+                    pull_log.status = 'failed'
+                    pull_log.completed_at = timezone.now()
+                    pull_log.error_message = f'Failed to queue task: {str(celery_error)}'
+                    pull_log.error_traceback = traceback.format_exc()
+                    pull_log.calculate_duration()
+                    pull_log.save()
                     
-                    if 'error' in result:
-                        messages.error(request, f'Pull failed: {result["error"]}')
-                    else:
-                        messages.success(
-                            request,
-                            f'Pull completed! Layers: {result.get("successful", 0)} successful, '
-                            f'{result.get("failed", 0)} failed, {result.get("skipped", 0)} skipped'
-                        )
+                    # Inform user of the failure
+                    messages.error(
+                        request,
+                        f'Failed to queue async task: {str(celery_error)}. Check that Celery worker is running.'
+                    )
         except Exception as e:
             logger.error(f"Failed to trigger pull: {e}\n{traceback.format_exc()}")
             messages.error(request, f'Failed to trigger pull: {str(e)}')
@@ -1586,8 +1595,7 @@ def system_diagnostics(request):
     redis_check = diagnostics.check_redis()
     celery_worker_check = diagnostics.check_celery_worker()
     celery_beat_check = diagnostics.check_celery_beat()
-    gee_check = diagnostics.check_gee_api()
-    external_apis_check = diagnostics.check_external_apis()
+    data_providers_check = diagnostics.check_data_providers()
     storage_check = diagnostics.check_storage()
     application_check = diagnostics.check_application()
     recent_activity = diagnostics.check_recent_activity()
@@ -1598,8 +1606,7 @@ def system_diagnostics(request):
         'redis': redis_check,
         'celery_worker': celery_worker_check,
         'celery_beat': celery_beat_check,
-        'gee_api': gee_check,
-        'external_apis': external_apis_check.get('apis', []),
+        'data_providers': data_providers_check.get('apis', []),
         'storage': storage_check,
         'application': application_check,
         'recent_activity': recent_activity

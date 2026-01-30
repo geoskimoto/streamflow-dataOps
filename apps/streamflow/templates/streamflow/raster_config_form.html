@@ -69,27 +69,64 @@
         <div class="card raster-card mb-4">
             <div class="card-header bg-light">
                 <h5 class="mb-0"><i class="fas fa-database"></i> Data Selection</h5>
+                <small class="text-muted">Select variables from a single dataset</small>
             </div>
             <div class="card-body">
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i> 
+                    <strong>Available Data Sources:</strong>
+                    <ul class="mb-0 mt-2">
+                        <li><strong>NOAA RTMA</strong> - Real-Time Mesoscale Analysis (Hourly, 2.5km)</li>
+                        <li><strong>NASA SMAP L4</strong> - Soil Moisture (Daily, 9km)</li>
+                        <li><strong>MODIS Terra/Aqua</strong> - Land Surface Temperature (Daily, 1km) - <em>HDF4 processing in progress</em></li>
+                        <li><strong>NASA GPM IMERG</strong> - Precipitation (30min, 11km)</li>
+                    </ul>
+                </div>
+                
                 <div class="row">
                     <div class="col-md-6 mb-3">
                         <label class="form-label">
                             {{ form.variables.label }} <span class="text-danger">*</span>
                         </label>
-                        <div class="checkbox-grid">
-                            {% for checkbox in form.variables %}
-                            <div class="form-check">
-                                {{ checkbox.tag }}
-                                <label class="form-check-label" for="{{ checkbox.id_for_label }}">
-                                    {{ checkbox.choice_label }}
-                                </label>
-                            </div>
+                        
+                        {% if form.datasets_with_variables %}
+                            {% for dataset_group in form.datasets_with_variables %}
+                                <div class="mb-4">
+                                    <h6 class="text-primary border-bottom pb-2">
+                                        <i class="fas fa-layer-group"></i> {{ dataset_group.dataset.name }}
+                                        <small class="text-muted">
+                                            ({{ dataset_group.dataset.temporal_resolution }}, 
+                                            {{ dataset_group.dataset.resolution_m }}m)
+                                        </small>
+                                    </h6>
+                                    <div class="checkbox-grid ps-3">
+                                        {% for checkbox in form.variables %}
+                                            {% for variable in dataset_group.variables %}
+                                                {% if checkbox.data.value == variable.id %}
+                                                <div class="form-check">
+                                                    {{ checkbox.tag }}
+                                                    <label class="form-check-label" for="{{ checkbox.id_for_label }}">
+                                                        {{ variable.name }}
+                                                        <small class="text-muted">({{ variable.unit }})</small>
+                                                    </label>
+                                                </div>
+                                                {% endif %}
+                                            {% endfor %}
+                                        {% endfor %}
+                                    </div>
+                                </div>
                             {% endfor %}
-                        </div>
+                        {% else %}
+                            <div class="alert alert-warning">
+                                <i class="fas fa-exclamation-triangle"></i> 
+                                No datasets with variables found. Run <code>python manage.py init_raster_datasets</code> to initialize.
+                            </div>
+                        {% endif %}
+                        
                         {% if form.variables.errors %}
                         <div class="text-danger small mt-2">{{ form.variables.errors }}</div>
                         {% endif %}
-                        <small class="form-text text-muted">Select one or more variables to pull</small>
+                        <small class="form-text text-muted">All variables must be from the same dataset</small>
                     </div>
                     <div class="col-md-6 mb-3">
                         <label class="form-label">

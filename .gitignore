@@ -38,3 +38,10 @@ alembic.ini
 .DS_Store
 Thumbs.db
 rtmaandsma-fe989e72b62e.json
+
+# Raster data files (large binary files)
+data/rasters/**/*.tif
+data/rasters/**/*.png
+data/rasters/**/*.hdf
+data/rasters/**/*.h5
+data/rasters/**/temp/

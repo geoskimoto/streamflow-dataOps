@@ -336,62 +336,33 @@
     </div>
 
     <div class="row">
-        <!-- Google Earth Engine -->
-        <div class="col-md-6">
-            <div class="card diagnostic-card {{ gee_api.status }}">
-                <div class="card-body">
-                    <h5 class="card-title">
-                        <span class="status-indicator status-{{ gee_api.status }}"></span>
-                        Google Earth Engine API
-                    </h5>
-                    <div class="metric-row">
-                        <span class="metric-label">Status:</span>
-                        <span class="metric-value">{{ gee_api.status|title }}</span>
-                    </div>
-                    {% if gee_api.status == 'healthy' %}
-                        <div class="metric-row">
-                            <span class="metric-label">Authenticated:</span>
-                            <span class="metric-value">✓ Yes</span>
-                        </div>
-                        <div class="metric-row">
-                            <span class="metric-label">Test Query:</span>
-                            <span class="metric-value">{{ gee_api.test_query }}</span>
-                        </div>
-                    {% endif %}
-                    {% if gee_api.error %}
-                        <div class="error-message">{{ gee_api.error }}</div>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-
-        <!-- External Data APIs -->
-        <div class="col-md-6">
+        <!-- Data Provider APIs -->
+        <div class="col-12">
             <div class="card">
                 <div class="card-body">
                     <h5 class="card-title">
                         <i class="fas fa-network-wired"></i> Data Provider APIs
                     </h5>
-                    {% for api in external_apis %}
-                        <div class="metric-row">
-                            <span class="metric-label">
-                                <span class="status-indicator status-{{ api.status }}"></span>
-                                {{ api.name }}:
-                            </span>
-                            <span class="metric-value">
-                                {% if api.status == 'healthy' %}
-                                    ✓ {{ api.latency_ms|floatformat:0 }}ms
-                                {% else %}
-                                    {{ api.status|title }}
+                    <div class="row">
+                        {% for api in data_providers %}
+                            <div class="col-md-6 mb-3">
+                                <div class="metric-row">
+                                    <span class="metric-label">
+                                        <span class="status-indicator status-{{ api.status }}"></span>
+                                        <strong>{{ api.name }}</strong>
+                                    </span>
+                                    <span class="metric-value">
+                                        {{ api.message }}
+                                    </span>
+                                </div>
+                                {% if api.description %}
+                                    <div style="margin-left: 24px; font-size: 0.85em; color: #666;">
+                                        {{ api.description }}
+                                    </div>
                                 {% endif %}
-                            </span>
-                        </div>
-                        {% if api.error %}
-                            <div class="error-message" style="margin-left: 20px; font-size: 0.85em;">
-                                {{ api.error }}
                             </div>
-                        {% endif %}
-                    {% endfor %}
+                        {% endfor %}
+                    </div>
                 </div>
             </div>
         </div>

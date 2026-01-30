@@ -22,8 +22,8 @@ class PullConfigurationForm(ModelForm):
     class Meta:
         model = PullConfiguration
         fields = [
-            'name', 'description', 'data_source', 'data_type', 'data_strategy',
-            'pull_start_date', 'is_enabled', 'schedule_type', 'schedule_value'
+            'name', 'description', 'data_source', 'data_type', 'forecast_type',
+            'data_strategy', 'pull_start_date', 'is_enabled', 'schedule_type', 'schedule_value'
         ]
         widgets = {
             'description': forms.Textarea(attrs={
@@ -45,6 +45,7 @@ class PullConfigurationForm(ModelForm):
             }),
             'data_source': forms.Select(attrs={'class': 'form-select'}),
             'data_type': forms.Select(attrs={'class': 'form-select'}),
+            'forecast_type': forms.Select(attrs={'class': 'form-select'}),
             'data_strategy': forms.Select(attrs={'class': 'form-select'}),
             'schedule_type': forms.Select(attrs={'class': 'form-select'}),
         }
@@ -53,6 +54,7 @@ class PullConfigurationForm(ModelForm):
             'description': 'Description',
             'data_source': 'Data Source',
             'data_type': 'Data Type',
+            'forecast_type': 'Forecast Range',
             'data_strategy': 'Data Strategy',
             'pull_start_date': 'Start Date (Optional)',
             'is_enabled': 'Enable Configuration',
@@ -63,6 +65,7 @@ class PullConfigurationForm(ModelForm):
             'name': 'A unique, descriptive name for this configuration',
             'data_source': 'Select the data source (USGS, Environment Canada, NOAA RFC)',
             'data_type': 'Choose discharge, stage, or forecast data type',
+            'forecast_type': 'Select forecast duration (only applies when data type is "Forecast")',
             'data_strategy': 'Full historical: pull all available data. Latest only: pull recent data only',
             'pull_start_date': 'Leave empty to start from earliest available data',
             'schedule_type': 'How frequently to run this configuration',
@@ -325,7 +328,7 @@ class RasterPullConfigurationForm(ModelForm):
         widgets = {
             'name': forms.TextInput(attrs={
                 'class': 'form-control',
-                'placeholder': 'e.g., HUC17 Daily RTMA'
+                'placeholder': 'e.g., Western US Hourly Temperature'
             }),
             'description': forms.Textarea(attrs={
                 'class': 'form-control',
@@ -369,11 +372,21 @@ class RasterPullConfigurationForm(ModelForm):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        from .models import RasterDataset
         
         # Add help text
         self.fields['pull_frequency_hours'].help_text = 'How often to pull data (in hours)'
         self.fields['lookback_days'].help_text = 'How many days back to check for data'
         self.fields['resampling_method'].help_text = 'Options: bilinear, nearest, cubic'
+        
+        # Group variables by dataset for better organization in template
+        self.datasets_with_variables = []
+        for dataset in RasterDataset.objects.filter(is_active=True).prefetch_related('variables'):
+            if dataset.variables.exists():
+                self.datasets_with_variables.append({
+                    'dataset': dataset,
+                    'variables': dataset.variables.filter(is_active=True)
+                })
     
     def clean(self):
         cleaned_data = super().clean()

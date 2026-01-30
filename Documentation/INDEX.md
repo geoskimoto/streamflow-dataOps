@@ -1,84 +1,113 @@
 # StreamFlow DataOps Documentation
 
-**Last Updated:** January 26, 2026
+**Last Updated:** January 29, 2026
 
-This directory contains all project documentation. Files are organized for easy reference.
+This directory contains all project documentation, organized for easy reference.
 
 ---
 
-## 📚 Current Documentation
+## 🚀 Quick Start
 
-### Getting Started
-- **[README.md](README.md)** - Project overview, installation, and quick start guide
-- **[DJANGO_QUICKSTART.md](DJANGO_QUICKSTART.md)** - Quick Django setup and development guide
+- **[QUICKSTART.md](../QUICKSTART.md)** - Fast setup guide for both timeseries and raster systems
+- **[README.md](../README.md)** - Project overview and introduction
 
-### Deployment & Operations
+---
+
+## 📖 Core Documentation
+
+### Setup & Configuration
+- **[EARTHDATA_SETUP.md](EARTHDATA_SETUP.md)** - NASA EarthData authentication setup
+- **[PRODUCTION_MONITORING.md](PRODUCTION_MONITORING.md)** - Service management, monitoring, troubleshooting
 - **[DEPLOYMENT.md](DEPLOYMENT.md)** - Production deployment instructions
-- **[STATUS.md](STATUS.md)** - Current project status and progress tracker
+- **[DJANGO_QUICKSTART.md](DJANGO_QUICKSTART.md)** - Django development guide
 
-### Feature Documentation
+### Reference Guides
+- **[Reference/MANAGEMENT_COMMANDS.md](Reference/MANAGEMENT_COMMANDS.md)** - Complete guide to all `manage.py` commands
 - **[DASHBOARD_INTEGRATION_GUIDE.md](DASHBOARD_INTEGRATION_GUIDE.md)** - Dashboard features and usage
 - **[DJANGO_MIGRATION.md](DJANGO_MIGRATION.md)** - SQLAlchemy to Django migration guide
-- **[API_TEST_RESULTS.md](API_TEST_RESULTS.md)** - Comprehensive API testing results
-- **[DATA_PULL_FIX_SUMMARY.md](DATA_PULL_FIX_SUMMARY.md)** - Data pull system fixes and validation
 
-### Development Journal
-See the **[Journal/](../Journal/)** directory for detailed development logs, decision records, and session notes.
+### Project Status
+- **[STATUS.md](STATUS.md)** - Current project status and progress
+- **[API_TEST_RESULTS.md](API_TEST_RESULTS.md)** - API testing results
+- **[DATA_PULL_FIX_SUMMARY.md](DATA_PULL_FIX_SUMMARY.md)** - Data pull system fixes
+
+---
+
+## 🌐 Frontend Documentation
+
+- **[Frontend/GRIDDED_DATA_FRONTEND.md](Frontend/GRIDDED_DATA_FRONTEND.md)** - Gridded/raster data UI guide
+- **[Frontend/TESTING_GRIDDED_FRONTEND.md](Frontend/TESTING_GRIDDED_FRONTEND.md)** - Frontend testing procedures
+- **[FRONTEND_SESSION_SUMMARY.md](FRONTEND_SESSION_SUMMARY.md)** - Frontend development session notes
+- **[FRONTEND_TEST_RESULTS.md](FRONTEND_TEST_RESULTS.md)** - Frontend test results
+
+---
+
+## 🔄 Migration & Planning
+
+- **[Migration-Plans/MIGRATION_PLAN_EARTHDATA_NOMADS.md](Migration-Plans/MIGRATION_PLAN_EARTHDATA_NOMADS.md)** - EarthData/NOMADS migration strategy
+
+---
+
+## 📓 Development Journal
+
+The **[Journal/](../Journal/)** directory contains detailed development logs:
+
+- **[PROGRESS_TRACKER.md](../Journal/PROGRESS_TRACKER.md)** - Overall progress tracking
+- **[DECISION_LOG.md](../Journal/DECISION_LOG.md)** - Architectural and technical decisions
+- **[IMPLEMENTATION_PLAN.md](../Journal/IMPLEMENTATION_PLAN.md)** - Feature implementation plans
+- **[TESTING_LOG.md](../Journal/TESTING_LOG.md)** - Testing history and results
+- **Session logs** - Detailed work session documentation
 
 ---
 
 ## 🗄️ Archived Documentation
 
-The **[Archive/](Archive/)** directory contains outdated documentation from earlier project phases:
+The **[Archive/](Archive/)** directory contains outdated documentation:
 
-- `component_1_database_design.md` - Original database design (superseded by Django models)
+### Component Design (Legacy)
+- `component_1_database_design.md` - Original database design
 - `component_2_data_acquisition.md` - Initial data acquisition design
 - `component_3_django_interface.md` - Early Django interface planning
-- `component_4_rest_api.md` - Initial REST API design (superseded by DRF implementation)
+- `component_4_rest_api.md` - Initial REST API design
 - `README_COMPONENT2.md` - Component 2 specific documentation
 
-These files are kept for historical reference but are no longer actively maintained.
+### Legacy Phases
+- `PHASE_2_STATUS.md` - Phase 2 development status
+- `PHASE_2_COMPLETE.md` - Phase 2 completion notes
+
+These files are kept for historical reference but are no longer maintained.
 
 ---
 
-## 🏗️ Project Structure Reference
+## 🏗️ System Architecture
 
-### API Documentation
+### Applications
+- **apps/api/** - REST API endpoints, serializers, views
+- **apps/streamflow/** - Core data models, management commands, web interface
+- **apps/monitoring/** - System health monitoring
+- **src/acquisition/** - Data acquisition clients (USGS, NOAA, Canada, NASA)
+- **src/celery_app/** - Celery configuration and tasks
+
+### API Documentation (Live)
 - **Swagger UI:** http://localhost:8000/api/v1/docs/
 - **ReDoc:** http://localhost:8000/api/v1/redoc/
 - **OpenAPI Schema:** http://localhost:8000/api/v1/schema/
 
-### Key Directories
-- `/apps/` - Django applications (api, streamflow, monitoring)
-- `/src/` - Core acquisition logic (USGS, NOAA, Canada clients)
-- `/tests/` - Test suite
-- `/config/` - Django settings and configuration
-- `/Journal/` - Development journal and decision logs
-- `/data/` - Sample data files
-
 ---
 
-## 📊 Current System Status
+## 📊 System Components
 
-### Database
-- **Stations:** 309 active stations
-- **Observations:** 683 discharge records
-- **Forecasts:** 450 forecast runs
-- **Configurations:** 4 active pull configurations
+### Timeseries Data
+- **Data Sources:** USGS, NOAA RFC, Environment Canada
+- **Management Commands:** load_master_stations, import_noaa_rfc_stations, sync_stations
+- **Web Interface:** http://localhost:8000/timeseries-configurations/
+- **API:** `/api/v1/stations/`, `/api/v1/observations/`, `/api/v1/forecasts/`
 
-### API Endpoints
-- ✅ Stations API (list, detail, statistics)
-- ✅ Observations API (list, filter, export, statistics)
-- ✅ Forecasts API (list, detail, statistics, by-station, latest)
-- ✅ Configurations API (list, detail, manage)
-- ✅ Logs API (list, detail, monitoring)
-
-### Web Interface
-- ✅ Dashboard with observations and forecasts
-- ✅ Station management
-- ✅ Configuration management
-- ✅ Data pull execution and monitoring
-- ✅ Interactive forecast visualization (Plotly)
+### Gridded/Raster Data
+- **Data Sources:** NOAA RTMA, NASA SMAP, MODIS Terra/Aqua, GPM IMERG
+- **Management Commands:** init_raster_datasets, pull_raster_data, backfill_rasters
+- **Web Interface:** http://localhost:8000/gridded-configurations/
+- **API:** `/api/v1/raster/datasets/`, `/api/v1/raster/configurations/`, `/api/v1/raster/layers/`
 
 ---
 
