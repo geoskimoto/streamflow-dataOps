@@ -154,23 +154,25 @@ class USGSClient:
                 return []
 
             observations = []
+            
+            # Find discharge column (can be "00060" or contain "_00060")
+            discharge_cols = [
+                col
+                for col in df.columns
+                if ("00060" in col and not col.endswith("_cd"))
+            ]
+            quality_cols = [
+                col for col in df.columns if "00060" in col and col.endswith("_cd")
+            ]
+
+            if not discharge_cols:
+                self.logger.warning(f"No discharge column found for {station_number}. Columns: {list(df.columns)}")
+                return []
+
+            discharge_col = discharge_cols[0]
+            quality_col = quality_cols[0] if quality_cols else None
+            
             for index, row in df.iterrows():
-                # Find discharge column
-                discharge_cols = [
-                    col
-                    for col in df.columns
-                    if "_00060" in col and not col.endswith("_cd")
-                ]
-                quality_cols = [
-                    col for col in df.columns if "_00060" in col and col.endswith("_cd")
-                ]
-
-                if not discharge_cols:
-                    continue
-
-                discharge_col = discharge_cols[0]
-                quality_col = quality_cols[0] if quality_cols else None
-
                 obs = {
                     "observed_at": index,
                     "discharge": (

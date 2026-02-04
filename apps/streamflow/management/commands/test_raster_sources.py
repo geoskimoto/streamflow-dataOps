@@ -67,7 +67,9 @@ class Command(BaseCommand):
             lookback_days=5,
             apply_compression=True,
             generate_thumbnails=False,
-            target_resolution_m=None
+            target_resolution_m=None,
+            schedule_enabled=True,
+            is_active=True
         )
         
         config.variables.set(variables)

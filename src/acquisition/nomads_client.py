@@ -56,6 +56,12 @@ class NomadsClient:
             'units': 'K',
             'description': '2-meter temperature'
         },
+        'dewpoint': {
+            'grib_name': '2d',
+            'level': '2 m above ground',
+            'units': 'K',
+            'description': '2-meter dewpoint temperature'
+        },
         'precipitation': {
             'grib_name': 'tp',
             'level': 'surface',
@@ -108,7 +114,7 @@ class NomadsClient:
         Fetch RTMA data and convert to GeoTIFF.
         
         Args:
-            variable: Variable name ('temperature', 'precipitation', 'wind_speed')
+            variable: Variable name ('temperature', 'dewpoint', 'wind_speed', etc.)
             timestamp: Timestamp for data (hourly)
             bbox: Bounding box [min_lon, min_lat, max_lon, max_lat] in WGS84
             output_path: Path to save output GeoTIFF
@@ -116,12 +122,31 @@ class NomadsClient:
             
         Returns:
             Metadata dictionary with statistics
+            
+        Raises:
+            NomadsError: If variable is unknown or data is not available
         """
         if variable not in self.RTMA_VARIABLES:
             raise NomadsError(f"Unknown RTMA variable: {variable}")
         
         # Round to nearest hour
         timestamp = timestamp.replace(minute=0, second=0, microsecond=0)
+        
+        # Check data latency - RTMA typically has 1-2 hour delay
+        # Make both timestamps timezone-aware for comparison
+        if timestamp.tzinfo is None:
+            # If timestamp is naive, assume UTC
+            from django.utils import timezone as tz
+            timestamp = tz.make_aware(timestamp, timezone=tz.utc)
+        
+        now = datetime.now(timestamp.tzinfo) if timestamp.tzinfo else datetime.utcnow()
+        hours_old = (now - timestamp).total_seconds() / 3600
+        
+        if hours_old < 1.5:
+            logger.warning(
+                f"RTMA data for {timestamp} may not be available yet "
+                f"(only {hours_old:.1f} hours old, typical latency is 1-2 hours)"
+            )
         
         # Build GRIB2 file URL
         url = self._build_rtma_url(timestamp)
@@ -147,6 +172,16 @@ class NomadsClient:
             metadata['variable'] = variable
             
             return metadata
+            
+        except NomadsError as e:
+            # Add more context for 404 errors
+            if "404" in str(e):
+                raise NomadsError(
+                    f"RTMA data not available for {timestamp} ({variable}). "
+                    f"Data may not be published yet (current latency: {hours_old:.1f}h) "
+                    f"or the file may have been moved/archived. URL: {url}"
+                )
+            raise
             
         finally:
             # Cleanup temp file

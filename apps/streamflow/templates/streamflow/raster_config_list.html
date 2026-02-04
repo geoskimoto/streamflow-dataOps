@@ -126,8 +126,19 @@
                                         <button type="submit" 
                                                 class="btn btn-outline-success" 
                                                 title="Trigger Manual Pull"
+                                                {% if not config.is_active %}disabled{% endif %}
                                                 onclick="return confirm('Trigger manual pull for {{ config.name }}?');">
                                             <i class="fas fa-play"></i>
+                                        </button>
+                                    </form>
+                                    <form method="post" 
+                                          action="{% url 'streamflow:toggle_raster_configuration' config.id %}" 
+                                          style="display: inline;">
+                                        {% csrf_token %}
+                                        <button type="submit" 
+                                                class="btn btn-outline-warning" 
+                                                title="{% if config.schedule_enabled %}Disable{% else %}Enable{% endif %}">
+                                            <i class="fas fa-power-off"></i>
                                         </button>
                                     </form>
                                 </div>

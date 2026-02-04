@@ -312,10 +312,17 @@
                                                 {{ obs.station.station_number }}
                                             </a>
                                         </h6>
-                                        <small>{{ obs.observed_at|timesince }} ago</small>
+                                        <small>
+                                            {% if obs.type == 'daily_mean' %}
+                                                {{ obs.observed_at|date:"M d, Y" }}
+                                            {% else %}
+                                                {{ obs.observed_at|timesince }} ago
+                                            {% endif %}
+                                        </small>
                                     </div>
                                     <p class="mb-1">
                                         <strong>{{ obs.discharge|floatformat:2 }}</strong> {{ obs.unit }}
+                                        <span class="badge bg-secondary ms-2">{{ obs.get_type_display }}</span>
                                     </p>
                                     <small class="text-muted">{{ obs.station.name|truncatewords:6 }}</small>
                                 </div>

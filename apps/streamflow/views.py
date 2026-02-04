@@ -419,8 +419,10 @@ def dashboard(request):
     
     # Data statistics
     total_observations = DischargeObservation.objects.count()
+    # Get today's date in UTC for querying observed_at timestamps
+    today_utc = timezone.now().astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     observations_today = DischargeObservation.objects.filter(
-        observed_at__gte=timezone.now().replace(hour=0, minute=0, second=0)
+        observed_at__gte=today_utc
     ).count()
     
     # Latest observations with station info
@@ -1508,6 +1510,20 @@ def trigger_raster_pull(request, config_id):
             messages.error(request, f'Failed to trigger pull: {str(e)}')
         
         return redirect('streamflow:raster_config_detail', config_id=config.id)
+    
+    return redirect('streamflow:raster_config_list')
+
+
+def toggle_raster_configuration(request, config_id):
+    """Toggle a raster configuration's enabled status."""
+    from .models import RasterPullConfiguration
+    
+    config = get_object_or_404(RasterPullConfiguration, id=config_id)
+    config.schedule_enabled = not config.schedule_enabled
+    config.save()
+    
+    status = 'enabled' if config.schedule_enabled else 'disabled'
+    messages.success(request, f'Configuration "{config.name}" {status}.')
     
     return redirect('streamflow:raster_config_list')
 

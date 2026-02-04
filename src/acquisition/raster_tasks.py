@@ -35,7 +35,13 @@ from src.acquisition.monitoring_tasks import (
 )
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=300,
+    time_limit=3600,  # Hard timeout: 1 hour
+    soft_time_limit=3300  # Soft timeout: 55 minutes (allows cleanup)
+)
 def pull_raster_data(self, config_id: int, start_date: Optional[str] = None, 
                      end_date: Optional[str] = None, pull_log_id: Optional[int] = None) -> Dict:
     """
@@ -525,19 +531,15 @@ def _fetch_gee_layer(
     """Fetch layer from Google Earth Engine (legacy)."""
     try:
         if 'RTMA' in dataset.collection_id:
-            # Map variable name to RTMA variable
-            rtma_var_map = {
-                'temperature': 'temperature',
-                'precipitation': 'precipitation',
-                'wind_speed': 'wind_speed'
-            }
-            rtma_var = rtma_var_map.get(variable.name)
-            if not rtma_var:
+            # Variable names now match NOMADS client directly
+            # No mapping needed since we updated the database to use correct names
+            if variable.name not in ['temperature', 'dewpoint', 'precipitation', 
+                                      'wind_speed', 'wind_u', 'wind_v', 'pressure']:
                 logger.warning(f"Unknown RTMA variable: {variable.name}")
                 return False
             
             image = client.get_rtma_image(
-                variable=rtma_var,
+                variable=variable.name,  # Direct use - no mapping needed
                 timestamp=timestamp,
                 bbox=bbox,
                 resolution=config.target_resolution_m or dataset.resolution_m

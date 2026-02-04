@@ -72,12 +72,12 @@ class Command(BaseCommand):
                 'file_format': 'GRIB2',
                 'is_active': True,
                 'variables': [
-                    {'name': 'tmp2m', 'description': '2-meter Air Temperature', 'units': 'K', 'standard_name': 'air_temperature'},
-                    {'name': 'dpt2m', 'description': '2-meter Dewpoint Temperature', 'units': 'K', 'standard_name': 'dew_point_temperature'},
-                    {'name': 'ugrd10m', 'description': '10-meter U-Wind Component', 'units': 'm/s', 'standard_name': 'eastward_wind'},
-                    {'name': 'vgrd10m', 'description': '10-meter V-Wind Component', 'units': 'm/s', 'standard_name': 'northward_wind'},
-                    {'name': 'wind10m', 'description': '10-meter Wind Speed', 'units': 'm/s', 'standard_name': 'wind_speed'},
-                    {'name': 'pres', 'description': 'Surface Pressure', 'units': 'Pa', 'standard_name': 'surface_air_pressure'},
+                    {'name': 'temperature', 'description': '2-meter Air Temperature', 'units': 'K', 'standard_name': 'air_temperature'},
+                    {'name': 'dewpoint', 'description': '2-meter Dewpoint Temperature', 'units': 'K', 'standard_name': 'dew_point_temperature'},
+                    {'name': 'wind_u', 'description': '10-meter U-Wind Component', 'units': 'm/s', 'standard_name': 'eastward_wind'},
+                    {'name': 'wind_v', 'description': '10-meter V-Wind Component', 'units': 'm/s', 'standard_name': 'northward_wind'},
+                    {'name': 'wind_speed', 'description': '10-meter Wind Speed', 'units': 'm/s', 'standard_name': 'wind_speed'},
+                    {'name': 'pressure', 'description': 'Surface Pressure', 'units': 'Pa', 'standard_name': 'surface_air_pressure'},
                 ]
             },
             {

@@ -48,10 +48,11 @@ urlpatterns = [
     path('gridded-configurations/<int:config_id>/', views.raster_config_detail, name='raster_config_detail'),
     path('gridded-configurations/<int:config_id>/edit/', views.raster_config_edit, name='raster_config_edit'),
     path('gridded-configurations/<int:config_id>/delete/', views.raster_config_delete, name='raster_config_delete'),
+    path('gridded-configurations/<int:config_id>/toggle/', views.toggle_raster_configuration, name='toggle_raster_configuration'),
+    path('gridded-configurations/<int:config_id>/trigger/', views.trigger_raster_pull, name='trigger_raster_pull'),
     
     # System Diagnostics
     path('diagnostics/', views.system_diagnostics, name='system_diagnostics'),
-    path('gridded-configurations/<int:config_id>/trigger/', views.trigger_raster_pull, name='trigger_raster_pull'),
     
     # Gridded Data Logs
     path('gridded-logs/', views.RasterPullLogListView.as_view(), name='raster_log_list'),
