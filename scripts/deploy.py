@@ -412,6 +412,16 @@ def get_pnw_usgs_stations():
     return list(stations)
 
 
+def get_western_us_usgs_stations():
+    """Get all active USGS stations in Western US (HUC 14-18)."""
+    stations = Station.objects.filter(
+        huc_code__regex=r'^1[4-8]',
+        agency='USGS',
+        is_active=True
+    )
+    return list(stations)
+
+
 def create_pnw_daily_mean_config(dry_run=False):
     """Create Pacific Northwest daily mean observed data configuration."""
     
@@ -500,6 +510,97 @@ def create_pnw_realtime_config(dry_run=False):
     return config
 
 
+def create_pnw_historical_backfill_config(dry_run=False):
+    """Create one-time historical backfill configuration for PNW USGS stations (HUC 17 only)."""
+    
+    config_name = "HUC 17 USGS Historical Backfill (One-Time)"
+    
+    # Check if already exists
+    if PullConfiguration.objects.filter(name=config_name).exists():
+        print(f"  ✓ '{config_name}' already exists, skipping...")
+        return None
+    
+    if dry_run:
+        stations = get_pnw_usgs_stations()
+        print(f"  → Would create '{config_name}' with {len(stations)} stations")
+        return None
+    
+    # Create configuration for historical backfill - HUC 17 only
+    config = PullConfiguration.objects.create(
+        name=config_name,
+        description="ONE-TIME: Backfills complete historical record for HUC 17 (Pacific Northwest) USGS stations. Pulls from earliest available data to present. Disable after completion.",
+        data_source="USGS",
+        data_type="observed",
+        data_strategy="replace",  # Replace strategy handles duplicates gracefully
+        pull_start_date=datetime(1900, 1, 1, tzinfo=timezone.utc),  # Pull from earliest available
+        is_enabled=True,  # Enabled by default - disable manually after backfill completes
+        schedule_type="manual",  # Manual execution only
+        schedule_value=""  # No automatic schedule
+    )
+    
+    # Get HUC 17 stations only
+    stations = get_pnw_usgs_stations()
+    station_links = [
+        PullConfigurationStation(
+            configuration=config,
+            station_number=station.station_number
+        )
+        for station in stations
+    ]
+    
+    PullConfigurationStation.objects.bulk_create(station_links)
+    
+    print(f"  ✓ Created '{config_name}' with {len(station_links)} stations")
+    print(f"  ℹ️  HUC 17 (Pacific Northwest): OR, WA, ID portions")
+    return config
+
+
+def create_western_us_historical_backfill_config(dry_run=False):
+    """Create one-time historical backfill configuration for Western US USGS stations (HUC 14-18)."""
+    
+    config_name = "HUC 14-18 USGS Historical Backfill (One-Time)"
+    
+    # Check if already exists
+    if PullConfiguration.objects.filter(name=config_name).exists():
+        print(f"  ✓ '{config_name}' already exists, skipping...")
+        return None
+    
+    if dry_run:
+        stations = get_western_us_usgs_stations()
+        print(f"  → Would create '{config_name}' with {len(stations)} stations")
+        return None
+    
+    # Create configuration for historical backfill - All Western US
+    config = PullConfiguration.objects.create(
+        name=config_name,
+        description="ONE-TIME: Backfills complete historical record for HUC 14-18 (Western US) USGS stations. Includes Upper/Lower Colorado (14-15), Great Basin (16), Pacific Northwest (17), California (18). Pulls from earliest available data to present. Disable after completion.",
+        data_source="USGS",
+        data_type="observed",
+        data_strategy="replace",  # Replace strategy handles duplicates gracefully
+        pull_start_date=datetime(1900, 1, 1, tzinfo=timezone.utc),  # Pull from earliest available
+        is_enabled=False,  # Disabled by default - enable manually when ready for larger backfill
+        schedule_type="manual",  # Manual execution only
+        schedule_value=""  # No automatic schedule
+    )
+    
+    # Get all Western US stations (HUC 14-18)
+    stations = get_western_us_usgs_stations()
+    station_links = [
+        PullConfigurationStation(
+            configuration=config,
+            station_number=station.station_number
+        )
+        for station in stations
+    ]
+    
+    PullConfigurationStation.objects.bulk_create(station_links)
+    
+    print(f"  ✓ Created '{config_name}' with {len(station_links)} stations")
+    print(f"  ℹ️  Coverage: HUC 14 (Upper CO), 15 (Lower CO), 16 (Great Basin), 17 (PNW), 18 (CA)")
+    print(f"  ℹ️  Disabled by default - enable when ready for comprehensive Western US backfill")
+    return config
+
+
 def create_grid_configs(dry_run=False):
     """Create grid/raster data configurations."""
     print("  ⊘ Grid configurations (TODO: not implemented yet)")
@@ -516,6 +617,8 @@ def setup_pull_configurations(dry_run=False):
         create_nwrfc_medium_forecast_config(dry_run=dry_run)
         create_pnw_daily_mean_config(dry_run=dry_run)
         create_pnw_realtime_config(dry_run=dry_run)
+        create_pnw_historical_backfill_config(dry_run=dry_run)
+        create_western_us_historical_backfill_config(dry_run=dry_run)
         create_grid_configs(dry_run=dry_run)
         return True
     except Exception as e:

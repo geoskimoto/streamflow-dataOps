@@ -55,53 +55,53 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
         
         return queryset.select_related('station')
     
-    @action(detail=False, methods=['get'])
-    def export_csv(self, request):
-        """
-        Export observations to CSV format.
-        
-        Query params:
-        - station_number: Required
-        - start_date: ISO format datetime
-        - end_date: ISO format datetime
-        - data_type: realtime_15min or daily_mean
-        """
-        station_number = request.query_params.get('station_number')
-        if not station_number:
-            return Response(
-                {'error': 'station_number parameter is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Get observations
-        observations = self.get_queryset().filter(station__station_number=station_number)
-        
-        # Create CSV response
-        response = HttpResponse(content_type='text/csv')
-        response['Content-Disposition'] = f'attachment; filename="discharge_{station_number}.csv"'
-        
-        writer = csv.writer(response)
-        writer.writerow([
-            'Station Number',
-            'Observed At',
-            'Discharge',
-            'Unit',
-            'Type',
-            'Quality Code',
-        ])
-        
-        for obs in observations:
-            writer.writerow([
-                obs.station.station_number,
-                obs.observed_at.isoformat(),
-                obs.discharge,
-                obs.unit,
-                obs.type,
-                obs.quality_code,
-                obs.data_source,
-            ])
-        
-        return response
+    # CSV export disabled - not currently needed
+    # @action(detail=False, methods=['get'])
+    # def export_csv(self, request):
+    #     """
+    #     Export observations to CSV format.
+    #     
+    #     Query params:
+    #     - station_number: Required
+    #     - start_date: ISO format datetime
+    #     - end_date: ISO format datetime
+    #     - data_type: realtime_15min or daily_mean
+    #     """
+    #     station_number = request.query_params.get('station_number')
+    #     if not station_number:
+    #         return Response(
+    #             {'error': 'station_number parameter is required'},
+    #             status=status.HTTP_400_BAD_REQUEST
+    #         )
+    #     
+    #     # Get observations
+    #     observations = self.get_queryset().filter(station__station_number=station_number)
+    #     
+    #     # Create CSV response
+    #     response = HttpResponse(content_type='text/csv')
+    #     response['Content-Disposition'] = f'attachment; filename="discharge_{station_number}.csv"'
+    #     
+    #     writer = csv.writer(response)
+    #     writer.writerow([
+    #         'Station Number',
+    #         'Observed At',
+    #         'Discharge',
+    #         'Unit',
+    #         'Type',
+    #         'Quality Code',
+    #     ])
+    #     
+    #     for obs in observations:
+    #         writer.writerow([
+    #             obs.station.station_number,
+    #             obs.observed_at.isoformat(),
+    #             obs.discharge,
+    #             obs.unit,
+    #             obs.type,
+    #             obs.quality_code,
+    #         ])
+    #     
+    #     return response
     
     @action(detail=False, methods=['get'])
     def statistics(self, request):

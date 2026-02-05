@@ -39,56 +39,35 @@ StreamFlow DataOps is a Django-based platform for managing streamflow data from 
 - Google Earth Engine account (for raster data)
 - GDAL development libraries (for raster processing)
 
-### Installation
+### Quick Deploy with Automated Script
 
 ```bash
-# Clone repository
+# 1. Clone and setup
 git clone <repository-url>
 cd streamflow-dataOps
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install system dependencies (Ubuntu/Debian)
-sudo apt-get update
-sudo apt-get install postgresql-16 postgresql-16-postgis-3 gdal-bin libgdal-dev
-
-# Install dependencies
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 
-# Setup environment
+# 2. Configure environment
 cp .env.example .env
-# Edit .env with your database credentials and GEE settings
+# Edit .env with your database credentials
 
-# Setup PostgreSQL with PostGIS
-sudo -u postgres createdb streamflow_db
+# 3. Setup database
+sudo -u postgres psql -c "CREATE DATABASE streamflow_db;"
 sudo -u postgres psql streamflow_db -c "CREATE EXTENSION postgis;"
-sudo -u postgres psql streamflow_db -c "CREATE EXTENSION postgis_topology;"
 
-# Run migrations
-python manage.py migrate
+# 4. Run automated deployment
+python scripts/deploy.py
 
-# Create superuser
+# 5. Create admin user
 python manage.py createsuperuser
 
-# Collect static files
-python manage.py collectstatic --noinput
-
-# Setup raster data (optional, for satellite data features)
-python manage.py setup_raster_datasets
-python manage.py setup_spatial_extents
-python manage.py test_gee_connection
-
-# Populate station mappings (enables RFC filter)
-python manage.py populate_station_mappings
-
-# Optional: Import BC stations from Environment Canada
-python manage.py import_bc_stations
-
-# Start development server
-python manage.py runserver
+# 6. Start services
+python manage.py runserver 0.0.0.0:8000
 ```
+
+**For complete deployment instructions, see [Documentation/DEPLOYMENT_GUIDE.md](Documentation/DEPLOYMENT_GUIDE.md)**
 
 Visit http://localhost:8000 to access the dashboard!
 
@@ -96,7 +75,33 @@ Visit http://localhost:8000 to access the dashboard!
 
 ## 📚 Documentation
 
-Full documentation is available in the [Documentation/](Documentation/) directory:
+Comprehensive documentation is available in the [Documentation/](Documentation/) directory:
+
+### Getting Started
+- **[📦 Deployment Guide](Documentation/DEPLOYMENT_GUIDE.md)** - Complete step-by-step deployment with automated `deploy.py` script
+- **[📖 Documentation Index](Documentation/README.md)** - Overview and navigation guide
+- **[🇨🇦 Environment Canada Setup](Documentation/QUICK_START_EC.md)** - BC hydrometric station integration
+- **[🛰️ NASA Earthdata Setup](Documentation/EARTHDATA_SETUP.md)** - Satellite raster data configuration
+
+### Operations
+- **[📊 Production Monitoring](Documentation/PRODUCTION_MONITORING.md)** - System health and maintenance
+- **[🐛 Known Issues](Documentation/0.%20Issues)** - Current issues and troubleshooting
+
+### Reference
+- **[Reference/](Documentation/Reference/)** - API specifications and data models
+- **[Implementation Plans](Documentation/Implementation-Plans/)** - Historical development notes
+- **[Frontend Docs](Documentation/Frontend/)** - UI component documentation
+
+### Archived
+- **[Archive/](Documentation/Archive/)** - Historical documentation and session notes
+
+### API Documentation (Interactive)
+
+Once deployed, access interactive API documentation:
+
+- **Swagger UI**: http://localhost:8000/api/v1/docs/
+- **ReDoc**: http://localhost:8000/api/v1/redoc/
+- **OpenAPI Schema**: http://localhost:8000/api/v1/schema/
 
 - **[INDEX.md](Documentation/INDEX.md)** - Documentation index and quick reference
 - **[STATUS.md](Documentation/STATUS.md)** - Current project status
