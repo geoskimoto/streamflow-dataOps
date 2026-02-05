@@ -25,6 +25,7 @@
 | Phase 12: Raster Testing | � COMPLETE | 100% | Jan 29, 2026 | Jan 29, 2026 | Comprehensive testing, HDF4 issue identified, RTMA fully operational |
 | Phase 13: Stage IV QPE | 🟢 COMPLETE | 100% | Jan 29, 2026 | Jan 29, 2026 | NCEP Stage IV precipitation data source added, 2/6 sources operational |
 | Phase 14: URMA | 🟢 COMPLETE | 100% | Jan 29, 2026 | Jan 29, 2026 | URMA gridded data source added, 3/7 sources operational (43%) |
+| Phase 15: USGS Historical | 🟢 COMPLETE | 100% | Feb 4, 2026 | Feb 4, 2026 | Historical backfill configs, API testing (43/43 passing), doc cleanup |
 
 **Legend:**
 - ⚪ Not Started
