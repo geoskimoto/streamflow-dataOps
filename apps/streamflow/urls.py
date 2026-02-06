@@ -37,4 +37,23 @@ urlpatterns = [
     # Logs
     path('logs/', views.DataPullLogListView.as_view(), name='log_list'),
     path('logs/<int:pk>/', views.log_detail, name='log_detail'),
+    
+    # Gridded Data (Raster/GEE)
+    path('gridded-data/', views.gridded_data_list, name='gridded_data_list'),
+    path('gridded-data/<int:layer_id>/', views.gridded_data_detail, name='gridded_data_detail'),
+    
+    # Gridded Configurations
+    path('gridded-configurations/', views.raster_config_list, name='raster_config_list'),
+    path('gridded-configurations/new/', views.raster_config_create, name='raster_config_create'),
+    path('gridded-configurations/<int:config_id>/', views.raster_config_detail, name='raster_config_detail'),
+    path('gridded-configurations/<int:config_id>/edit/', views.raster_config_edit, name='raster_config_edit'),
+    path('gridded-configurations/<int:config_id>/delete/', views.raster_config_delete, name='raster_config_delete'),
+    path('gridded-configurations/<int:config_id>/toggle/', views.toggle_raster_configuration, name='toggle_raster_configuration'),
+    path('gridded-configurations/<int:config_id>/trigger/', views.trigger_raster_pull, name='trigger_raster_pull'),
+    
+    # System Diagnostics
+    path('diagnostics/', views.system_diagnostics, name='system_diagnostics'),
+    
+    # Gridded Data Logs
+    path('gridded-logs/', views.RasterPullLogListView.as_view(), name='raster_log_list'),
 ]

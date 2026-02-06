@@ -1,0 +1,605 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}System Diagnostics - StreamFlow DataOps{% endblock %}
+
+{% block extra_head %}
+<style>
+    .status-indicator {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        margin-right: 8px;
+    }
+    .status-healthy { background-color: #28a745; }
+    .status-warning { background-color: #ffc107; }
+    .status-error { background-color: #dc3545; }
+    .status-unknown { background-color: #6c757d; }
+    
+    .diagnostic-card {
+        margin-bottom: 20px;
+        border-left: 4px solid #dee2e6;
+    }
+    .diagnostic-card.healthy { border-left-color: #28a745; }
+    .diagnostic-card.warning { border-left-color: #ffc107; }
+    .diagnostic-card.error { border-left-color: #dc3545; }
+    
+    .metric-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    .metric-row:last-child { border-bottom: none; }
+    .metric-label { font-weight: 500; color: #6c757d; }
+    .metric-value { font-weight: 600; }
+    
+    .section-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 15px;
+        border-radius: 8px 8px 0 0;
+        margin-bottom: 0;
+    }
+    
+    .auto-refresh-controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+    
+    .error-message {
+        background-color: #fff3cd;
+        border: 1px solid #ffc107;
+        border-radius: 4px;
+        padding: 10px;
+        margin-top: 10px;
+        font-size: 0.9em;
+    }
+    
+    .detail-list {
+        list-style: none;
+        padding: 0;
+        margin: 10px 0 0 0;
+    }
+    .detail-list li {
+        padding: 5px 0;
+        font-size: 0.9em;
+    }
+    .detail-list li strong {
+        display: inline-block;
+        min-width: 150px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1>
+                <i class="fas fa-stethoscope"></i> System Diagnostics
+            </h1>
+            <p class="text-muted">Real-time monitoring of all system components</p>
+        </div>
+    </div>
+
+    <!-- Auto-refresh controls -->
+    <div class="row">
+        <div class="col-12">
+            <div class="auto-refresh-controls">
+                <label for="refreshInterval">Auto-refresh:</label>
+                <select id="refreshInterval" class="form-control" style="width: 150px;">
+                    <option value="0">Off</option>
+                    <option value="15">Every 15s</option>
+                    <option value="30" selected>Every 30s</option>
+                    <option value="60">Every 1min</option>
+                    <option value="300">Every 5min</option>
+                </select>
+                <button class="btn btn-primary btn-sm" onclick="location.reload()">
+                    <i class="fas fa-sync"></i> Refresh Now
+                </button>
+                <span class="text-muted">Last updated: {{ last_updated|date:"Y-m-d H:i:s" }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Overall Status Card -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card diagnostic-card {{ overall_status }}">
+                <div class="card-body">
+                    <h3>
+                        <span class="status-indicator status-{{ overall_status }}"></span>
+                        Overall System Status: 
+                        {% if overall_status == 'healthy' %}
+                            <span class="text-success">Healthy</span>
+                        {% elif overall_status == 'warning' %}
+                            <span class="text-warning">Warning</span>
+                        {% else %}
+                            <span class="text-danger">Error</span>
+                        {% endif %}
+                    </h3>
+                    <p class="mb-0">
+                        {% if overall_status == 'healthy' %}
+                            All critical components are operational.
+                        {% elif overall_status == 'warning' %}
+                            Some non-critical components have issues. Please review below.
+                        {% else %}
+                            Critical components are failing. Immediate attention required.
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Core Infrastructure Section -->
+    <div class="row mb-3">
+        <div class="col-12">
+            <h4 class="section-header">
+                <i class="fas fa-server"></i> Core Infrastructure
+            </h4>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Database -->
+        <div class="col-md-6 col-lg-3">
+            <div class="card diagnostic-card {{ database.status }}">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="status-indicator status-{{ database.status }}"></span>
+                        PostgreSQL
+                    </h5>
+                    <div class="metric-row">
+                        <span class="metric-label">Status:</span>
+                        <span class="metric-value">{{ database.status|title }}</span>
+                    </div>
+                    {% if database.status == 'healthy' %}
+                        <div class="metric-row">
+                            <span class="metric-label">Version:</span>
+                            <span class="metric-value">{{ database.version }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Latency:</span>
+                            <span class="metric-value">{{ database.latency_ms|floatformat:1 }}ms</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Database Size:</span>
+                            <span class="metric-value">{{ database.database_size }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Tables:</span>
+                            <span class="metric-value">{{ database.table_count }}</span>
+                        </div>
+                    {% endif %}
+                    {% if database.error %}
+                        <div class="error-message">{{ database.error }}</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Redis -->
+        <div class="col-md-6 col-lg-3">
+            <div class="card diagnostic-card {{ redis.status }}">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="status-indicator status-{{ redis.status }}"></span>
+                        Redis Cache
+                    </h5>
+                    <div class="metric-row">
+                        <span class="metric-label">Status:</span>
+                        <span class="metric-value">{{ redis.status|title }}</span>
+                    </div>
+                    {% if redis.status == 'healthy' %}
+                        <div class="metric-row">
+                            <span class="metric-label">Version:</span>
+                            <span class="metric-value">{{ redis.version }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Memory Used:</span>
+                            <span class="metric-value">{{ redis.memory_used }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Uptime:</span>
+                            <span class="metric-value">{{ redis.uptime_days }}d</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Clients:</span>
+                            <span class="metric-value">{{ redis.connected_clients }}</span>
+                        </div>
+                    {% endif %}
+                    {% if redis.error %}
+                        <div class="error-message">{{ redis.error }}</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Celery Worker -->
+        <div class="col-md-6 col-lg-3">
+            <div class="card diagnostic-card {{ celery_worker.status }}">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="status-indicator status-{{ celery_worker.status }}"></span>
+                        Celery Worker
+                    </h5>
+                    <div class="metric-row">
+                        <span class="metric-label">Status:</span>
+                        <span class="metric-value">{{ celery_worker.status|title }}</span>
+                    </div>
+                    {% if celery_worker.status == 'healthy' %}
+                        <div class="metric-row">
+                            <span class="metric-label">Workers:</span>
+                            <span class="metric-value">{{ celery_worker.worker_count }}</span>
+                        </div>
+                        {% if celery_worker.worker_names %}
+                            <div class="metric-row">
+                                <span class="metric-label">Worker Names:</span>
+                                <span class="metric-value" style="font-size: 0.8em;">
+                                    {% for name in celery_worker.worker_names %}
+                                        {{ name|truncatechars:20 }}{% if not forloop.last %}, {% endif %}
+                                    {% endfor %}
+                                </span>
+                            </div>
+                        {% endif %}
+                        <div class="metric-row">
+                            <span class="metric-label">Active Tasks:</span>
+                            <span class="metric-value">{{ celery_worker.active_tasks }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Registered:</span>
+                            <span class="metric-value">{{ celery_worker.registered_tasks }} tasks</span>
+                        </div>
+                        {% if celery_worker.broker_status %}
+                            <div class="metric-row">
+                                <span class="metric-label">Broker:</span>
+                                <span class="metric-value">{{ celery_worker.broker_status }}</span>
+                            </div>
+                        {% endif %}
+                    {% endif %}
+                    {% if celery_worker.error %}
+                        <div class="error-message">
+                            <strong>⚠️ Error Details:</strong>
+                            <pre style="white-space: pre-wrap; font-size: 0.85em; margin-top: 8px; background: #fff; padding: 8px; border-radius: 4px;">{{ celery_worker.error }}</pre>
+                        </div>
+                    {% endif %}
+                    {% if celery_worker.troubleshooting %}
+                        <details style="margin-top: 10px;">
+                            <summary style="cursor: pointer; color: #007bff; font-weight: 500;">
+                                <i class="fas fa-info-circle"></i> Troubleshooting Steps
+                            </summary>
+                            <pre style="white-space: pre-wrap; font-size: 0.85em; margin-top: 8px; background: #f8f9fa; padding: 8px; border-radius: 4px;">{% for line in celery_worker.troubleshooting %}{{ line }}
+{% endfor %}</pre>
+                        </details>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Celery Beat -->
+        <div class="col-md-6 col-lg-3">
+            <div class="card diagnostic-card {{ celery_beat.status }}">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="status-indicator status-{{ celery_beat.status }}"></span>
+                        Celery Beat
+                    </h5>
+                    <div class="metric-row">
+                        <span class="metric-label">Status:</span>
+                        <span class="metric-value">{{ celery_beat.status|title }}</span>
+                    </div>
+                    {% if celery_beat.status == 'healthy' %}
+                        {% if celery_beat.pid %}
+                            <div class="metric-row">
+                                <span class="metric-label">PID:</span>
+                                <span class="metric-value">{{ celery_beat.pid }}</span>
+                            </div>
+                        {% endif %}
+                        <div class="metric-row">
+                            <span class="metric-label">Enabled Tasks:</span>
+                            <span class="metric-value">{{ celery_beat.enabled_tasks }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Total Tasks:</span>
+                            <span class="metric-value">{{ celery_beat.total_tasks }}</span>
+                        </div>
+                    {% endif %}
+                    {% if celery_beat.error %}
+                        <div class="error-message">{{ celery_beat.error }}</div>
+                    {% endif %}
+                    {% if celery_beat.troubleshooting %}
+                        <details style="margin-top: 10px;">
+                            <summary style="cursor: pointer; color: #007bff; font-weight: 500;">
+                                <i class="fas fa-info-circle"></i> More Info
+                            </summary>
+                            <pre style="white-space: pre-wrap; font-size: 0.85em; margin-top: 8px; background: #f8f9fa; padding: 8px; border-radius: 4px;">{% for line in celery_beat.troubleshooting %}{{ line }}
+{% endfor %}</pre>
+                        </details>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- External Services Section -->
+    <div class="row mb-3 mt-4">
+        <div class="col-12">
+            <h4 class="section-header">
+                <i class="fas fa-cloud"></i> External Services
+            </h4>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Data Provider APIs -->
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <i class="fas fa-network-wired"></i> Data Provider APIs
+                    </h5>
+                    <div class="row">
+                        {% for api in data_providers %}
+                            <div class="col-md-6 mb-3">
+                                <div class="metric-row">
+                                    <span class="metric-label">
+                                        <span class="status-indicator status-{{ api.status }}"></span>
+                                        <strong>{{ api.name }}</strong>
+                                    </span>
+                                    <span class="metric-value">
+                                        {{ api.message }}
+                                    </span>
+                                </div>
+                                {% if api.description %}
+                                    <div style="margin-left: 24px; font-size: 0.85em; color: #666;">
+                                        {{ api.description }}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Storage Section -->
+    <div class="row mb-3 mt-4">
+        <div class="col-12">
+            <h4 class="section-header">
+                <i class="fas fa-hdd"></i> Storage & File System
+            </h4>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Timeseries Data Storage -->
+        <div class="col-md-4">
+            <div class="card diagnostic-card {{ timeseries_storage.status }}">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="status-indicator status-{{ timeseries_storage.status }}"></span>
+                        Timeseries Data Storage
+                    </h5>
+                    <div class="metric-row">
+                        <span class="metric-label">Status:</span>
+                        <span class="metric-value">{{ timeseries_storage.status|title }}</span>
+                    </div>
+                    {% if timeseries_storage.status != 'error' %}
+                        <div class="metric-row">
+                            <span class="metric-label">Observations:</span>
+                            <span class="metric-value">{{ timeseries_storage.observation_count }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Active Stations:</span>
+                            <span class="metric-value">{{ timeseries_storage.station_count }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Date Range:</span>
+                            <span class="metric-value" style="font-size: 0.85em;">{{ timeseries_storage.date_range }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Table Size:</span>
+                            <span class="metric-value">{{ timeseries_storage.table_size }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Growth Rate:</span>
+                            <span class="metric-value">~{{ timeseries_storage.obs_per_day }} obs/day</span>
+                        </div>
+                    {% endif %}
+                    {% if timeseries_storage.error %}
+                        <div class="error-message">{{ timeseries_storage.error }}</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Raster Data Storage -->
+        <div class="col-md-4">
+            <div class="card diagnostic-card {{ storage.raster_data.status }}">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="status-indicator status-{{ storage.raster_data.status }}"></span>
+                        Raster Data Storage
+                    </h5>
+                    <div class="metric-row">
+                        <span class="metric-label">Status:</span>
+                        <span class="metric-value">{{ storage.raster_data.status|title }}</span>
+                    </div>
+                    {% if storage.raster_data.status != 'error' %}
+                        <div class="metric-row">
+                            <span class="metric-label">Path:</span>
+                            <span class="metric-value" style="font-size: 0.85em;">{{ storage.raster_data.path }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Used Space:</span>
+                            <span class="metric-value">{{ storage.raster_data.used_space }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Free Space:</span>
+                            <span class="metric-value">{{ storage.raster_data.free_space }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Files:</span>
+                            <span class="metric-value">{{ storage.raster_data.file_count }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Writable:</span>
+                            <span class="metric-value">
+                                {% if storage.raster_data.writable %}✓ Yes{% else %}✗ No{% endif %}
+                            </span>
+                        </div>
+                    {% endif %}
+                    {% if storage.raster_data.error %}
+                        <div class="error-message">{{ storage.raster_data.error }}</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Static Files -->
+        <div class="col-md-4">
+            <div class="card diagnostic-card {{ storage.static_files.status }}">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="status-indicator status-{{ storage.static_files.status }}"></span>
+                        Static Files
+                    </h5>
+                    <div class="metric-row">
+                        <span class="metric-label">Status:</span>
+                        <span class="metric-value">{{ storage.static_files.status|title }}</span>
+                    </div>
+                    {% if storage.static_files.status != 'error' %}
+                        <div class="metric-row">
+                            <span class="metric-label">Path:</span>
+                            <span class="metric-value" style="font-size: 0.85em;">{{ storage.static_files.path }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Exists:</span>
+                            <span class="metric-value">
+                                {% if storage.static_files.exists %}✓ Yes{% else %}✗ No{% endif %}
+                            </span>
+                        </div>
+                    {% endif %}
+                    {% if storage.static_files.error %}
+                        <div class="error-message">{{ storage.static_files.error }}</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Application Status Section -->
+    <div class="row mb-3 mt-4">
+        <div class="col-12">
+            <h4 class="section-header">
+                <i class="fas fa-cogs"></i> Application Status
+            </h4>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card diagnostic-card {{ application.status }}">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="status-indicator status-{{ application.status }}"></span>
+                        Django Application
+                    </h5>
+                    <div class="metric-row">
+                        <span class="metric-label">Django Version:</span>
+                        <span class="metric-value">{{ application.django_version }}</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Debug Mode:</span>
+                        <span class="metric-value">
+                            {% if application.debug_mode %}
+                                <span class="text-warning">Enabled ⚠️</span>
+                            {% else %}
+                                Disabled ✓
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Migrations:</span>
+                        <span class="metric-value">
+                            {% if application.migrations.unapplied and application.migrations.unapplied > 0 %}
+                                <span class="text-danger">{{ application.migrations.unapplied }} unapplied</span>
+                            {% else %}
+                                All applied ✓
+                            {% endif %}
+                        </span>
+                    </div>
+                    
+                    <h6 class="mt-3 mb-2">Model Counts:</h6>
+                    <ul class="detail-list">
+                        {% for model_name, count in application.model_counts.items %}
+                            <li>
+                                <strong>{{ model_name }}:</strong> {{ count }}
+                            </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <i class="fas fa-history"></i> Recent Activity (24h)
+                    </h5>
+                    
+                    <h6 class="mt-3 mb-2">Timeseries Data Pulls:</h6>
+                    <ul class="detail-list">
+                        <li><strong>Total Pulls:</strong> {{ recent_activity.timeseries.total_pulls }}</li>
+                        <li><strong>Successful:</strong> <span class="text-success">{{ recent_activity.timeseries.successful }}</span></li>
+                        <li><strong>Failed:</strong> <span class="text-danger">{{ recent_activity.timeseries.failed }}</span></li>
+                        <li><strong>Running:</strong> {{ recent_activity.timeseries.running }}</li>
+                        <li><strong>Records Created:</strong> {{ recent_activity.timeseries.records_created }}</li>
+                    </ul>
+                    
+                    <h6 class="mt-3 mb-2">Gridded Data Pulls:</h6>
+                    <ul class="detail-list">
+                        <li><strong>Total Pulls:</strong> {{ recent_activity.gridded.total_pulls }}</li>
+                        <li><strong>Successful:</strong> <span class="text-success">{{ recent_activity.gridded.successful }}</span></li>
+                        <li><strong>Failed:</strong> <span class="text-danger">{{ recent_activity.gridded.failed }}</span></li>
+                        <li><strong>Running:</strong> {{ recent_activity.gridded.running }}</li>
+                        <li><strong>Layers Created:</strong> {{ recent_activity.gridded.layers_created }}</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    let refreshInterval;
+    const intervalSelect = document.getElementById('refreshInterval');
+    
+    function startAutoRefresh() {
+        if (refreshInterval) {
+            clearInterval(refreshInterval);
+        }
+        
+        const seconds = parseInt(intervalSelect.value);
+        if (seconds > 0) {
+            refreshInterval = setInterval(() => {
+                location.reload();
+            }, seconds * 1000);
+        }
+    }
+    
+    intervalSelect.addEventListener('change', startAutoRefresh);
+    
+    // Start auto-refresh on page load
+    startAutoRefresh();
+</script>
+{% endblock %}

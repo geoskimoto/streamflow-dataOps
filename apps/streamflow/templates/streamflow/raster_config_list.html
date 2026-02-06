@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Gridded Configurations{% endblock %}
+
+{% block extra_css %}
+<style>
+    .raster-card { border-left: 4px solid #6f42c1; }
+    .raster-badge { background-color: #6f42c1; }
+    .btn-raster { background-color: #6f42c1; border-color: #6f42c1; color: white; }
+    .btn-raster:hover { background-color: #5a32a3; border-color: #5a32a3; color: white; }
+    .text-raster { color: #6f42c1; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="fas fa-cog"></i> Gridded Data Configurations</h2>
+        <a href="{% url 'streamflow:raster_config_create' %}" class="btn btn-raster">
+            <i class="fas fa-plus-circle"></i> New Configuration
+        </a>
+    </div>
+
+    <!-- Configurations Table -->
+    <div class="card raster-card">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Name</th>
+                            <th>Dataset</th>
+                            <th>Variables</th>
+                            <th>Extents</th>
+                            <th>Schedule</th>
+                            <th>Last Run</th>
+                            <th>Success Rate</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for config in configurations %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'streamflow:raster_config_detail' config.id %}">
+                                    <strong>{{ config.name }}</strong>
+                                </a>
+                                {% if config.description %}
+                                <br><small class="text-muted">{{ config.description|truncatewords:10 }}</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge raster-badge">{{ config.dataset.name }}</span>
+                            </td>
+                            <td>
+                                {% for var in config.variables.all|slice:":3" %}
+                                <span class="badge bg-secondary">{{ var.name }}</span>
+                                {% endfor %}
+                                {% if config.variables.count > 3 %}
+                                <span class="badge bg-light text-dark">+{{ config.variables.count|add:"-3" }} more</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% for ext in config.extents.all %}
+                                <span class="badge bg-info">{{ ext.name }}</span>
+                                {% endfor %}
+                            </td>
+                            <td>
+                                {% if config.schedule_enabled %}
+                                <i class="fas fa-clock text-success"></i>
+                                Every {{ config.pull_frequency_hours }}h
+                                {% else %}
+                                <span class="text-muted">Manual only</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if config.last_run %}
+                                <small>{{ config.last_run|date:"M d, Y H:i" }}</small>
+                                {% else %}
+                                <span class="text-muted">Never</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if config.total_runs > 0 %}
+                                {% widthratio config.successful_runs config.total_runs 100 as success_rate %}
+                                <div class="progress" style="height: 20px;">
+                                    <div class="progress-bar {% if success_rate >= 80 %}bg-success{% elif success_rate >= 50 %}bg-warning{% else %}bg-danger{% endif %}" 
+                                         role="progressbar" 
+                                         style="width: {{ success_rate }}%"
+                                         aria-valuenow="{{ success_rate }}" 
+                                         aria-valuemin="0" 
+                                         aria-valuemax="100">
+                                        {{ success_rate }}%
+                                    </div>
+                                </div>
+                                <small class="text-muted">{{ config.successful_runs }}/{{ config.total_runs }} runs</small>
+                                {% else %}
+                                <span class="text-muted">No runs yet</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if config.schedule_enabled %}
+                                <span class="badge bg-success">Enabled</span>
+                                {% else %}
+                                <span class="badge bg-secondary">Disabled</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <a href="{% url 'streamflow:raster_config_detail' config.id %}" 
+                                       class="btn btn-outline-primary" 
+                                       title="View Details">
+                                        <i class="fas fa-eye"></i>
+                                    </a>
+                                    <a href="{% url 'streamflow:raster_config_edit' config.id %}" 
+                                       class="btn btn-outline-secondary" 
+                                       title="Edit">
+                                        <i class="fas fa-edit"></i>
+                                    </a>
+                                    <form method="post" 
+                                          action="{% url 'streamflow:trigger_raster_pull' config.id %}" 
+                                          style="display: inline;">
+                                        {% csrf_token %}
+                                        <button type="submit" 
+                                                class="btn btn-outline-success" 
+                                                title="Trigger Manual Pull"
+                                                {% if not config.is_active %}disabled{% endif %}
+                                                onclick="return confirm('Trigger manual pull for {{ config.name }}?');">
+                                            <i class="fas fa-play"></i>
+                                        </button>
+                                    </form>
+                                    <form method="post" 
+                                          action="{% url 'streamflow:toggle_raster_configuration' config.id %}" 
+                                          style="display: inline;">
+                                        {% csrf_token %}
+                                        <button type="submit" 
+                                                class="btn btn-outline-warning" 
+                                                title="{% if config.schedule_enabled %}Disable{% else %}Enable{% endif %}">
+                                            <i class="fas fa-power-off"></i>
+                                        </button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="9" class="text-center text-muted py-4">
+                                <i class="fas fa-inbox fa-3x mb-3"></i><br>
+                                No configurations found. Create your first configuration to start pulling gridded data!
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

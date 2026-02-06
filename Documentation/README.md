@@ -1,283 +1,413 @@
-# Component 1: Database Design and Persistence Layer
+# StreamFlow DataOps Documentation
 
-This is the implementation of Component 1 from the streamflow DataOps project. It provides a comprehensive database layer using SQLAlchemy ORM with support for PostgreSQL (production) and SQLite (development).
+Welcome to the StreamFlow DataOps documentation. This system provides comprehensive water resource data management for streamflow observations, forecasts, and gridded satellite raster data.
 
-## Features
+## 📚 Documentation Structure
 
-✅ **Database Models**
-- Station metadata management
-- Discharge observations with time-series support
-- Forecast run data storage
-- Pull configuration management
-- Smart Append Logic via PullStationProgress
-- Master station list management
-- Cross-agency station ID mapping
+### Getting Started
+- **[Quick Start Guide](DEPLOYMENT.md)** - Deploy the application from scratch
+- **[QUICK_START_EC.md](QUICK_START_EC.md)** - Environment Canada integration guide
+- **[EARTHDATA_SETUP.md](EARTHDATA_SETUP.md)** - NASA Earthdata authentication setup
 
-✅ **Repository Pattern**
-- Clean separation of concerns
-- Reusable data access layer
-- Bulk operations support
-- Search and filter capabilities
+### Core Documentation
+- **[INDEX.md](INDEX.md)** - Complete documentation index
+- **[PRODUCTION_MONITORING.md](PRODUCTION_MONITORING.md)** - System monitoring and maintenance
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** - Full deployment guide with deploy.py script
 
-✅ **Database Migrations**
-- Alembic integration for schema versioning
-- Auto-generate migrations from model changes
-- Support for both SQLite and PostgreSQL
+### Reference
+- **[Reference/](Reference/)** - API specifications and data models
+- **[Implementation-Plans/](Implementation-Plans/)** - Historical implementation plans
+- **[Migration-Plans/](Migration-Plans/)** - Database migration strategies
 
-✅ **CSV Data Loading**
-- Load master station lists from CSV files
-- Import station ID mappings
-- Bulk upsert operations
+### Frontend
+- **[Frontend/](Frontend/)** - UI component documentation and guides
 
-## Project Structure
+### Issues & Tracking
+- **[0. Issues](0.%20Issues)** - Current issues and known bugs
 
-```
-streamflow_DataOps/
-├── src/
-│   ├── database/
-│   │   ├── __init__.py
-│   │   ├── connection.py      # SQLAlchemy engine and session
-│   │   ├── models.py           # ORM models
-│   │   ├── repositories.py     # Repository pattern
-│   │   └── init_db.py          # Database initialization
-│   ├── config/
-│   │   ├── __init__.py
-│   │   └── settings.py         # Configuration
-│   └── utils/
-│       ├── __init__.py
-│       └── csv_loader.py       # CSV import utilities
-├── migrations/                  # Alembic migrations
-│   └── versions/
-├── tests/
-│   ├── __init__.py
-│   ├── test_models.py          # Model tests
-│   └── test_repositories.py    # Repository tests
-├── data/                        # CSV data files
-├── .env.example                 # Environment template
-├── .gitignore
-├── alembic.ini                  # Alembic configuration
-└── requirements.txt             # Python dependencies
-```
+### Archived Documentation
+- **[Archive/](Archive/)** - Historical documentation and session notes
 
-## Installation
+---
 
-1. **Create a virtual environment:**
+## 🚀 Quick Start
+
+For a complete deployment from scratch, see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+
+### Prerequisites
+- Python 3.11+
+- PostgreSQL 16+ with PostGIS
+- Redis
+- GDAL libraries
+- Google Earth Engine account (optional, for raster data)
+
+### Basic Setup
 ```bash
+# Clone and setup environment
+git clone <repository-url>
+cd streamflow-dataOps
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-2. **Install dependencies:**
-```bash
+source venv/bin/activate
 pip install -r requirements.txt
-```
 
-3. **Configure environment:**
-```bash
+# Configure environment
 cp .env.example .env
-# Edit .env and set your DATABASE_URL
+# Edit .env with your settings
+
+# Deploy with automated script
+python scripts/deploy.py
+
+# Create admin user
+python manage.py createsuperuser
+
+# Start services
+python manage.py runserver
 ```
 
-For SQLite (development):
+See [DEPLOYMENT.md](DEPLOYMENT.md) for complete deployment instructions.
+
+---
+
+## 🏗️ System Architecture
+
+### Core Components
+
+**Web Application**
+- Django 4.2+ web framework
+- Bootstrap 5 responsive UI
+- Interactive Plotly visualizations
+- PostgreSQL with PostGIS for spatial data
+
+**REST API**
+- OpenAPI/Swagger documentation
+- 24+ endpoints for data access
+- DRF (Django REST Framework)
+- Available at `/api/v1/`
+
+**Data Acquisition**
+- Multi-source integration (USGS, NOAA RFC, Environment Canada)
+- Celery-based task scheduling
+- Google Earth Engine for satellite raster data
+- Configurable pull schedules
+
+**Database Models**
+- **Station** - Monitoring station metadata
+- **DischargeObservation** - Time-series streamflow data
+- **ForecastRun** - Forecast data with time-series
+- **PullConfiguration** - Data collection automation
+- **RasterDataset** - Gridded satellite data (RTMA, SMAP)
+
+### Data Flow
 ```
-DATABASE_URL=sqlite:///./streamflow_dev.db
+External Sources → Celery Tasks → Database → API/Web Interface
+     ↓                  ↓              ↓            ↓
+  USGS/NOAA        Scheduled       PostGIS    REST API
+  Env Canada        Tasks        TimeSeries   Dashboard
+  GEE/Earthdata   Background      Spatial     Visualizations
 ```
 
-For PostgreSQL (production):
-```
-DATABASE_URL=postgresql://user:password@localhost:5432/streamflow_db
-```
+---
 
-## Usage
+## 📊 System Capabilities
 
-### Initialize Database
+### Supported Data Types
 
-```bash
-# Create tables
-python src/database/init_db.py
+**Streamflow Observations**
+- Real-time 15-minute data
+- Daily mean discharge
+- Historical records dating back decades
+- Quality codes (Provisional/Approved)
 
-# Or use Alembic for migrations
-alembic upgrade head
-```
+**Forecasts**
+- Short-range (18-hour) forecasts
+- Medium-range (10-day) forecasts
+- Historical forecast runs for ML training
+- Multi-point time-series data
 
-### Create Migration
+**Raster/Gridded Data**
+- RTMA: Temperature, precipitation, wind speed
+- SMAP: Soil moisture (0-5cm, 5-100cm)
+- NASA Earthdata integration
+- Configurable spatial extents
 
-```bash
-# Auto-generate migration from model changes
-alembic revision --autogenerate -m "Add new column"
+### Data Sources
 
-# Apply migration
-alembic upgrade head
-```
+**USGS (United States Geological Survey)**
+- ~6,500+ active stations
+- Real-time and historical data
+- HUC-based station organization
 
-### Load Master Station Data
+**NOAA/NWS River Forecast Centers**
+- Northwest RFC (NWRFC)
+- Short and medium-range forecasts
+- Daily updates at 8:30 AM PST
+
+**Environment Canada**
+- British Columbia hydrometric stations
+- ~2,500+ stations
+- Standardized data format
+
+**Google Earth Engine**
+- RTMA meteorological grids
+- SMAP soil moisture data
+- 4km and 9km resolutions
+
+---
+
+## 🔌 API Access
+
+### REST API Endpoints
+
+Base URL: `http://localhost:8000/api/v1/`
+
+**Stations**
+- `GET /api/v1/stations/` - List all stations
+- `GET /api/v1/stations/{station_number}/` - Station details
+
+**Observations**
+- `GET /api/v1/observations/discharge/` - Query discharge data
+- `GET /api/v1/observations/discharge/statistics/` - Aggregate statistics
+
+**Forecasts**
+- `GET /api/v1/forecasts/` - List forecast runs
+- `GET /api/v1/forecasts/latest/` - Latest forecasts
+- `GET /api/v1/forecasts/by-station/{station_number}/` - Station forecasts
+
+**Raster Data**
+- `GET /api/v1/raster-datasets/` - Available datasets
+- `GET /api/v1/raster-layers/` - Query gridded data
+- `GET /api/v1/spatial-extents/` - Defined geographic areas
+
+**Documentation**
+- `GET /api/v1/docs/` - Interactive Swagger UI
+- `GET /api/v1/redoc/` - ReDoc documentation
+- `GET /api/v1/schema/` - OpenAPI schema
+
+### Python Client Library
+
+A Python client is available in `dataops_client/`:
 
 ```python
-from src.database.connection import SessionLocal
-from src.database.repositories import MasterStationRepository
-from src.utils.csv_loader import load_master_stations_from_csv
+from dataops_client import StreamFlowClient
 
-# Load from CSV
-stations = load_master_stations_from_csv('data/usgs_stations.csv')
+client = StreamFlowClient("http://localhost:8000")
 
-# Save to database
-db = SessionLocal()
-try:
-    repo = MasterStationRepository(db)
-    count = repo.bulk_upsert(stations)
-    print(f"Loaded {count} stations")
-finally:
-    db.close()
-```
+# Get station data
+stations = client.get_stations(state="WA")
 
-### Working with Repositories
-
-```python
-from src.database.connection import SessionLocal
-from src.database.repositories import StationRepository, DischargeObservationRepository
-from datetime import datetime
-
-db = SessionLocal()
-
-# Create a station
-station_repo = StationRepository(db)
-station = station_repo.create({
-    'station_number': '01234567',
-    'name': 'Example Station',
-    'agency': 'USGS',
-    'latitude': 45.1234,
-    'longitude': -122.5678,
-    'state': 'OR',
-    'huc_code': '17100101'
-})
-
-# Add observations
-obs_repo = DischargeObservationRepository(db)
-observations = [
-    {
-        'station_id': station.id,
-        'observed_at': datetime(2024, 1, 1, 12, 0),
-        'discharge': 1500.5,
-        'unit': 'cfs',
-        'type': 'realtime_15min'
-    }
-]
-count = obs_repo.bulk_create(observations)
-print(f"Added {count} observations")
-
-# Search stations
-results = station_repo.search(query='Example', state='OR')
-
-db.close()
-```
-
-### Smart Append Logic
-
-The `PullStationProgress` table tracks the last successful pull date for each station in a configuration, enabling incremental data pulls:
-
-```python
-from src.database.repositories import PullStationProgressRepository
-from datetime import datetime
-
-db = SessionLocal()
-progress_repo = PullStationProgressRepository(db)
-
-# Get last pull date for a station
-progress = progress_repo.get_progress(config_id=1, station_number='01234567')
-if progress:
-    last_date = progress.last_successful_pull_date
-    # Pull data from last_date to now
-else:
-    # First pull - use config.pull_start_date
-
-# Update progress after successful pull
-progress_repo.update_progress(
-    config_id=1,
-    station_number='01234567',
-    last_pull_date=datetime.now()
+# Get observations
+observations = client.get_discharge_observations(
+    station_number="12345678",
+    start_date="2024-01-01",
+    end_date="2024-01-31"
 )
+
+# Get forecasts
+forecasts = client.get_forecasts(station_number="PTRO3")
 ```
 
-## Database Schema
+---
 
-### Core Tables
+## 🧪 Testing
 
-**stations** - Station metadata
-- station_number (unique)
-- name, agency, latitude, longitude
-- huc_code, basin, state
-- catchment_area, years_of_record
-- record_start_date, record_end_date
-
-**discharge_observations** - Time series data
-- station_id (FK)
-- observed_at (timestamp)
-- discharge, unit, type
-- quality_code
-- Unique constraint on (station_id, observed_at, type)
-
-**forecast_runs** - Forecast data
-- station_id (FK)
-- source, run_date
-- data (JSON array)
-- rmse (accuracy metric)
-
-### Configuration Tables
-
-**pull_configurations** - Data pull job definitions
-- name, description
-- data_type, data_strategy
-- pull_start_date
-- schedule_type, schedule_value
-- is_enabled
-
-**pull_configuration_stations** - Stations in each config
-- config_id (FK)
-- station_number, station_name
-- huc_code, state
-
-**data_pull_logs** - Execution history
-- config_id (FK)
-- status, records_processed
-- start_time, end_time
-- error_message
-
-**pull_station_progress** - Smart Append Logic
-- config_id (FK)
-- station_number
-- last_successful_pull_date (crucial!)
-
-### Reference Tables
-
-**master_stations** - Master station list (from CSV)
-- station_number, station_name
-- latitude, longitude
-- state_code, huc_code
-- altitude_ft, drainage_area_sqmi
-
-**station_mappings** - Cross-agency ID translation
-- source_agency, source_id
-- target_agency, target_id
-- e.g., USGS ↔ NOAA-HADS
-
-## Running Tests
+The project includes comprehensive test coverage:
 
 ```bash
 # Run all tests
-pytest
+python manage.py test
+
+# Run specific test modules
+python manage.py test apps.streamflow.tests
+python manage.py test tests.test_api_observations
+python manage.py test tests.test_api_forecasts
 
 # Run with coverage
-pytest --cov=src tests/
-
-# Run specific test file
-pytest tests/test_models.py -v
+pytest --cov=apps --cov=src tests/
 ```
 
-## Next Steps
+Test suites available:
+- Model tests (stations, observations, forecasts)
+- View tests (CRUD operations, dashboard)
+- API tests (endpoints, filtering, error handling)
+- Form tests (validation, data import)
+- Integration tests (data pipeline)
 
-After completing Component 1, proceed with:
-- **Component 2**: Data Acquisition Layer (Celery workers, API clients)
-- **Component 3**: Django Web Interface (Configuration management UI)
+---
+
+## 📈 Monitoring & Maintenance
+
+### System Health
+
+Monitor system health via:
+- Django admin interface: `/admin/`
+- Dashboard: `/streamflow/` (requires login)
+- Celery Flower (if installed): `celery -A config flower`
+- Log files: `logs/` directory
+
+### Regular Maintenance
+
+**Daily**
+- Monitor Celery task success rates
+- Check for failed data pulls
+- Review error logs
+
+**Weekly**
+- Database performance review
+- Storage usage monitoring
+- Update station lists if needed
+
+**Monthly**
+- Review and archive old data
+- Update dependencies
+- Security patches
+
+See [PRODUCTION_MONITORING.md](PRODUCTION_MONITORING.md) for detailed monitoring guides.
+
+---
+
+## 🛠️ Management Commands
+
+### Station Management
+```bash
+# Load master station list
+python manage.py load_master_stations
+
+# Sync active stations
+python manage.py sync_stations
+
+# Populate RFC mappings
+python manage.py populate_station_mappings
+
+# Import BC stations from Environment Canada
+python manage.py import_bc_stations
+```
+
+### Data Collection
+```bash
+# Test data pulls
+python manage.py test_usgs_pull --station 12345678
+python manage.py test_noaa_pull --station PTRO3
+python manage.py test_canada_pull --station 08AB001
+
+# Manual data pulls
+python manage.py pull_usgs_data --config-id 1
+python manage.py pull_noaa_data --config-id 2
+```
+
+### Raster Data
+```bash
+# Setup raster datasets
+python manage.py setup_raster_datasets
+
+# Setup spatial extents
+python manage.py setup_spatial_extents
+
+# Test GEE connection
+python manage.py test_gee_connection
+
+# Pull raster data
+python manage.py pull_raster_data --dataset rtma_temp
+```
+
+### Utilities
+```bash
+# Create superuser
+python manage.py createsuperuser
+
+# Database shell
+python manage.py dbshell
+
+# Django shell with models
+python manage.py shell_plus
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**Database Connection Errors**
+```bash
+# Check PostgreSQL is running
+sudo systemctl status postgresql
+
+# Test connection
+psql -h localhost -U postgres streamflow_db
+
+# Verify PostGIS extension
+psql streamflow_db -c "SELECT PostGIS_Version();"
+```
+
+**Celery Not Running**
+```bash
+# Check Redis connection
+redis-cli ping
+
+# Start Celery worker
+celery -A config worker -l info
+
+# Start Celery beat scheduler
+celery -A config beat -l info
+```
+
+**GDAL Import Errors**
+```bash
+# Install GDAL system libraries
+sudo apt-get install gdal-bin libgdal-dev
+
+# Reinstall Python GDAL
+pip uninstall gdal
+pip install gdal==$(gdal-config --version)
+```
+
+**Google Earth Engine Authentication**
+```bash
+# Authenticate with service account
+python manage.py test_gee_connection
+
+# Check credentials file exists
+ls rtmaandsma-*.json
+```
+
+See **[0. Issues](0.%20Issues)** for current known issues.
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License. See [LICENSE](../LICENSE) for details.
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please follow these guidelines:
+
+1. Fork the repository
+2. Create a feature branch
+3. Write tests for new functionality
+4. Ensure all tests pass
+5. Submit a pull request
+
+---
+
+## 📞 Support
+
+For issues, questions, or contributions:
+- Create an issue in the repository
+- Check existing documentation
+- Review [0. Issues](0.%20Issues) for known problems
+
+---
+
+## 📝 Changelog
+
+See implementation plans in [Implementation-Plans/](Implementation-Plans/) for historical development notes.
+
+Current version: 1.0.0 (Production Ready)
+Last updated: February 2026
+
 - **Component 4**: REST API (FastAPI endpoints)
 
 ## Notes

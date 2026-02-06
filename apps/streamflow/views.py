@@ -1,5 +1,6 @@
 """Django views for streamflow application."""
 
+import logging
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -12,6 +13,8 @@ from django.utils import timezone
 from datetime import timedelta
 import csv
 
+logger = logging.getLogger(__name__)
+
 from .models import (
     PullConfiguration,
     PullConfigurationStation,
@@ -22,8 +25,14 @@ from .models import (
     DischargeObservation,
     ForecastRun,
     StationMapping,
+    RasterLayer,
+    RasterDataset,
+    RasterVariable,
+    SpatialExtent,
+    RasterPullConfiguration,
+    RasterPullLog,
 )
-from .forms import StationForm, PullConfigurationForm
+from .forms import StationForm, PullConfigurationForm, RasterPullConfigurationForm
 from .import_forms import StationImportForm
 from src.acquisition.tasks import execute_pull_configuration
 from decimal import Decimal, InvalidOperation
@@ -410,8 +419,10 @@ def dashboard(request):
     
     # Data statistics
     total_observations = DischargeObservation.objects.count()
+    # Get today's date in UTC for querying observed_at timestamps
+    today_utc = timezone.now().astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     observations_today = DischargeObservation.objects.filter(
-        observed_at__gte=timezone.now().replace(hour=0, minute=0, second=0)
+        observed_at__gte=today_utc
     ).count()
     
     # Latest observations with station info
@@ -447,6 +458,15 @@ def dashboard(request):
         discharge_observations__observed_at__lt=stale_data_threshold
     ).distinct().count()
     
+    # Gridded data statistics
+    from apps.streamflow.models import RasterLayer, RasterPullConfiguration
+    total_raster_layers = RasterLayer.objects.count()
+    raster_layers_today = RasterLayer.objects.filter(
+        created_at__gte=timezone.now().replace(hour=0, minute=0, second=0)
+    ).count()
+    total_raster_configs = RasterPullConfiguration.objects.count()
+    enabled_raster_configs = RasterPullConfiguration.objects.filter(schedule_enabled=True).count()
+    
     context = {
         # Configuration stats
         'total_configs': total_configs,
@@ -477,6 +497,12 @@ def dashboard(request):
         'failed_configs': failed_configs,
         'active_configs': active_configs,
         'stale_stations': stale_stations,
+        
+        # Gridded data stats
+        'total_raster_layers': total_raster_layers,
+        'raster_layers_today': raster_layers_today,
+        'total_raster_configs': total_raster_configs,
+        'enabled_raster_configs': enabled_raster_configs,
     }
     
     return render(request, 'streamflow/dashboard.html', context)
@@ -1220,3 +1246,397 @@ def sync_master_stations(request):
     }
     
     return render(request, 'streamflow/station_sync.html', context)
+
+
+# ============================================================================
+# Gridded Data Views (Raster/GEE)
+# ============================================================================
+
+def gridded_data_list(request):
+    """List all gridded/raster data layers with filtering."""
+    from .models import RasterLayer, RasterDataset, RasterVariable, SpatialExtent
+    
+    # Get filter parameters
+    dataset_filter = request.GET.get('dataset', '')
+    variable_filter = request.GET.get('variable', '')
+    extent_filter = request.GET.get('extent', '')
+    start_date = request.GET.get('start_date', '')
+    end_date = request.GET.get('end_date', '')
+    
+    # Base queryset
+    layers = RasterLayer.objects.select_related(
+        'variable__dataset', 'extent'
+    ).filter(is_valid=True).order_by('-timestamp')
+    
+    # Apply filters
+    if dataset_filter:
+        layers = layers.filter(variable__dataset__name=dataset_filter)
+    if variable_filter:
+        layers = layers.filter(variable__name=variable_filter)
+    if extent_filter:
+        layers = layers.filter(extent__name=extent_filter)
+    if start_date:
+        layers = layers.filter(date__gte=start_date)
+    if end_date:
+        layers = layers.filter(date__lte=end_date)
+    
+    # Get filter options
+    datasets = RasterDataset.objects.filter(is_active=True)
+    variables = RasterVariable.objects.select_related('dataset')
+    extents = SpatialExtent.objects.all()
+    
+    # Pagination
+    from django.core.paginator import Paginator
+    paginator = Paginator(layers, 50)
+    page = request.GET.get('page', 1)
+    layers_page = paginator.get_page(page)
+    
+    context = {
+        'layers': layers_page,
+        'datasets': datasets,
+        'variables': variables,
+        'extents': extents,
+        'filters': {
+            'dataset': dataset_filter,
+            'variable': variable_filter,
+            'extent': extent_filter,
+            'start_date': start_date,
+            'end_date': end_date,
+        },
+        'total_count': layers.count(),
+    }
+    
+    return render(request, 'streamflow/gridded_data_list.html', context)
+
+
+def gridded_data_detail(request, layer_id):
+    """Detail view for a single raster layer with map viewer."""
+    from .models import RasterLayer
+    
+    layer = get_object_or_404(
+        RasterLayer.objects.select_related('variable__dataset', 'extent'),
+        id=layer_id
+    )
+    
+    # Get extent bbox for map
+    bbox = layer.extent.bbox if layer.extent else None
+    
+    context = {
+        'layer': layer,
+        'bbox': bbox,
+    }
+    
+    return render(request, 'streamflow/gridded_data_detail.html', context)
+
+
+def raster_config_list(request):
+    """List all raster pull configurations."""
+    from .models import RasterPullConfiguration
+    
+    configs = RasterPullConfiguration.objects.prefetch_related(
+        'variables', 'extents', 'pull_logs'
+    ).annotate(
+        total_runs=Count('pull_logs', distinct=True),
+        successful_runs=Count('pull_logs', filter=Q(pull_logs__status='success'), distinct=True),
+        failed_runs=Count('pull_logs', filter=Q(pull_logs__status='failed'), distinct=True),
+        last_run=Max('pull_logs__started_at')
+    ).order_by('-schedule_enabled', 'name')
+    
+    context = {
+        'configurations': configs,
+    }
+    
+    return render(request, 'streamflow/raster_config_list.html', context)
+
+
+def raster_config_detail(request, config_id):
+    """Detail view for raster configuration with logs."""
+    from .models import RasterPullConfiguration, RasterPullLog
+    
+    config = get_object_or_404(
+        RasterPullConfiguration.objects.prefetch_related('variables', 'extents'),
+        id=config_id
+    )
+    
+    # Get recent logs
+    logs = config.pull_logs.order_by('-started_at')[:20]
+    
+    context = {
+        'config': config,
+        'logs': logs,
+    }
+    
+    return render(request, 'streamflow/raster_config_detail.html', context)
+
+
+def raster_config_create(request):
+    """Create new raster pull configuration."""
+    from .forms import RasterPullConfigurationForm
+    
+    if request.method == 'POST':
+        form = RasterPullConfigurationForm(request.POST)
+        if form.is_valid():
+            config = form.save(commit=False)
+            # Dataset is auto-populated in form.clean() from selected variables
+            config.dataset = form.cleaned_data['dataset']
+            config.save()
+            form.save_m2m()  # Save many-to-many relationships
+            messages.success(request, f'Configuration "{config.name}" created successfully!')
+            return redirect('streamflow:raster_config_detail', config_id=config.id)
+    else:
+        form = RasterPullConfigurationForm()
+    
+    context = {
+        'form': form,
+        'action': 'Create',
+    }
+    
+    return render(request, 'streamflow/raster_config_form.html', context)
+
+
+def raster_config_edit(request, config_id):
+    """Edit existing raster pull configuration."""
+    from .models import RasterPullConfiguration
+    from .forms import RasterPullConfigurationForm
+    
+    config = get_object_or_404(RasterPullConfiguration, id=config_id)
+    
+    if request.method == 'POST':
+        form = RasterPullConfigurationForm(request.POST, instance=config)
+        if form.is_valid():
+            config = form.save(commit=False)
+            # Dataset is auto-populated in form.clean() from selected variables
+            config.dataset = form.cleaned_data['dataset']
+            config.save()
+            form.save_m2m()  # Save many-to-many relationships
+            messages.success(request, f'Configuration "{config.name}" updated successfully!')
+            return redirect('streamflow:raster_config_detail', config_id=config.id)
+    else:
+        form = RasterPullConfigurationForm(instance=config)
+    
+    context = {
+        'form': form,
+        'config': config,
+        'action': 'Edit',
+    }
+    
+    return render(request, 'streamflow/raster_config_form.html', context)
+
+
+def raster_config_delete(request, config_id):
+    """Delete raster pull configuration."""
+    from .models import RasterPullConfiguration
+    
+    config = get_object_or_404(RasterPullConfiguration, id=config_id)
+    
+    if request.method == 'POST':
+        config_name = config.name
+        config.delete()
+        messages.success(request, f'Configuration "{config_name}" deleted successfully!')
+        return redirect('streamflow:raster_config_list')
+    
+    context = {
+        'config': config,
+    }
+    
+    return render(request, 'streamflow/raster_config_confirm_delete.html', context)
+
+
+def trigger_raster_pull(request, config_id):
+    """Trigger manual raster data pull."""
+    from .models import RasterPullConfiguration, RasterPullLog
+    from src.acquisition.raster_tasks import pull_raster_data
+    from django.utils import timezone
+    import traceback
+    
+    config = get_object_or_404(RasterPullConfiguration, id=config_id)
+    
+    if request.method == 'POST':
+        # Check if we should run sync or async
+        run_sync = request.POST.get('sync', 'false').lower() == 'true'
+        
+        try:
+            if run_sync:
+                # Run synchronously (blocking)
+                messages.info(
+                    request,
+                    f'Running synchronous pull for "{config.name}"... This may take a few moments.'
+                )
+                result = pull_raster_data(config.id)
+                
+                if 'error' in result:
+                    messages.error(request, f'Pull failed: {result["error"]}')
+                else:
+                    messages.success(
+                        request,
+                        f'Pull completed! Layers: {result.get("successful", 0)} successful, '
+                        f'{result.get("failed", 0)} failed, {result.get("skipped", 0)} skipped'
+                    )
+            else:
+                # Create log entry BEFORE queuing task (so failures are tracked)
+                pull_log = RasterPullLog.objects.create(
+                    configuration=config,
+                    status='pending',
+                    started_at=timezone.now()
+                )
+                
+                # Try async first (requires Celery worker)
+                try:
+                    task = pull_raster_data.delay(config.id, pull_log_id=pull_log.id)
+                    pull_log.celery_task_id = task.id
+                    pull_log.status = 'running'
+                    pull_log.save()
+                    
+                    messages.success(
+                        request,
+                        f'Async pull triggered for "{config.name}". Task ID: {task.id}'
+                    )
+                except Exception as celery_error:
+                    # Update log with error
+                    pull_log.status = 'failed'
+                    pull_log.completed_at = timezone.now()
+                    pull_log.error_message = f'Failed to queue task: {str(celery_error)}'
+                    pull_log.error_traceback = traceback.format_exc()
+                    pull_log.calculate_duration()
+                    pull_log.save()
+                    
+                    # Inform user of the failure
+                    messages.error(
+                        request,
+                        f'Failed to queue async task: {str(celery_error)}. Check that Celery worker is running.'
+                    )
+        except Exception as e:
+            logger.error(f"Failed to trigger pull: {e}\n{traceback.format_exc()}")
+            messages.error(request, f'Failed to trigger pull: {str(e)}')
+        
+        return redirect('streamflow:raster_config_detail', config_id=config.id)
+    
+    return redirect('streamflow:raster_config_list')
+
+
+def toggle_raster_configuration(request, config_id):
+    """Toggle a raster configuration's enabled status."""
+    from .models import RasterPullConfiguration
+    
+    config = get_object_or_404(RasterPullConfiguration, id=config_id)
+    config.schedule_enabled = not config.schedule_enabled
+    config.save()
+    
+    status = 'enabled' if config.schedule_enabled else 'disabled'
+    messages.success(request, f'Configuration "{config.name}" {status}.')
+    
+    return redirect('streamflow:raster_config_list')
+
+
+class RasterPullLogListView(ListView):
+    """List all raster pull logs with filtering and search."""
+    
+    model = RasterPullLog
+    template_name = 'streamflow/raster_log_list.html'
+    context_object_name = 'logs'
+    paginate_by = 50
+    
+    def get_queryset(self):
+        from .models import RasterPullLog
+        
+        queryset = RasterPullLog.objects.select_related('configuration')
+        
+        # Search by error message
+        search = self.request.GET.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(error_message__icontains=search) |
+                Q(configuration__name__icontains=search)
+            )
+        
+        # Filter by configuration
+        config_id = self.request.GET.get('configuration')
+        if config_id:
+            queryset = queryset.filter(configuration_id=config_id)
+        
+        # Filter by status
+        status = self.request.GET.get('status')
+        if status:
+            queryset = queryset.filter(status=status)
+        
+        # Filter by date range
+        days = self.request.GET.get('days', 7)
+        try:
+            days = int(days)
+            cutoff = timezone.now() - timedelta(days=days)
+            queryset = queryset.filter(started_at__gte=cutoff)
+        except ValueError:
+            pass
+        
+        return queryset.order_by('-started_at')
+    
+    def get_context_data(self, **kwargs):
+        from .models import RasterPullConfiguration
+        
+        context = super().get_context_data(**kwargs)
+        context['configurations'] = RasterPullConfiguration.objects.all()
+        
+        # Summary stats
+        logs = self.get_queryset()
+        context['total_logs'] = logs.count()
+        context['success_count'] = logs.filter(status='success').count()
+        context['failed_count'] = logs.filter(status='failed').count()
+        context['running_count'] = logs.filter(status='running').count()
+        context['partial_count'] = logs.filter(status='partial').count()
+        
+        # Aggregate stats
+        from django.db.models import Sum, Avg
+        stats = logs.aggregate(
+            total_layers=Sum('layers_successful'),
+            total_failed=Sum('layers_failed'),
+            total_skipped=Sum('layers_skipped'),
+            avg_duration=Avg('duration_seconds')
+        )
+        context['total_layers_pulled'] = stats['total_layers'] or 0
+        context['total_layers_failed'] = stats['total_failed'] or 0
+        context['total_layers_skipped'] = stats['total_skipped'] or 0
+        context['avg_duration'] = stats['avg_duration'] or 0
+        
+        return context
+
+
+def system_diagnostics(request):
+    """Display system diagnostics and health checks."""
+    from .diagnostics import SystemDiagnostics
+    
+    diagnostics = SystemDiagnostics()
+    
+    # Run all checks
+    database_check = diagnostics.check_database()
+    redis_check = diagnostics.check_redis()
+    celery_worker_check = diagnostics.check_celery_worker()
+    celery_beat_check = diagnostics.check_celery_beat()
+    data_providers_check = diagnostics.check_data_providers()
+    storage_check = diagnostics.check_storage()
+    timeseries_storage_check = diagnostics.check_timeseries_storage()
+    application_check = diagnostics.check_application()
+    recent_activity = diagnostics.check_recent_activity()
+    
+    # Compile all checks
+    all_checks = {
+        'database': database_check,
+        'redis': redis_check,
+        'celery_worker': celery_worker_check,
+        'celery_beat': celery_beat_check,
+        'data_providers': data_providers_check.get('apis', []),
+        'storage': storage_check,
+        'timeseries_storage': timeseries_storage_check,
+        'application': application_check,
+        'recent_activity': recent_activity
+    }
+    
+    # Determine overall status
+    overall_status = diagnostics.get_overall_status(all_checks)
+    
+    context = {
+        'overall_status': overall_status,
+        'last_updated': timezone.now(),
+        **all_checks
+    }
+    
+    return render(request, 'streamflow/system_diagnostics.html', context)

@@ -44,6 +44,13 @@
                     <dt class="col-sm-4">Data Type:</dt>
                     <dd class="col-sm-8">{{ configuration.get_data_type_display }}</dd>
                     
+                    {% if configuration.data_type == 'forecast' and configuration.forecast_type %}
+                    <dt class="col-sm-4">Forecast Range:</dt>
+                    <dd class="col-sm-8">
+                        <span class="badge bg-info">{{ configuration.get_forecast_type_display }}</span>
+                    </dd>
+                    {% endif %}
+                    
                     <dt class="col-sm-4">Strategy:</dt>
                     <dd class="col-sm-8">{{ configuration.get_data_strategy_display }}</dd>
                     

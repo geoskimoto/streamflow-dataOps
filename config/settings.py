@@ -30,7 +30,7 @@ SECRET_KEY = "django-insecure-s*m6pm+!m!sh(rl2i9u*^i!c!!n%r6eu1j_$24^6(1f)-2&0zw
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['testserver', 'localhost', '127.0.0.1']
 
 
 # Application definition
@@ -41,7 +41,7 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
-    "django.contrib.staticfiles",
+    "django.contrib.staticfiles",    "django.contrib.gis",  # PostGIS support    "django.contrib.gis",
     "django.contrib.humanize",
     
     # Third party apps
@@ -97,16 +97,16 @@ WSGI_APPLICATION = "config.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-# Support both PostgreSQL and SQLite
-DB_ENGINE = os.getenv("DB_ENGINE", "sqlite")
+# Use PostgreSQL with PostGIS
+DB_ENGINE = os.getenv("DB_ENGINE", "postgresql")
 
 if DB_ENGINE == "postgresql":
     DATABASES = {
         "default": {
-            "ENGINE": "django.db.backends.postgresql",
+            "ENGINE": "django.contrib.gis.db.backends.postgis",
             "NAME": os.getenv("DB_NAME", "streamflow_db"),
-            "USER": os.getenv("DB_USER", "postgres"),
-            "PASSWORD": os.getenv("DB_PASSWORD", ""),
+            "USER": os.getenv("DB_USER", "streamflow_user"),
+            "PASSWORD": os.getenv("DB_PASSWORD", "streamflow_dev_pass"),
             "HOST": os.getenv("DB_HOST", "localhost"),
             "PORT": os.getenv("DB_PORT", "5432"),
         }
@@ -172,6 +172,29 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 
+# Task execution settings
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 3600  # 1 hour hard limit
+CELERY_TASK_SOFT_TIME_LIMIT = 3300  # 55 minutes soft limit
+CELERY_TASK_ALWAYS_EAGER = False  # Set to True for synchronous testing
+
+# Result backend settings
+CELERY_RESULT_EXTENDED = True
+CELERY_RESULT_EXPIRES = 86400  # Results expire after 24 hours
+
+# Monitoring and alerting
+CELERY_SEND_TASK_ERROR_EMAILS = True
+CELERY_TASK_SEND_SENT_EVENT = True
+
+# Email alerting configuration
+ALERT_EMAIL_ENABLED = os.getenv('ALERT_EMAIL_ENABLED', 'False').lower() == 'true'
+ALERT_EMAIL_RECIPIENTS = os.getenv('ALERT_EMAIL_RECIPIENTS', '').split(',')
+ALERT_EMAIL_FROM = os.getenv('ALERT_EMAIL_FROM', 'noreply@streamflow-dataops.org')
+
+# Raster pull alerting thresholds
+RASTER_PULL_FAILURE_THRESHOLD = 3  # Alert after 3 consecutive failures
+RASTER_PULL_MAX_AGE_HOURS = 48  # Alert if no successful pull in 48 hours
+
 # Django REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
@@ -212,3 +235,35 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8000",
 ]
 CORS_ALLOW_CREDENTIALS = True
+
+# ============================================================================
+# Raster Data & Google Earth Engine Configuration
+# ============================================================================
+
+# GEE Authentication
+GEE_SERVICE_ACCOUNT_KEY = os.getenv('GEE_SERVICE_ACCOUNT_KEY', None)
+GEE_PROJECT_ID = os.getenv('GEE_PROJECT_ID', None)
+GEE_SERVICE_ACCOUNT_EMAIL = os.getenv('GEE_SERVICE_ACCOUNT_EMAIL', None)
+
+# Raster File Storage
+RASTER_ROOT = BASE_DIR / 'data' / 'rasters'
+RASTER_URL = '/media/rasters/'
+RASTER_MAX_FILE_SIZE_MB = 500
+
+# Ensure raster directory exists
+RASTER_ROOT.mkdir(parents=True, exist_ok=True)
+
+# Raster Processing Options
+RASTER_DEFAULT_COMPRESSION = 'LZW'
+RASTER_THUMBNAIL_SIZE = (256, 256)
+RASTER_DEFAULT_CRS = 'EPSG:4326'
+
+# Spatial Extents (will be defined in database, these are defaults)
+WESTERN_US_BBOX = [-125.0, 31.0, -102.0, 49.0]  # [minLon, minLat, maxLon, maxLat]
+HUC17_BBOX = [-124.7, 41.5, -108.0, 49.0]  # Columbia River Basin approximate
+
+# GEE Dataset IDs
+GEE_DATASETS = {
+    'RTMA': 'NOAA/NWS/RTMA',
+    'SMAP_SPL4': 'NASA/SMAP/SPL4SMGP/008',
+}

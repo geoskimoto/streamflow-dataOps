@@ -1,0 +1,6 @@
+Real time data pull only grabs the most recent value...not all the values for the past 7 days.
+
+Need to populate historical data for all the USGS stations.
+    - Create a sub page for timeseries called "Populate Historical".  On this page have the ability to manually run population scripts for stations with HUC17, PNW, specific states, entire west, and entire country.
+
+Forecast runs seems to be identical no matter what day they are pulled.

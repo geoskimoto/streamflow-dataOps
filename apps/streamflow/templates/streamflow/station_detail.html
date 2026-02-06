@@ -340,15 +340,26 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
+                <!-- Temporarily commented out to debug modal reopen issue
                 <div class="row mb-3">
                     <div class="col-md-12">
-                        <div class="alert alert-info mb-3">
-                            <strong>Run Date:</strong> <span id="modalRunDate"></span> | 
-                            <strong>Source:</strong> <span id="modalSource"></span> | 
-                            <strong>RMSE:</strong> <span id="modalRMSE"></span>
+                        <div class="alert alert-info mb-3" id="forecastAlertBox" role="alert" 
+                             style="display: block !important; opacity: 1 !important; visibility: visible !important; animation: none !important; transition: none !important;">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <strong>Forecast Run Date:</strong> <span id="modalRunDate"></span><br>
+                                    <strong>Source:</strong> <span id="modalSource"></span><br>
+                                    <strong>RMSE:</strong> <span id="modalRMSE"></span>
+                                </div>
+                                <div class="col-md-6">
+                                    <strong>Forecast Period:</strong> <span id="modalForecastPeriod"></span><br>
+                                    <strong>Total Points:</strong> <span id="modalTotalPoints"></span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
+                -->
                 <div class="row">
                     <div class="col-lg-8">
                         <div id="forecastChart" style="height: 450px;"></div>
@@ -389,11 +400,17 @@
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
 
 <script>
-let pendingForecastData = null;
-
 function showForecastModal(stationNumber, stationName, runDate, source, forecastData, rmse) {
-    // Store the data to be populated when modal is fully shown
-    pendingForecastData = {
+    console.log('showForecastModal called:', {
+        stationNumber,
+        runDate,
+        dataPoints: forecastData.length,
+        firstPoint: forecastData[0],
+        lastPoint: forecastData[forecastData.length - 1]
+    });
+    
+    // Immediately populate the modal with the data (don't wait for shown event)
+    const data = {
         stationNumber: stationNumber,
         stationName: stationName,
         runDate: runDate,
@@ -402,23 +419,76 @@ function showForecastModal(stationNumber, stationName, runDate, source, forecast
         rmse: rmse
     };
     
-    // Show modal - data will be populated in the 'shown.bs.modal' event
+    // Populate modal content immediately
+    populateForecastModal(data);
+    
+    // Clean up any existing modal state completely
     const modalElement = document.getElementById('forecastModal');
-    const modal = bootstrap.Modal.getInstance(modalElement) || new bootstrap.Modal(modalElement);
-    modal.show();
+    
+    // Remove any existing backdrop
+    const existingBackdrop = document.querySelector('.modal-backdrop');
+    if (existingBackdrop) {
+        existingBackdrop.remove();
+    }
+    
+    // Remove modal-open class from body
+    document.body.classList.remove('modal-open');
+    document.body.style.overflow = '';
+    document.body.style.paddingRight = '';
+    
+    // Dispose of any existing modal instance
+    const existingModal = bootstrap.Modal.getInstance(modalElement);
+    if (existingModal) {
+        existingModal.dispose();
+    }
+    
+    // Reset modal element state
+    modalElement.classList.remove('show');
+    modalElement.style.display = 'none';
+    modalElement.setAttribute('aria-hidden', 'true');
+    modalElement.removeAttribute('aria-modal');
+    modalElement.removeAttribute('role');
+    
+    // Small delay to ensure cleanup is complete
+    setTimeout(() => {
+        // Create and show new modal instance
+        const modal = new bootstrap.Modal(modalElement, {
+            backdrop: true,
+            keyboard: true,
+            focus: true
+        });
+        modal.show();
+    }, 50);
 }
 
-// Populate modal when it's fully shown
-document.getElementById('forecastModal').addEventListener('shown.bs.modal', function() {
-    if (!pendingForecastData) return;
+function populateForecastModal(data) {
+    console.log('Populating modal with data:', {
+        runDate: data.runDate,
+        points: data.forecastData.length,
+        firstDate: data.forecastData[0]?.date,
+        firstValue: data.forecastData[0]?.value
+    });
     
-    const data = pendingForecastData;
+    // Update modal header info (commented out since alert box is removed)
+    // document.getElementById('modalStationName').textContent = `${data.stationName} (${data.stationNumber})`;
+    // document.getElementById('modalRunDate').textContent = data.runDate;
+    // document.getElementById('modalSource').textContent = data.source;
+    // document.getElementById('modalRMSE').textContent = data.rmse || 'N/A';
     
-    // Update modal header info
+    // Calculate and display forecast period (commented out since alert box is removed)
+    // if (data.forecastData && data.forecastData.length > 0) {
+    //     const firstDate = new Date(data.forecastData[0].date).toLocaleDateString('en-US', { 
+    //         month: 'short', day: 'numeric', year: 'numeric' 
+    //     });
+    //     const lastDate = new Date(data.forecastData[data.forecastData.length - 1].date).toLocaleDateString('en-US', { 
+    //         month: 'short', day: 'numeric', year: 'numeric' 
+    //     });
+    //     document.getElementById('modalForecastPeriod').textContent = `${firstDate} to ${lastDate}`;
+    //     document.getElementById('modalTotalPoints').textContent = data.forecastData.length;
+    // }
+    
+    // Update modal title
     document.getElementById('modalStationName').textContent = `${data.stationName} (${data.stationNumber})`;
-    document.getElementById('modalRunDate').textContent = data.runDate;
-    document.getElementById('modalSource').textContent = data.source;
-    document.getElementById('modalRMSE').textContent = data.rmse || 'N/A';
     
     // Prepare data for Plotly
     const dates = data.forecastData.map(d => d.date);
@@ -444,9 +514,9 @@ document.getElementById('forecastModal').addEventListener('shown.bs.modal', func
     
     const layout = {
         title: {
-            text: 'Forecast Time Series',
+            text: `Forecast Time Series (Run: ${data.runDate})`,
             font: {
-                size: 16,
+                size: 14,
                 color: '#333'
             }
         },
@@ -475,7 +545,8 @@ document.getElementById('forecastModal').addEventListener('shown.bs.modal', func
         modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d']
     };
     
-    Plotly.newPlot('forecastChart', [trace], layout, config);
+    // Use Plotly.react instead of newPlot to update existing chart or create new one
+    Plotly.react('forecastChart', [trace], layout, config);
     
     // Populate data table
     const tableBody = document.getElementById('forecastDataBody');
@@ -498,6 +569,6 @@ document.getElementById('forecastModal').addEventListener('shown.bs.modal', func
         `;
         tableBody.insertAdjacentHTML('beforeend', row);
     });
-});
+}
 </script>
 {% endblock %}

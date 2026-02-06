@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{% if config %}Edit{% else %}Create{% endif %} Gridded Configuration{% endblock %}
+
+{% block extra_css %}
+<style>
+    .raster-card { border-left: 4px solid #6f42c1; }
+    .btn-raster { background-color: #6f42c1; border-color: #6f42c1; color: white; }
+    .btn-raster:hover { background-color: #5a32a3; border-color: #5a32a3; color: white; }
+    .form-check-input:checked { background-color: #6f42c1; border-color: #6f42c1; }
+    .checkbox-grid { 
+        display: grid; 
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); 
+        gap: 10px; 
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>
+            <i class="fas fa-cog"></i> 
+            {% if config %}Edit{% else %}Create{% endif %} Gridded Configuration
+        </h2>
+        <a href="{% url 'streamflow:raster_config_list' %}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left"></i> Back to List
+        </a>
+    </div>
+
+    <form method="post">
+        {% csrf_token %}
+        
+        <!-- Basic Information -->
+        <div class="card raster-card mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0"><i class="fas fa-info-circle"></i> Basic Information</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="{{ form.name.id_for_label }}" class="form-label">
+                            {{ form.name.label }} <span class="text-danger">*</span>
+                        </label>
+                        {{ form.name }}
+                        {% if form.name.errors %}
+                        <div class="text-danger small">{{ form.name.errors }}</div>
+                        {% endif %}
+                        <small class="form-text text-muted">Unique name for this configuration</small>
+                    </div>
+                    
+                </div>
+                <div class="row">
+                    <div class="col-12 mb-3">
+                        <label for="{{ form.description.id_for_label }}" class="form-label">
+                            {{ form.description.label }}
+                        </label>
+                        {{ form.description }}
+                        {% if form.description.errors %}
+                        <div class="text-danger small">{{ form.description.errors }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Selection -->
+        <div class="card raster-card mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0"><i class="fas fa-database"></i> Data Selection</h5>
+                <small class="text-muted">Select variables from a single dataset</small>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i> 
+                    <strong>Available Data Sources:</strong>
+                    <ul class="mb-0 mt-2">
+                        <li><strong>NOAA RTMA</strong> - Real-Time Mesoscale Analysis (Hourly, 2.5km)</li>
+                        <li><strong>NASA SMAP L4</strong> - Soil Moisture (Daily, 9km)</li>
+                        <li><strong>MODIS Terra/Aqua</strong> - Land Surface Temperature (Daily, 1km) - <em>HDF4 processing in progress</em></li>
+                        <li><strong>NASA GPM IMERG</strong> - Precipitation (30min, 11km)</li>
+                    </ul>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">
+                            {{ form.variables.label }} <span class="text-danger">*</span>
+                        </label>
+                        
+                        {% if form.datasets_with_variables %}
+                            {% for dataset_group in form.datasets_with_variables %}
+                                <div class="mb-4">
+                                    <h6 class="text-primary border-bottom pb-2">
+                                        <i class="fas fa-layer-group"></i> {{ dataset_group.dataset.name }}
+                                        <small class="text-muted">
+                                            ({{ dataset_group.dataset.temporal_resolution }}, 
+                                            {{ dataset_group.dataset.resolution_m }}m)
+                                        </small>
+                                    </h6>
+                                    <div class="checkbox-grid ps-3">
+                                        {% for checkbox in form.variables %}
+                                            {% for variable in dataset_group.variables %}
+                                                {% if checkbox.data.value == variable.id %}
+                                                <div class="form-check">
+                                                    {{ checkbox.tag }}
+                                                    <label class="form-check-label" for="{{ checkbox.id_for_label }}">
+                                                        {{ variable.name }}
+                                                        <small class="text-muted">({{ variable.unit }})</small>
+                                                    </label>
+                                                </div>
+                                                {% endif %}
+                                            {% endfor %}
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        {% else %}
+                            <div class="alert alert-warning">
+                                <i class="fas fa-exclamation-triangle"></i> 
+                                No datasets with variables found. Run <code>python manage.py init_raster_datasets</code> to initialize.
+                            </div>
+                        {% endif %}
+                        
+                        {% if form.variables.errors %}
+                        <div class="text-danger small mt-2">{{ form.variables.errors }}</div>
+                        {% endif %}
+                        <small class="form-text text-muted">All variables must be from the same dataset</small>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">
+                            {{ form.extents.label }} <span class="text-danger">*</span>
+                        </label>
+                        <div class="checkbox-grid">
+                            {% for checkbox in form.extents %}
+                            <div class="form-check">
+                                {{ checkbox.tag }}
+                                <label class="form-check-label" for="{{ checkbox.id_for_label }}">
+                                    {{ checkbox.choice_label }}
+                                </label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% if form.extents.errors %}
+                        <div class="text-danger small mt-2">{{ form.extents.errors }}</div>
+                        {% endif %}
+                        <small class="form-text text-muted">Select one or more spatial extents</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Schedule Settings -->
+        <div class="card raster-card mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0"><i class="fas fa-clock"></i> Schedule Settings</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <div class="form-check">
+                            {{ form.schedule_enabled }}
+                            <label class="form-check-label" for="{{ form.schedule_enabled.id_for_label }}">
+                                {{ form.schedule_enabled.label }}
+                            </label>
+                        </div>
+                        <small class="form-text text-muted">Enable automatic scheduled pulls</small>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label for="{{ form.pull_frequency_hours.id_for_label }}" class="form-label">
+                            {{ form.pull_frequency_hours.label }}
+                        </label>
+                        {{ form.pull_frequency_hours }}
+                        {% if form.pull_frequency_hours.errors %}
+                        <div class="text-danger small">{{ form.pull_frequency_hours.errors }}</div>
+                        {% endif %}
+                        <small class="form-text text-muted">{{ form.pull_frequency_hours.help_text }}</small>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label for="{{ form.lookback_days.id_for_label }}" class="form-label">
+                            {{ form.lookback_days.label }}
+                        </label>
+                        {{ form.lookback_days }}
+                        {% if form.lookback_days.errors %}
+                        <div class="text-danger small">{{ form.lookback_days.errors }}</div>
+                        {% endif %}
+                        <small class="form-text text-muted">{{ form.lookback_days.help_text }}</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Processing Options -->
+        <div class="card raster-card mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0"><i class="fas fa-sliders-h"></i> Processing Options</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="{{ form.resampling_method.id_for_label }}" class="form-label">
+                            {{ form.resampling_method.label }}
+                        </label>
+                        {{ form.resampling_method }}
+                        {% if form.resampling_method.errors %}
+                        <div class="text-danger small">{{ form.resampling_method.errors }}</div>
+                        {% endif %}
+                        <small class="form-text text-muted">{{ form.resampling_method.help_text }}</small>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Additional Options</label>
+                        <div>
+                            <div class="form-check">
+                                {{ form.apply_compression }}
+                                <label class="form-check-label" for="{{ form.apply_compression.id_for_label }}">
+                                    {{ form.apply_compression.label }}
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                {{ form.generate_thumbnails }}
+                                <label class="form-check-label" for="{{ form.generate_thumbnails.id_for_label }}">
+                                    {{ form.generate_thumbnails.label }}
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                {{ form.validate_on_pull }}
+                                <label class="form-check-label" for="{{ form.validate_on_pull.id_for_label }}">
+                                    {{ form.validate_on_pull.label }}
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Form Actions -->
+        <div class="d-flex justify-content-between">
+            <a href="{% url 'streamflow:raster_config_list' %}" class="btn btn-outline-secondary">
+                <i class="fas fa-times"></i> Cancel
+            </a>
+            <button type="submit" class="btn btn-raster">
+                <i class="fas fa-save"></i> 
+                {% if config %}Update{% else %}Create{% endif %} Configuration
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}
