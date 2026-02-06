@@ -1613,6 +1613,7 @@ def system_diagnostics(request):
     celery_beat_check = diagnostics.check_celery_beat()
     data_providers_check = diagnostics.check_data_providers()
     storage_check = diagnostics.check_storage()
+    timeseries_storage_check = diagnostics.check_timeseries_storage()
     application_check = diagnostics.check_application()
     recent_activity = diagnostics.check_recent_activity()
     
@@ -1624,6 +1625,7 @@ def system_diagnostics(request):
         'celery_beat': celery_beat_check,
         'data_providers': data_providers_check.get('apis', []),
         'storage': storage_check,
+        'timeseries_storage': timeseries_storage_check,
         'application': application_check,
         'recent_activity': recent_activity
     }

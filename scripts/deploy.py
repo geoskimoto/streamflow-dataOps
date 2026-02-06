@@ -530,7 +530,7 @@ def create_pnw_historical_backfill_config(dry_run=False):
         name=config_name,
         description="ONE-TIME: Backfills complete historical record for HUC 17 (Pacific Northwest) USGS stations. Pulls from earliest available data to present. Disable after completion.",
         data_source="USGS",
-        data_type="observed",
+        data_type="daily_mean",
         data_strategy="replace",  # Replace strategy handles duplicates gracefully
         pull_start_date=datetime(1900, 1, 1, tzinfo=timezone.utc),  # Pull from earliest available
         is_enabled=True,  # Enabled by default - disable manually after backfill completes
@@ -575,7 +575,7 @@ def create_western_us_historical_backfill_config(dry_run=False):
         name=config_name,
         description="ONE-TIME: Backfills complete historical record for HUC 14-18 (Western US) USGS stations. Includes Upper/Lower Colorado (14-15), Great Basin (16), Pacific Northwest (17), California (18). Pulls from earliest available data to present. Disable after completion.",
         data_source="USGS",
-        data_type="observed",
+        data_type="daily_mean",
         data_strategy="replace",  # Replace strategy handles duplicates gracefully
         pull_start_date=datetime(1900, 1, 1, tzinfo=timezone.utc),  # Pull from earliest available
         is_enabled=False,  # Disabled by default - enable manually when ready for larger backfill

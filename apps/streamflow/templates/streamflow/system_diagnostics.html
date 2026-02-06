@@ -378,8 +378,49 @@
     </div>
 
     <div class="row">
+        <!-- Timeseries Data Storage -->
+        <div class="col-md-4">
+            <div class="card diagnostic-card {{ timeseries_storage.status }}">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="status-indicator status-{{ timeseries_storage.status }}"></span>
+                        Timeseries Data Storage
+                    </h5>
+                    <div class="metric-row">
+                        <span class="metric-label">Status:</span>
+                        <span class="metric-value">{{ timeseries_storage.status|title }}</span>
+                    </div>
+                    {% if timeseries_storage.status != 'error' %}
+                        <div class="metric-row">
+                            <span class="metric-label">Observations:</span>
+                            <span class="metric-value">{{ timeseries_storage.observation_count }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Active Stations:</span>
+                            <span class="metric-value">{{ timeseries_storage.station_count }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Date Range:</span>
+                            <span class="metric-value" style="font-size: 0.85em;">{{ timeseries_storage.date_range }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Table Size:</span>
+                            <span class="metric-value">{{ timeseries_storage.table_size }}</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">Growth Rate:</span>
+                            <span class="metric-value">~{{ timeseries_storage.obs_per_day }} obs/day</span>
+                        </div>
+                    {% endif %}
+                    {% if timeseries_storage.error %}
+                        <div class="error-message">{{ timeseries_storage.error }}</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
         <!-- Raster Data Storage -->
-        <div class="col-md-6">
+        <div class="col-md-4">
             <div class="card diagnostic-card {{ storage.raster_data.status }}">
                 <div class="card-body">
                     <h5 class="card-title">
@@ -422,7 +463,7 @@
         </div>
 
         <!-- Static Files -->
-        <div class="col-md-6">
+        <div class="col-md-4">
             <div class="card diagnostic-card {{ storage.static_files.status }}">
                 <div class="card-body">
                     <h5 class="card-title">
@@ -487,8 +528,8 @@
                     <div class="metric-row">
                         <span class="metric-label">Migrations:</span>
                         <span class="metric-value">
-                            {% if application.unapplied_migrations > 0 %}
-                                <span class="text-danger">{{ application.unapplied_migrations }} unapplied</span>
+                            {% if application.migrations.unapplied and application.migrations.unapplied > 0 %}
+                                <span class="text-danger">{{ application.migrations.unapplied }} unapplied</span>
                             {% else %}
                                 All applied ✓
                             {% endif %}

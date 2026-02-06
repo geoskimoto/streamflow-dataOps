@@ -417,6 +417,57 @@ class SystemDiagnostics:
         return {'apis': results}
     
     @staticmethod
+    def check_timeseries_storage() -> Dict[str, Any]:
+        """Check timeseries database storage and statistics."""
+        try:
+            from apps.streamflow.models import DischargeObservation, Station
+            
+            # Get observation statistics
+            obs_count = DischargeObservation.objects.count()
+            station_count = Station.objects.filter(is_active=True).count()
+            
+            # Get date range
+            if obs_count > 0:
+                earliest = DischargeObservation.objects.order_by('observed_at').first()
+                latest = DischargeObservation.objects.order_by('-observed_at').first()
+                date_range = f"{earliest.observed_at.strftime('%Y-%m-%d')} to {latest.observed_at.strftime('%Y-%m-%d')}"
+            else:
+                date_range = "No data"
+            
+            # Get database size info
+            with connection.cursor() as cursor:
+                # Get table size for DischargeObservation
+                cursor.execute("""
+                    SELECT pg_size_pretty(pg_total_relation_size('streamflow_dischargeobservation'));
+                """)
+                table_size = cursor.fetchone()[0] if cursor.rowcount > 0 else "Unknown"
+            
+            # Estimate growth rate (observations per day)
+            if obs_count > 0:
+                from django.utils import timezone
+                cutoff = timezone.now() - timedelta(days=7)
+                recent_obs = DischargeObservation.objects.filter(observed_at__gte=cutoff).count()
+                obs_per_day = round(recent_obs / 7, 0)
+            else:
+                obs_per_day = 0
+            
+            return {
+                'status': 'healthy' if obs_count > 0 else 'warning',
+                'observation_count': f"{obs_count:,}",
+                'station_count': station_count,
+                'date_range': date_range,
+                'table_size': table_size,
+                'obs_per_day': int(obs_per_day),
+                'message': f'{obs_count:,} observations across {station_count} stations'
+            }
+        except Exception as e:
+            logger.error(f"Timeseries storage check failed: {e}")
+            return {
+                'status': 'error',
+                'message': f'Error checking timeseries storage: {str(e)}'
+            }
+    
+    @staticmethod
     def check_storage() -> Dict[str, Any]:
         """Check disk space and file permissions."""
         storage_checks = {}
@@ -439,18 +490,24 @@ class SystemDiagnostics:
                     
                     percent_used = (usage.used / usage.total) * 100
                     
+                    used_gb = round(usage.used / (1024**3), 2)
+                    free_gb = round(usage.free / (1024**3), 2)
+                    total_gb = round(usage.total / (1024**3), 2)
+                    
                     storage_checks['raster_data'] = {
                         'status': 'healthy' if percent_used < 90 else 'warning',
                         'exists': True,
                         'path': str(raster_path),
-                        'used_gb': round(usage.used / (1024**3), 2),
-                        'free_gb': round(usage.free / (1024**3), 2),
-                        'total_gb': round(usage.total / (1024**3), 2),
+                        'used_gb': used_gb,
+                        'free_gb': free_gb,
+                        'total_gb': total_gb,
+                        'used_space': f'{used_gb} GB',
+                        'free_space': f'{free_gb} GB',
                         'percent_used': round(percent_used, 1),
                         'file_count': file_count,
                         'readable': readable,
                         'writable': writable,
-                        'message': f'{file_count} raster files, {round(usage.free / (1024**3), 1)} GB free'
+                        'message': f'{file_count} raster files, {free_gb} GB free'
                     }
                 else:
                     storage_checks['raster_data'] = {
@@ -560,15 +617,29 @@ class SystemDiagnostics:
         ts_logs = DataPullLog.objects.filter(start_time__gte=cutoff)
         ts_recent = DataPullLog.objects.order_by('-start_time').first()
         
+        # Count records created in last 24h
+        ts_records_created = sum(log.records_created or 0 for log in ts_logs if log.records_created)
+        
+        # Count running tasks
+        ts_running = ts_logs.filter(status='running').count()
+        
         # Gridded activity
         raster_logs = RasterPullLog.objects.filter(started_at__gte=cutoff)
         raster_recent = RasterPullLog.objects.order_by('-started_at').first()
         
+        # Count layers created
+        raster_layers_created = sum(log.layers_successful or 0 for log in raster_logs)
+        
+        # Count running tasks
+        raster_running = raster_logs.filter(status='running').count()
+        
         return {
             'timeseries': {
-                'total_24h': ts_logs.count(),
-                'success_24h': ts_logs.filter(status='success').count(),
-                'failed_24h': ts_logs.filter(status='failed').count(),
+                'total_pulls': ts_logs.count(),
+                'successful': ts_logs.filter(status='success').count(),
+                'failed': ts_logs.filter(status='failed').count(),
+                'running': ts_running,
+                'records_created': f"{ts_records_created:,}",
                 'last_pull': {
                     'time': ts_recent.start_time if ts_recent else None,
                     'status': ts_recent.status if ts_recent else None,
@@ -576,9 +647,11 @@ class SystemDiagnostics:
                 } if ts_recent else None
             },
             'gridded': {
-                'total_24h': raster_logs.count(),
-                'success_24h': raster_logs.filter(status='success').count(),
-                'failed_24h': raster_logs.filter(status='failed').count(),
+                'total_pulls': raster_logs.count(),
+                'successful': raster_logs.filter(status='success').count(),
+                'failed': raster_logs.filter(status='failed').count(),
+                'running': raster_running,
+                'layers_created': raster_layers_created,
                 'last_pull': {
                     'time': raster_recent.started_at if raster_recent else None,
                     'status': raster_recent.status if raster_recent else None,
