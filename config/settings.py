@@ -30,7 +30,7 @@ SECRET_KEY = "django-insecure-s*m6pm+!m!sh(rl2i9u*^i!c!!n%r6eu1j_$24^6(1f)-2&0zw
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['testserver', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['testserver', 'localhost', '127.0.0.1', '72.61.70.144', 'streamflowops.3rdplaces.io']
 
 
 # Application definition
@@ -41,7 +41,8 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
-    "django.contrib.staticfiles",    "django.contrib.gis",  # PostGIS support    "django.contrib.gis",
+    "django.contrib.staticfiles",
+    "django.contrib.gis",  # PostGIS support
     "django.contrib.humanize",
     
     # Third party apps
@@ -99,14 +100,13 @@ WSGI_APPLICATION = "config.wsgi.application"
 
 # Use PostgreSQL with PostGIS
 DB_ENGINE = os.getenv("DB_ENGINE", "postgresql")
-
 if DB_ENGINE == "postgresql":
     DATABASES = {
         "default": {
             "ENGINE": "django.contrib.gis.db.backends.postgis",
             "NAME": os.getenv("DB_NAME", "streamflow_db"),
             "USER": os.getenv("DB_USER", "streamflow_user"),
-            "PASSWORD": os.getenv("DB_PASSWORD", "streamflow_dev_pass"),
+            "PASSWORD": os.getenv("DB_PASSWORD", "streamflow123"),
             "HOST": os.getenv("DB_HOST", "localhost"),
             "PORT": os.getenv("DB_PORT", "5432"),
         }
@@ -235,6 +235,17 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8000",
 ]
 CORS_ALLOW_CREDENTIALS = True
+
+# CSRF Trusted Origins
+CSRF_TRUSTED_ORIGINS = [
+    "https://streamflowops.3rdplaces.io",
+    "http://streamflowops.3rdplaces.io",
+]
+
+# Authentication redirects
+LOGIN_URL = '/accounts/login/'
+LOGIN_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = '/accounts/login/'
 
 # ============================================================================
 # Raster Data & Google Earth Engine Configuration

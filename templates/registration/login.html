@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% load crispy_forms_tags %}
+
+{% block title %}Log In - Streamflow DataOps{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-5">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white text-center">
+                    <h4 class="mb-0"><i class="fas fa-water me-2"></i>Streamflow DataOps</h4>
+                </div>
+                <div class="card-body p-4">
+                    <h5 class="card-title text-center mb-4">Log In</h5>
+
+                    {% if form.errors %}
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-circle me-2"></i>
+                        Invalid username or password. Please try again.
+                    </div>
+                    {% endif %}
+
+                    <form method="post">
+                        {% csrf_token %}
+                        {{ form|crispy }}
+                        <input type="hidden" name="next" value="{{ next }}">
+                        <div class="d-grid mt-3">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-sign-in-alt me-2"></i>Log In
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

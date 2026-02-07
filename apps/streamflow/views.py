@@ -4,6 +4,7 @@ import logging
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.mixins import LoginRequiredMixin
 from django.http import JsonResponse, HttpResponse
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.urls import reverse_lazy
@@ -38,7 +39,7 @@ from src.acquisition.tasks import execute_pull_configuration
 from decimal import Decimal, InvalidOperation
 
 
-class PullConfigurationListView(ListView):
+class PullConfigurationListView(LoginRequiredMixin, ListView):
     """List all pull configurations."""
     
     model = PullConfiguration
@@ -97,7 +98,7 @@ class PullConfigurationListView(ListView):
         return context
 
 
-class PullConfigurationDetailView(DetailView):
+class PullConfigurationDetailView(LoginRequiredMixin, DetailView):
     """Display details of a pull configuration."""
     
     model = PullConfiguration
@@ -164,7 +165,7 @@ class PullConfigurationDetailView(DetailView):
         return context
 
 
-class PullConfigurationCreateView(CreateView):
+class PullConfigurationCreateView(LoginRequiredMixin, CreateView):
     """Create a new pull configuration."""
     
     model = PullConfiguration
@@ -177,7 +178,7 @@ class PullConfigurationCreateView(CreateView):
         return super().form_valid(form)
 
 
-class PullConfigurationUpdateView(UpdateView):
+class PullConfigurationUpdateView(LoginRequiredMixin, UpdateView):
     """Update an existing pull configuration."""
     
     model = PullConfiguration
@@ -190,7 +191,7 @@ class PullConfigurationUpdateView(UpdateView):
         return super().form_valid(form)
 
 
-class PullConfigurationDeleteView(DeleteView):
+class PullConfigurationDeleteView(LoginRequiredMixin, DeleteView):
     """Delete a pull configuration."""
     
     model = PullConfiguration
@@ -202,6 +203,7 @@ class PullConfigurationDeleteView(DeleteView):
         return super().form_valid(form)
 
 
+@login_required
 def trigger_pull(request, pk):
     """Manually trigger a pull configuration."""
     
@@ -222,6 +224,7 @@ def trigger_pull(request, pk):
     return redirect('streamflow:configuration_detail', pk=pk)
 
 
+@login_required
 def toggle_configuration(request, pk):
     """Toggle a configuration's enabled status."""
     
@@ -235,7 +238,7 @@ def toggle_configuration(request, pk):
     return redirect('streamflow:configuration_detail', pk=pk)
 
 
-class DataPullLogListView(ListView):
+class DataPullLogListView(LoginRequiredMixin, ListView):
     """List all data pull logs with filtering and search."""
     
     model = DataPullLog
@@ -296,6 +299,7 @@ class DataPullLogListView(ListView):
         return context
 
 
+@login_required
 def station_search(request):
     """Search for stations in master station list."""
     
@@ -326,6 +330,7 @@ def station_search(request):
     return JsonResponse(data)
 
 
+@login_required
 def add_station_to_config(request, pk):
     """Add a station to a pull configuration."""
     
@@ -353,6 +358,7 @@ def add_station_to_config(request, pk):
     return redirect('streamflow:configuration_detail', pk=pk)
 
 
+@login_required
 def remove_station_from_config(request, pk, station_id):
     """Remove a station from a pull configuration."""
     
@@ -367,6 +373,7 @@ def remove_station_from_config(request, pk, station_id):
     return redirect('streamflow:configuration_detail', pk=pk)
 
 
+@login_required
 def log_detail(request, pk):
     """Detailed view of a data pull log with full error information."""
     
@@ -393,6 +400,7 @@ def log_detail(request, pk):
     return render(request, 'streamflow/log_detail.html', context)
 
 
+@login_required
 def dashboard(request):
     """Main dashboard view with comprehensive monitoring."""
     
@@ -420,7 +428,7 @@ def dashboard(request):
     # Data statistics
     total_observations = DischargeObservation.objects.count()
     # Get today's date in UTC for querying observed_at timestamps
-    today_utc = timezone.now().astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_utc = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
     observations_today = DischargeObservation.objects.filter(
         observed_at__gte=today_utc
     ).count()
@@ -508,6 +516,7 @@ def dashboard(request):
     return render(request, 'streamflow/dashboard.html', context)
 
 
+@login_required
 def station_search_ajax(request):
     """AJAX endpoint for searching master stations."""
     
@@ -572,6 +581,7 @@ def station_search_ajax(request):
     })
 
 
+@login_required
 def add_stations_to_config(request, pk):
     """Add selected stations to a configuration."""
     
@@ -659,7 +669,7 @@ def add_stations_to_config(request, pk):
 # Station Management Views
 # ============================================================================
 
-class StationListView(ListView):
+class StationListView(LoginRequiredMixin, ListView):
     """List all stations with search and filtering."""
     
     model = Station
@@ -806,7 +816,7 @@ class StationListView(ListView):
         return context
 
 
-class MasterStationListView(ListView):
+class MasterStationListView(LoginRequiredMixin, ListView):
     """List all master stations with search and filtering."""
     
     model = MasterStation
@@ -882,7 +892,7 @@ class MasterStationListView(ListView):
         return context
 
 
-class StationDetailView(DetailView):
+class StationDetailView(LoginRequiredMixin, DetailView):
     """Display details of a specific station."""
     
     model = Station
@@ -929,7 +939,7 @@ class StationDetailView(DetailView):
         return context
 
 
-class StationCreateView(CreateView):
+class StationCreateView(LoginRequiredMixin, CreateView):
     """Create a new station."""
     
     model = Station
@@ -945,7 +955,7 @@ class StationCreateView(CreateView):
         return super().form_valid(form)
 
 
-class StationUpdateView(UpdateView):
+class StationUpdateView(LoginRequiredMixin, UpdateView):
     """Update an existing station."""
     
     model = Station
@@ -968,6 +978,7 @@ class StationUpdateView(UpdateView):
         return super().form_valid(form)
 
 
+@login_required
 def toggle_station_status(request, station_number):
     """Toggle a station's active status."""
     
@@ -981,6 +992,7 @@ def toggle_station_status(request, station_number):
     return redirect('streamflow:station_detail', station_number=station_number)
 
 
+@login_required
 def station_export_csv(request):
     """Export filtered stations to CSV."""
     
@@ -1025,6 +1037,7 @@ def station_export_csv(request):
     return response
 
 
+@login_required
 def station_import(request):
     """Import stations from CSV file."""
     
@@ -1139,6 +1152,7 @@ def station_import(request):
     return render(request, 'streamflow/station_import.html', context)
 
 
+@login_required
 def sync_master_stations(request):
     """Sync stations from MasterStation table."""
     
@@ -1252,6 +1266,7 @@ def sync_master_stations(request):
 # Gridded Data Views (Raster/GEE)
 # ============================================================================
 
+@login_required
 def gridded_data_list(request):
     """List all gridded/raster data layers with filtering."""
     from .models import RasterLayer, RasterDataset, RasterVariable, SpatialExtent
@@ -1309,6 +1324,7 @@ def gridded_data_list(request):
     return render(request, 'streamflow/gridded_data_list.html', context)
 
 
+@login_required
 def gridded_data_detail(request, layer_id):
     """Detail view for a single raster layer with map viewer."""
     from .models import RasterLayer
@@ -1329,6 +1345,7 @@ def gridded_data_detail(request, layer_id):
     return render(request, 'streamflow/gridded_data_detail.html', context)
 
 
+@login_required
 def raster_config_list(request):
     """List all raster pull configurations."""
     from .models import RasterPullConfiguration
@@ -1349,6 +1366,7 @@ def raster_config_list(request):
     return render(request, 'streamflow/raster_config_list.html', context)
 
 
+@login_required
 def raster_config_detail(request, config_id):
     """Detail view for raster configuration with logs."""
     from .models import RasterPullConfiguration, RasterPullLog
@@ -1369,6 +1387,7 @@ def raster_config_detail(request, config_id):
     return render(request, 'streamflow/raster_config_detail.html', context)
 
 
+@login_required
 def raster_config_create(request):
     """Create new raster pull configuration."""
     from .forms import RasterPullConfigurationForm
@@ -1394,6 +1413,7 @@ def raster_config_create(request):
     return render(request, 'streamflow/raster_config_form.html', context)
 
 
+@login_required
 def raster_config_edit(request, config_id):
     """Edit existing raster pull configuration."""
     from .models import RasterPullConfiguration
@@ -1423,6 +1443,7 @@ def raster_config_edit(request, config_id):
     return render(request, 'streamflow/raster_config_form.html', context)
 
 
+@login_required
 def raster_config_delete(request, config_id):
     """Delete raster pull configuration."""
     from .models import RasterPullConfiguration
@@ -1442,6 +1463,7 @@ def raster_config_delete(request, config_id):
     return render(request, 'streamflow/raster_config_confirm_delete.html', context)
 
 
+@login_required
 def trigger_raster_pull(request, config_id):
     """Trigger manual raster data pull."""
     from .models import RasterPullConfiguration, RasterPullLog
@@ -1514,6 +1536,7 @@ def trigger_raster_pull(request, config_id):
     return redirect('streamflow:raster_config_list')
 
 
+@login_required
 def toggle_raster_configuration(request, config_id):
     """Toggle a raster configuration's enabled status."""
     from .models import RasterPullConfiguration
@@ -1528,7 +1551,7 @@ def toggle_raster_configuration(request, config_id):
     return redirect('streamflow:raster_config_list')
 
 
-class RasterPullLogListView(ListView):
+class RasterPullLogListView(LoginRequiredMixin, ListView):
     """List all raster pull logs with filtering and search."""
     
     model = RasterPullLog
@@ -1600,6 +1623,7 @@ class RasterPullLogListView(ListView):
         return context
 
 
+@login_required
 def system_diagnostics(request):
     """Display system diagnostics and health checks."""
     from .diagnostics import SystemDiagnostics
