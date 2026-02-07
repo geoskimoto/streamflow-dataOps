@@ -13,7 +13,7 @@ from typing import List, Dict
 from datetime import datetime
 import logging
 from django.db import transaction
-from apps.streamflow.models import Station, DischargeObservation, ForecastRun
+from apps.streamflow.models import Station, DischargeObservation, ForecastRun, MasterStation
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +42,28 @@ class DataProcessor:
             self.logger.info(f"No observations to process for station {station_number}")
             return 0
 
-        # Get station from database
+        # Get or create station from database
         try:
             station = Station.objects.get(station_number=station_number)
         except Station.DoesNotExist:
-            self.logger.error(f"Station {station_number} not found in database")
-            return 0
+            # Auto-create Station from MasterStation catalog
+            try:
+                master = MasterStation.objects.get(station_number=station_number)
+                station = Station.objects.create(
+                    station_number=master.station_number,
+                    name=master.station_name,
+                    agency=master.agency,
+                    latitude=master.latitude,
+                    longitude=master.longitude,
+                    huc_code=master.huc_code or "",
+                    state=master.state_code or "",
+                )
+                self.logger.info(f"Auto-created Station record for {station_number} from MasterStation")
+            except MasterStation.DoesNotExist:
+                self.logger.error(
+                    f"Station {station_number} not found in Station or MasterStation table"
+                )
+                return 0
 
         # Validate if requested
         if validate:

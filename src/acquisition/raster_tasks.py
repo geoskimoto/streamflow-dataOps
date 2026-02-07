@@ -18,7 +18,6 @@ from apps.streamflow.models import (
     RasterDataset,
     SpatialExtent
 )
-from src.acquisition.gee_client import GEEClient, GEEClientError
 from src.acquisition.earthdata_client import EarthDataClient, EarthDataError
 from src.acquisition.nomads_client import NomadsClient, NomadsError
 from src.acquisition.nomads_stage4_client import Stage4QPEClient, Stage4Error
@@ -246,8 +245,9 @@ def _pull_variable_extent(
             return stats
     elif dataset.data_source == 'gee':
         try:
+            from src.acquisition.gee_client import GEEClient, GEEClientError
             client = GEEClient()
-        except GEEClientError as e:
+        except (ImportError, Exception) as e:
             logger.error(f"Failed to initialize GEEClient: {e}")
             return stats
     else:
@@ -313,7 +313,7 @@ def _pull_variable_extent(
 
 
 def _pull_single_layer(
-    client,  # Can be EarthDataClient or GEEClient
+    client,  # Can be EarthDataClient, NomadsClient, or GEEClient
     processor: RasterProcessor,
     config: RasterPullConfiguration,
     variable: RasterVariable,
@@ -520,7 +520,7 @@ def _fetch_earthdata_layer(
 
 
 def _fetch_gee_layer(
-    client: GEEClient,
+    client,  # GEEClient (lazy imported)
     dataset,
     variable,
     timestamp: datetime,
@@ -528,7 +528,7 @@ def _fetch_gee_layer(
     file_path: Path,
     config
 ) -> bool:
-    """Fetch layer from Google Earth Engine (legacy)."""
+    """Fetch layer from Google Earth Engine (legacy/deprecated)."""
     try:
         if 'RTMA' in dataset.collection_id:
             # Variable names now match NOMADS client directly
@@ -582,7 +582,7 @@ def _fetch_gee_layer(
         logger.info(f"GEE fetch complete: {metadata}")
         return True
         
-    except GEEClientError as e:
+    except Exception as e:
         logger.error(f"GEE fetch failed: {e}")
         return False
 

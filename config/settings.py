@@ -25,12 +25,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-s*m6pm+!m!sh(rl2i9u*^i!c!!n%r6eu1j_$24^6(1f)-2&0zw"
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-s*m6pm+!m!sh(rl2i9u*^i!c!!n%r6eu1j_$24^6(1f)-2&0zw")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
 ALLOWED_HOSTS = ['testserver', 'localhost', '127.0.0.1', '72.61.70.144', 'streamflowops.3rdplaces.io']
+
+# Trust nginx X-Forwarded-Proto header for HTTPS detection
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 
 # Application definition
