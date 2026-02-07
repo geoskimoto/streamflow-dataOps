@@ -229,41 +229,74 @@ def collect_static_files(dry_run=False):
 
 
 def populate_station_data(dry_run=False):
-    """Populate master stations and station mappings."""
+    """Populate master stations from all sources and sync mappings.
+
+    Loads stations from three sources:
+      1. USGS stations for HUC regions 14-18 (Western US) via NWIS API
+      2. NOAA RFC stations with active forecasts via NOAA gauge API
+      3. Environment Canada stations for British Columbia via EC API
+    """
     print("\n🗺️  Populating Station Data...")
     print("-" * 70)
-    
-    # Check if stations already exist
+
+    # Current counts by agency
+    usgs_count = MasterStation.objects.filter(agency='USGS').count()
+    noaa_count = MasterStation.objects.filter(agency='NOAA_RFC').count()
+    ec_count = MasterStation.objects.filter(agency='EC').count()
     station_count = Station.objects.count()
-    master_count = MasterStation.objects.count()
-    
-    print(f"  Current data: {station_count} stations, {master_count} master stations")
-    
+
+    print(f"  Current data: {usgs_count} USGS, {noaa_count} NOAA RFC, "
+          f"{ec_count} EC, {station_count} synced stations")
+
     if dry_run:
-        if master_count == 0:
-            print("  → Would run: python manage.py load_master_stations")
-        else:
-            print("  → Master stations already loaded")
-            
-        if station_count == 0:
-            print("  → Would run: python manage.py sync_stations")
-        else:
-            print("  → Stations already loaded")
-            
-        print("  → Would run: python manage.py populate_station_mappings")
+        if usgs_count == 0:
+            print("  → Would load USGS stations for HUC 14-18 (Western US)")
+        if noaa_count == 0:
+            print("  → Would load NOAA RFC stations (all RFCs with active forecasts)")
+        if ec_count == 0:
+            print("  → Would load Environment Canada stations (BC)")
+        print("  → Would sync stations and populate mappings")
         return True
-    
+
     try:
-        # Load master stations if needed
-        if master_count == 0:
-            print("  → Loading master stations...")
-            call_command('load_master_stations', verbosity=1)
-            new_master_count = MasterStation.objects.count()
-            print(f"  ✓ Loaded {new_master_count} master stations")
+        # ----------------------------------------------------------
+        # 1. USGS stations (Western US, HUC 14-18)
+        # ----------------------------------------------------------
+        if usgs_count == 0:
+            print("  → Loading USGS stations (HUC 14-18, Western US)...")
+            for huc in ['14', '15', '16', '17', '18']:
+                print(f"    Loading HUC {huc}...")
+                call_command('load_master_stations', huc=huc, verbosity=0)
+            new_usgs = MasterStation.objects.filter(agency='USGS').count()
+            print(f"  ✓ Loaded {new_usgs} USGS stations")
         else:
-            print(f"  ✓ Master stations already loaded ({master_count} records)")
-        
-        # Sync stations if needed
+            print(f"  ✓ USGS stations already loaded ({usgs_count} records)")
+
+        # ----------------------------------------------------------
+        # 2. NOAA RFC stations (nationwide, active forecasts)
+        # ----------------------------------------------------------
+        if noaa_count == 0:
+            print("  → Loading NOAA RFC stations (active forecasts)...")
+            call_command('import_noaa_rfc_stations', rfc='NWRFC', verbosity=0)
+            new_noaa = MasterStation.objects.filter(agency='NOAA_RFC').count()
+            print(f"  ✓ Loaded {new_noaa} NOAA RFC stations")
+        else:
+            print(f"  ✓ NOAA RFC stations already loaded ({noaa_count} records)")
+
+        # ----------------------------------------------------------
+        # 3. Environment Canada stations (British Columbia)
+        # ----------------------------------------------------------
+        if ec_count == 0:
+            print("  → Loading Environment Canada stations (BC)...")
+            call_command('import_bc_stations', province='BC', verbosity=0)
+            new_ec = MasterStation.objects.filter(agency='EC').count()
+            print(f"  ✓ Loaded {new_ec} EC stations (BC)")
+        else:
+            print(f"  ✓ EC stations already loaded ({ec_count} records)")
+
+        # ----------------------------------------------------------
+        # 4. Sync Station table and populate mappings
+        # ----------------------------------------------------------
         if station_count == 0:
             print("  → Syncing active stations...")
             call_command('sync_stations', verbosity=1)
@@ -271,12 +304,15 @@ def populate_station_data(dry_run=False):
             print(f"  ✓ Synced {new_station_count} active stations")
         else:
             print(f"  ✓ Stations already synced ({station_count} records)")
-        
-        # Populate station mappings
+
         print("  → Populating station mappings...")
         call_command('populate_station_mappings', verbosity=1)
         print("  ✓ Station mappings populated")
-        
+
+        # Final summary
+        total = MasterStation.objects.count()
+        print(f"\n  📊 MasterStation total: {total}")
+
         return True
     except Exception as e:
         print(f"  ✗ Station population failed: {e}")
