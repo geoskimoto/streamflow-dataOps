@@ -618,7 +618,7 @@ class SystemDiagnostics:
         ts_recent = DataPullLog.objects.order_by('-start_time').first()
         
         # Count records created in last 24h
-        ts_records_created = sum(log.records_created or 0 for log in ts_logs if log.records_created)
+        ts_records_created = sum(log.records_processed or 0 for log in ts_logs if log.records_processed)
         
         # Count running tasks
         ts_running = ts_logs.filter(status='running').count()

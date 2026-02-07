@@ -13,6 +13,7 @@ from django.db import models
 from django.utils import timezone
 from datetime import timedelta
 import csv
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -552,10 +553,19 @@ def station_search_ajax(request):
     
     # Get total count before pagination
     total_count = stations.count()
-    
+
+    # If ids_only requested, return just IDs and station_numbers (no pagination)
+    ids_only = request.GET.get('ids_only', '').strip()
+    if ids_only:
+        station_data = list(stations.order_by('station_number').values_list('id', 'station_number'))
+        return JsonResponse({
+            'ids': [{'id': sid, 'station_number': snum} for sid, snum in station_data],
+            'total': total_count,
+        })
+
     # Apply ordering and pagination
     stations = stations.order_by('station_number')[offset:offset + limit]
-    
+
     # Convert to JSON
     results = [
         {
@@ -571,7 +581,7 @@ def station_search_ajax(request):
         }
         for station in stations
     ]
-    
+
     return JsonResponse({
         'stations': results,
         'total': total_count,
@@ -588,8 +598,14 @@ def add_stations_to_config(request, pk):
     config = get_object_or_404(PullConfiguration, pk=pk)
     
     if request.method == 'POST':
-        station_ids = request.POST.getlist('station_ids')
-        
+        # Station IDs are sent as a single JSON array to avoid exceeding
+        # DATA_UPLOAD_MAX_NUMBER_FIELDS when selecting thousands of stations.
+        station_ids_json = request.POST.get('station_ids_json', '[]')
+        try:
+            station_ids = json.loads(station_ids_json)
+        except (json.JSONDecodeError, TypeError):
+            station_ids = []
+
         if not station_ids:
             messages.warning(request, 'No stations selected.')
             return redirect('streamflow:configuration_detail', pk=pk)

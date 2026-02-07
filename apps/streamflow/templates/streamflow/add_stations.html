@@ -109,6 +109,7 @@
                     <p id="selectedCount" class="mb-2"><strong>0</strong> stations selected</p>
                     <form method="post" id="addStationsForm">
                         {% csrf_token %}
+                        <input type="hidden" name="station_ids_json" id="stationIdsJson" value="[]">
                         <div id="selectedStationsList"></div>
                         <button type="submit" class="btn btn-success w-100 mt-3" id="addStationsBtn" disabled>
                             Add Selected Stations
@@ -126,6 +127,7 @@
                     <div>
                         <span id="resultInfo" class="text-muted me-3"></span>
                         <button class="btn btn-sm btn-outline-secondary" id="selectAllBtn">Select All Visible</button>
+                        <button class="btn btn-sm btn-outline-primary" id="selectAllFilteredBtn" disabled>Select All Filtered (<span id="filteredCount">0</span>)</button>
                     </div>
                 </div>
                 <div class="card-body">
@@ -211,18 +213,15 @@ function updateSelectedCount() {
     const count = selectedStations.size;
     document.getElementById('selectedCount').innerHTML = `<strong>${count}</strong> stations selected`;
     document.getElementById('addStationsBtn').disabled = count === 0;
-    
-    // Update selected stations list
+
+    // Serialize all IDs into the single hidden field
+    document.getElementById('stationIdsJson').value = JSON.stringify(Array.from(selectedStations));
+
+    // Update selected stations badge list (visual only, no hidden inputs)
     const listDiv = document.getElementById('selectedStationsList');
     listDiv.innerHTML = '';
-    
+
     selectedStations.forEach(stationId => {
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'station_ids';
-        input.value = stationId;
-        listDiv.appendChild(input);
-        
         // Find station data
         const stationDiv = document.querySelector(`[data-station-id="${stationId}"]`);
         if (stationDiv) {
@@ -346,6 +345,12 @@ function loadStations(append = false) {
             });
             
             updatePaginationInfo();
+
+            // Update the "Select All Filtered" button count
+            if (!append) {
+                document.getElementById('filteredCount').textContent = currentTotal;
+                document.getElementById('selectAllFilteredBtn').disabled = currentTotal === 0;
+            }
         })
         .catch(error => {
             document.getElementById('loadingIndicator').classList.add('d-none');
@@ -368,6 +373,8 @@ document.getElementById('clearFilters').addEventListener('click', () => {
     document.getElementById('stationResults').innerHTML = '<p class="text-muted">Use the filters to search for stations.</p>';
     document.getElementById('resultInfo').textContent = '';
     document.getElementById('paginationControls').classList.add('d-none');
+    document.getElementById('filteredCount').textContent = '0';
+    document.getElementById('selectAllFilteredBtn').disabled = true;
 });
 
 document.getElementById('selectAllBtn').addEventListener('click', () => {
@@ -379,6 +386,52 @@ document.getElementById('selectAllBtn').addEventListener('click', () => {
         }
     });
     updateSelectedCount();
+});
+
+document.getElementById('selectAllFilteredBtn').addEventListener('click', () => {
+    const btn = document.getElementById('selectAllFilteredBtn');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Loading...';
+
+    // Build the same filter params but request ids_only
+    const params = new URLSearchParams();
+    if (currentFilters.agency) params.append('agency', currentFilters.agency);
+    if (currentFilters.rfc) params.append('rfc', currentFilters.rfc);
+    if (currentFilters.state) params.append('state', currentFilters.state);
+    if (currentFilters.huc) params.append('huc', currentFilters.huc);
+    if (currentFilters.search) params.append('q', currentFilters.search);
+    params.append('ids_only', '1');
+
+    fetch(`{% url 'streamflow:station_search_ajax' %}?${params.toString()}`)
+        .then(response => response.json())
+        .then(data => {
+            const currentSet = new Set(currentStations);
+            let addedCount = 0;
+            data.ids.forEach(station => {
+                const idStr = station.id.toString();
+                if (!currentSet.has(station.station_number) && !selectedStations.has(idStr)) {
+                    selectedStations.add(idStr);
+                    addedCount++;
+                }
+            });
+
+            // Update visual state for any visible items
+            document.querySelectorAll('.station-item:not(.disabled)').forEach(div => {
+                if (selectedStations.has(div.dataset.stationId)) {
+                    div.classList.add('selected');
+                }
+            });
+
+            updateSelectedCount();
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        })
+        .catch(error => {
+            console.error('Error selecting all filtered:', error);
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        });
 });
 
 // Handle remove from selected list
