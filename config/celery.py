@@ -105,6 +105,12 @@ app.conf.beat_schedule = {
         'schedule': crontab(minute=0, hour=1, day_of_week=0),  # Sunday 1 AM
         'kwargs': {'retention_days': 90}
     },
+
+    # Streamflow pull dispatcher - Check every 5 minutes for due PullConfigurations
+    'dispatch-streamflow-pulls': {
+        'task': 'src.acquisition.tasks.scheduled_streamflow_pulls',
+        'schedule': crontab(minute='*/5'),
+    },
 }
 
 

@@ -272,7 +272,7 @@ def execute_pull_configuration(self, config_id: int):
 
         # Update configuration last_run_at
         config.last_run_at = datetime.now(timezone.utc)
-        config.save()
+        config.save(update_fields=['last_run_at'])
 
         logger.info(f"\n" + "=" * 60)
         logger.info(f"Pull configuration {config_id} completed:")
@@ -406,3 +406,80 @@ def cleanup_old_logs(days_to_keep: int = 30):
     except Exception as e:
         logger.error(f"Error cleaning up logs: {e}")
         raise
+
+
+def _compute_next_run(from_time, schedule_type, schedule_value):
+    """Compute the next run time based on schedule type.
+
+    Args:
+        from_time: datetime to compute from
+        schedule_type: one of 'hourly', 'daily', 'weekly', 'custom'
+        schedule_value: cron expression string (used for 'custom')
+
+    Returns:
+        datetime for the next scheduled run
+    """
+    from datetime import timedelta
+
+    if schedule_type == 'hourly':
+        return from_time + timedelta(hours=1)
+    elif schedule_type == 'daily':
+        return from_time + timedelta(days=1)
+    elif schedule_type == 'weekly':
+        return from_time + timedelta(weeks=1)
+    elif schedule_type == 'custom':
+        try:
+            from croniter import croniter
+            return croniter(schedule_value, from_time).get_next(datetime)
+        except (ImportError, Exception):
+            logger.warning(
+                "croniter unavailable or invalid cron expression %r, falling back to daily",
+                schedule_value,
+            )
+            return from_time + timedelta(days=1)
+    else:
+        return from_time + timedelta(days=1)
+
+
+@shared_task
+def scheduled_streamflow_pulls():
+    """Dispatcher that checks enabled PullConfigurations and kicks off due pulls.
+
+    Runs on Celery Beat (every 5 minutes). For each enabled config whose
+    next_run_at is in the past (or NULL), it dispatches
+    execute_pull_configuration and atomically sets the next next_run_at.
+    Configs that already have a running DataPullLog are skipped to prevent
+    double-dispatch.
+    """
+    now = datetime.now(timezone.utc)
+    configs = PullConfiguration.objects.filter(is_enabled=True)
+
+    dispatched = 0
+    skipped = 0
+
+    for config in configs:
+        # Skip if there is already a running pull for this config
+        if DataPullLog.objects.filter(configuration=config, status='running').exists():
+            logger.debug("Skipping config %s (%s): already running", config.id, config.name)
+            skipped += 1
+            continue
+
+        # Skip if next_run_at is set and still in the future
+        if config.next_run_at is not None and config.next_run_at > now:
+            continue
+
+        # Due for execution — dispatch
+        execute_pull_configuration.delay(config.id)
+        dispatched += 1
+
+        # Compute and atomically set next_run_at
+        next_run = _compute_next_run(now, config.schedule_type, config.schedule_value)
+        PullConfiguration.objects.filter(id=config.id).update(next_run_at=next_run)
+
+        logger.info(
+            "Dispatched pull for config %s (%s), next_run_at=%s",
+            config.id, config.name, next_run,
+        )
+
+    logger.info("scheduled_streamflow_pulls: dispatched=%d, skipped=%d", dispatched, skipped)
+    return {"dispatched": dispatched, "skipped": skipped}
