@@ -434,6 +434,9 @@ def dashboard(request):
         observed_at__gte=today_utc
     ).count()
     
+    total_forecasts = ForecastRun.objects.count()
+    forecasts_today = ForecastRun.objects.filter(run_date__gte=today_utc).count()
+
     # Latest observations with station info
     latest_observations = DischargeObservation.objects.select_related(
         'station'
@@ -496,6 +499,8 @@ def dashboard(request):
         # Data stats
         'total_observations': total_observations,
         'observations_today': observations_today,
+        'total_forecasts': total_forecasts,
+        'forecasts_today': forecasts_today,
         
         # Recent data
         'latest_observations': latest_observations,
