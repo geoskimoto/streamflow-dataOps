@@ -518,6 +518,34 @@ def dashboard(request):
 
 
 @login_required
+def station_filter_options_ajax(request):
+    """Return available filter options (states, rfcs, visibility flags) for an agency."""
+    agency = request.GET.get('agency', '').strip()
+
+    qs = MasterStation.objects.all()
+    if agency:
+        qs = qs.filter(agency=agency)
+
+    states = sorted(
+        qs.exclude(state_code='').values_list('state_code', flat=True).distinct()
+    )
+
+    rfcs = sorted(
+        qs.exclude(rfc_code='').values_list('rfc_code', flat=True).distinct()
+    )
+
+    show_rfc = agency in ('', 'NOAA_RFC')
+    show_huc = agency in ('', 'USGS')
+
+    return JsonResponse({
+        'states': states,
+        'rfcs': rfcs,
+        'show_rfc': show_rfc,
+        'show_huc': show_huc,
+    })
+
+
+@login_required
 def station_search_ajax(request):
     """AJAX endpoint for searching master stations."""
     
@@ -655,26 +683,13 @@ def add_stations_to_config(request, pk):
         return redirect('streamflow:configuration_detail', pk=pk)
     
     # GET request - show station selection interface
-    # Get available states and HUCs for filtering
-    states = MasterStation.objects.values_list(
-        'state_code', flat=True
-    ).distinct().order_by('state_code')
-    
-    hucs = MasterStation.objects.filter(
-        huc_code__isnull=False
-    ).values_list(
-        'huc_code', flat=True
-    ).distinct().order_by('huc_code')[:100]  # Limit to first 100 HUCs
-    
     # Get current stations in config
     current_station_numbers = list(
         config.configuration_stations.values_list('station_number', flat=True)
     )
-    
+
     context = {
         'configuration': config,
-        'states': [s for s in states if s],
-        'hucs': [h for h in hucs if h],
         'current_station_numbers': current_station_numbers,
     }
     

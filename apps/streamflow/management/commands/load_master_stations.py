@@ -7,6 +7,22 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# FIPS numeric code -> 2-letter state abbreviation
+FIPS_TO_STATE = {
+    '1': 'AL', '2': 'AK', '4': 'AZ', '5': 'AR', '6': 'CA',
+    '8': 'CO', '9': 'CT', '10': 'DE', '11': 'DC', '12': 'FL',
+    '13': 'GA', '15': 'HI', '16': 'ID', '17': 'IL', '18': 'IN',
+    '19': 'IA', '20': 'KS', '21': 'KY', '22': 'LA', '23': 'ME',
+    '24': 'MD', '25': 'MA', '26': 'MI', '27': 'MN', '28': 'MS',
+    '29': 'MO', '30': 'MT', '31': 'NE', '32': 'NV', '33': 'NH',
+    '34': 'NJ', '35': 'NM', '36': 'NY', '37': 'NC', '38': 'ND',
+    '39': 'OH', '40': 'OK', '41': 'OR', '42': 'PA', '44': 'RI',
+    '45': 'SC', '46': 'SD', '47': 'TN', '48': 'TX', '49': 'UT',
+    '50': 'VT', '51': 'VA', '53': 'WA', '54': 'WV', '55': 'WI',
+    '56': 'WY',
+    '60': 'AS', '66': 'GU', '69': 'MP', '72': 'PR', '78': 'VI',
+}
+
 
 class Command(BaseCommand):
     help = 'Load master station list from USGS by state or HUC'
@@ -101,7 +117,7 @@ class Command(BaseCommand):
                         'station_name': row.get('station_nm', ''),
                         'latitude': clean_decimal(row.get('dec_lat_va')),
                         'longitude': clean_decimal(row.get('dec_long_va')),
-                        'state_code': row.get('state_cd', ''),
+                        'state_code': FIPS_TO_STATE.get(str(row.get('state_cd', '')).strip(), row.get('state_cd', '')),
                         'huc_code': row.get('huc_cd', ''),
                         'altitude_ft': clean_decimal(row.get('alt_va')),
                         'drainage_area_sqmi': clean_decimal(row.get('drain_area_va')),

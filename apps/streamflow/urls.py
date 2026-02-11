@@ -29,6 +29,7 @@ urlpatterns = [
     path('stations/<str:station_number>/edit/', views.StationUpdateView.as_view(), name='station_update'),
     path('stations/<str:station_number>/toggle/', views.toggle_station_status, name='toggle_station_status'),
     path('stations/search/', views.station_search, name='station_search'),
+    path('stations/filter-options/', views.station_filter_options_ajax, name='station_filter_options'),
     path('stations/search/ajax/', views.station_search_ajax, name='station_search_ajax'),
     path('configurations/<int:pk>/stations/add/', views.add_stations_to_config, name='add_stations'),
     path('configurations/<int:pk>/stations/<int:station_id>/remove/', views.remove_station_from_config, name='remove_station'),

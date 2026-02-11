@@ -54,38 +54,22 @@
                         </select>
                     </div>
                     
-                    <div class="mb-3">
+                    <div class="mb-3" id="rfcFilterGroup">
                         <label for="rfcFilter" class="form-label">River Forecast Center</label>
                         <select class="form-select" id="rfcFilter">
                             <option value="">All RFCs</option>
-                            <option value="NWRFC">Northwest RFC (NWRFC)</option>
-                            <option value="CNRFC">California-Nevada RFC (CNRFC)</option>
-                            <option value="CBRFC">Colorado Basin RFC (CBRFC)</option>
-                            <option value="MBRFC">Missouri Basin RFC (MBRFC)</option>
-                            <option value="NCRFC">North Central RFC (NCRFC)</option>
-                            <option value="NERFC">Northeast RFC (NERFC)</option>
-                            <option value="MARFC">Middle Atlantic RFC (MARFC)</option>
-                            <option value="OHRFC">Ohio RFC (OHRFC)</option>
-                            <option value="LMRFC">Lower Mississippi RFC (LMRFC)</option>
-                            <option value="ABRFC">Arkansas-Red Basin RFC (ABRFC)</option>
-                            <option value="WGRFC">West Gulf RFC (WGRFC)</option>
-                            <option value="SERFC">Southeast RFC (SERFC)</option>
-                            <option value="APRFC">Alaska RFC (APRFC)</option>
                         </select>
                         <small class="text-muted">Only applies to NOAA RFC stations</small>
                     </div>
-                    
+
                     <div class="mb-3">
                         <label for="stateFilter" class="form-label">State/Province</label>
                         <select class="form-select" id="stateFilter">
                             <option value="">All States</option>
-                            {% for state in states %}
-                            <option value="{{ state }}">{{ state }}</option>
-                            {% endfor %}
                         </select>
                     </div>
-                    
-                    <div class="mb-3">
+
+                    <div class="mb-3" id="hucFilterGroup">
                         <label for="hucFilter" class="form-label">HUC Code</label>
                         <input type="text" class="form-control" id="hucFilter" placeholder="e.g., 17 or 17010101">
                         <small class="text-muted">Enter partial HUC to filter</small>
@@ -359,7 +343,57 @@ function loadStations(append = false) {
         });
 }
 
+function refreshFilterOptions() {
+    const agency = document.getElementById('agencyFilter').value;
+    const params = new URLSearchParams();
+    if (agency) params.append('agency', agency);
+
+    fetch(`{% url 'streamflow:station_filter_options' %}?${params.toString()}`)
+        .then(response => response.json())
+        .then(data => {
+            // Rebuild state dropdown
+            const stateSelect = document.getElementById('stateFilter');
+            const prevState = stateSelect.value;
+            stateSelect.innerHTML = '<option value="">All States</option>';
+            data.states.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s;
+                opt.textContent = s;
+                stateSelect.appendChild(opt);
+            });
+            // Restore previous selection if still valid
+            if (data.states.includes(prevState)) {
+                stateSelect.value = prevState;
+            }
+
+            // Rebuild RFC dropdown
+            const rfcSelect = document.getElementById('rfcFilter');
+            const prevRfc = rfcSelect.value;
+            rfcSelect.innerHTML = '<option value="">All RFCs</option>';
+            data.rfcs.forEach(r => {
+                const opt = document.createElement('option');
+                opt.value = r;
+                opt.textContent = r;
+                rfcSelect.appendChild(opt);
+            });
+            if (data.rfcs.includes(prevRfc)) {
+                rfcSelect.value = prevRfc;
+            }
+
+            // Show/hide RFC filter
+            document.getElementById('rfcFilterGroup').style.display = data.show_rfc ? '' : 'none';
+            if (!data.show_rfc) rfcSelect.value = '';
+
+            // Show/hide HUC filter
+            document.getElementById('hucFilterGroup').style.display = data.show_huc ? '' : 'none';
+            if (!data.show_huc) document.getElementById('hucFilter').value = '';
+        })
+        .catch(err => console.error('Error refreshing filter options:', err));
+}
+
 // Event listeners
+document.getElementById('agencyFilter').addEventListener('change', () => refreshFilterOptions());
+
 document.getElementById('applyFilters').addEventListener('click', () => loadStations(false));
 
 document.getElementById('loadMoreBtn').addEventListener('click', () => loadStations(true));
@@ -375,6 +409,7 @@ document.getElementById('clearFilters').addEventListener('click', () => {
     document.getElementById('paginationControls').classList.add('d-none');
     document.getElementById('filteredCount').textContent = '0';
     document.getElementById('selectAllFilteredBtn').disabled = true;
+    refreshFilterOptions();
 });
 
 document.getElementById('selectAllBtn').addEventListener('click', () => {
@@ -460,5 +495,6 @@ document.getElementById('searchBox').addEventListener('keypress', (e) => {
 
 // Initialize
 updateSelectedCount();
+refreshFilterOptions();
 </script>
 {% endblock %}
