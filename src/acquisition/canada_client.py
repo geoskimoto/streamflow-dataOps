@@ -17,12 +17,82 @@ class CanadaClient:
     # Conversion factor from cubic meters per second to cubic feet per second
     CMS_TO_CFS = 35.3147
 
+    # Map EC DISCHARGE_SYMBOL_EN values to short codes that fit the DB
+    # quality_code field (max_length=10).
+    _EC_QUALITY_MAP = {
+        "Partial Day": "P",
+        "Estimated": "E",
+        "Ice Conditions": "I",
+        "Dry": "D",
+        "Revised": "R",
+    }
+
     def __init__(self):
         self.base_url = "https://api.weather.gc.ca"
         self.realtime_endpoint = f"{self.base_url}/collections/hydrometric-realtime/items"
         self.daily_endpoint = f"{self.base_url}/collections/hydrometric-daily-mean/items"
         self.stations_endpoint = f"{self.base_url}/collections/hydrometric-stations/items"
         self.logger = logging.getLogger(__name__)
+
+    def _map_quality_code(self, symbol_en: Optional[str]) -> str:
+        """Map an EC DISCHARGE_SYMBOL_EN value to a short code."""
+        if not symbol_en:
+            return "A"
+        return self._EC_QUALITY_MAP.get(symbol_en, symbol_en[:10])
+
+    # Maximum records per API request (EC GeoMet hard limit)
+    PAGE_SIZE = 10000
+
+    def _paginated_fetch(self, endpoint: str, params: dict, timeout: int = 60) -> List[dict]:
+        """Fetch all pages of results from an EC GeoMet API endpoint.
+
+        The API returns at most ``limit`` features per request.  When
+        ``numberMatched`` exceeds the page size we issue follow-up requests
+        with increasing ``offset`` until all records have been retrieved.
+
+        Note: The EC GeoMet API reports unreliable ``numberMatched`` values
+        at offsets > 0, so we capture the total from the first request only.
+
+        Args:
+            endpoint: Full URL of the API endpoint.
+            params: Query parameters (must already include ``limit``).
+            timeout: HTTP timeout per request in seconds.
+
+        Returns:
+            Aggregated list of GeoJSON feature dicts.
+        """
+        all_features: List[dict] = []
+        offset = 0
+        page_limit = int(params.get("limit", self.PAGE_SIZE))
+        total = None  # Will be set from the first request's numberMatched
+
+        while True:
+            params["offset"] = offset
+            response = requests.get(endpoint, params=params, timeout=timeout)
+            response.raise_for_status()
+            data = response.json()
+
+            features = data.get("features", [])
+            all_features.extend(features)
+
+            number_returned = data.get("numberReturned", len(features))
+
+            # Only trust numberMatched from the first request
+            if total is None:
+                total = data.get("numberMatched", 0)
+
+            self.logger.debug(
+                f"Page offset={offset}: returned={number_returned}, "
+                f"total={total}, accumulated={len(all_features)}"
+            )
+
+            # Stop when we've collected everything or the page was empty
+            if not features or len(all_features) >= total:
+                break
+
+            offset += number_returned
+
+        return all_features
 
     @retry(
         stop=stop_after_attempt(3),
@@ -50,11 +120,19 @@ class CanadaClient:
             end_date = datetime.utcnow()
 
         try:
-            # Build request parameters - keep it simple to avoid API 500 errors
+            # Ensure timezone-aware dates for comparison
+            start_tz = start_date if start_date.tzinfo else start_date.replace(tzinfo=pytz.UTC)
+            end_tz = end_date if end_date.tzinfo else end_date.replace(tzinfo=pytz.UTC)
+
+            # Build the OGC datetime range filter for server-side filtering
+            dt_start = start_tz.strftime("%Y-%m-%dT%H:%M:%SZ")
+            dt_end = end_tz.strftime("%Y-%m-%dT%H:%M:%SZ")
+
             params = {
                 "STATION_NUMBER": station_number,
                 "f": "json",
-                "limit": 10000,  # EC typically provides 5-15 minute intervals
+                "limit": self.PAGE_SIZE,
+                "datetime": f"{dt_start}/{dt_end}",
             }
 
             self.logger.info(
@@ -62,42 +140,32 @@ class CanadaClient:
                 f"from {start_date.date()} to {end_date.date()}"
             )
 
-            response = requests.get(self.realtime_endpoint, params=params, timeout=60)
-            response.raise_for_status()
-            
-            data = response.json()
-            features = data.get("features", [])
+            features = self._paginated_fetch(self.realtime_endpoint, params)
 
             if not features:
                 self.logger.warning(f"No real-time data returned for EC station {station_number}")
                 return []
 
-            # Transform to our format and filter by date range
+            # Transform to our format
             observations = []
             for feature in features:
                 props = feature.get("properties", {})
-                
+
                 try:
                     # Parse datetime (already in UTC)
                     observed_at_str = props.get("DATETIME")
                     if not observed_at_str:
                         continue
-                        
+
                     observed_at_utc = pd.to_datetime(observed_at_str).replace(tzinfo=pytz.UTC)
-                    
-                    # Filter by date range (since API doesn't always respect date filters)
-                    if observed_at_utc < start_date.replace(tzinfo=pytz.UTC):
-                        continue
-                    if observed_at_utc > end_date.replace(tzinfo=pytz.UTC):
-                        continue
-                    
+
                     # Get discharge value (in cubic meters per second)
                     discharge_cms = props.get("DISCHARGE")
                     if discharge_cms is None:
                         continue
-                    
+
                     discharge_cms = float(discharge_cms)
-                    
+
                     # Store in CMS but provide CFS as derived attribute
                     obs = {
                         "observed_at": observed_at_utc,
@@ -105,11 +173,11 @@ class CanadaClient:
                         "discharge_cfs": discharge_cms * self.CMS_TO_CFS,  # Derived attribute
                         "unit": "cms",  # Primary unit is metric
                         "type": "realtime_15min",
-                        "quality_code": props.get("DISCHARGE_SYMBOL_EN", "A"),
+                        "quality_code": self._map_quality_code(props.get("DISCHARGE_SYMBOL_EN")),
                     }
 
                     observations.append(obs)
-                    
+
                 except Exception as e:
                     self.logger.warning(f"Error parsing feature: {e}")
                     continue
@@ -150,11 +218,19 @@ class CanadaClient:
             end_date = datetime.utcnow()
 
         try:
-            # Build request parameters - simplified to avoid API 500 errors
+            # Ensure timezone-aware dates for comparison
+            start_tz = start_date if start_date.tzinfo else start_date.replace(tzinfo=pytz.UTC)
+            end_tz = end_date if end_date.tzinfo else end_date.replace(tzinfo=pytz.UTC)
+
+            # Build the OGC datetime range filter for server-side filtering
+            dt_start = start_tz.strftime("%Y-%m-%d")
+            dt_end = end_tz.strftime("%Y-%m-%d")
+
             params = {
                 "STATION_NUMBER": station_number,
                 "f": "json",
-                "limit": 10000,
+                "limit": self.PAGE_SIZE,
+                "datetime": f"{dt_start}/{dt_end}",
             }
 
             self.logger.info(
@@ -162,45 +238,35 @@ class CanadaClient:
                 f"from {start_date.date()} to {end_date.date()}"
             )
 
-            response = requests.get(self.daily_endpoint, params=params, timeout=60)
-            response.raise_for_status()
-            
-            data = response.json()
-            features = data.get("features", [])
+            features = self._paginated_fetch(self.daily_endpoint, params)
 
             if not features:
                 self.logger.warning(f"No daily mean data returned for EC station {station_number}")
                 return []
 
-            # Transform to our format and filter by date range
+            # Transform to our format
             observations = []
             for feature in features:
                 props = feature.get("properties", {})
-                
+
                 try:
                     # Parse date
                     date_str = props.get("DATE")
                     if not date_str:
                         continue
-                    
+
                     # Convert date to datetime at midnight UTC
                     observed_at_utc = datetime.strptime(date_str, "%Y-%m-%d").replace(
                         hour=0, minute=0, second=0, tzinfo=pytz.UTC
                     )
-                    
-                    # Filter by date range (since API doesn't always respect date filters)
-                    if observed_at_utc.date() < start_date.date():
-                        continue
-                    if observed_at_utc.date() > end_date.date():
-                        continue
-                    
+
                     # Get discharge value (in cubic meters per second)
                     discharge_cms = props.get("DISCHARGE")
                     if discharge_cms is None:
                         continue
-                    
+
                     discharge_cms = float(discharge_cms)
-                    
+
                     # Store in CMS but provide CFS as derived attribute
                     obs = {
                         "observed_at": observed_at_utc,
@@ -208,11 +274,11 @@ class CanadaClient:
                         "discharge_cfs": discharge_cms * self.CMS_TO_CFS,  # Derived attribute
                         "unit": "cms",  # Primary unit is metric
                         "type": "daily_mean",
-                        "quality_code": props.get("DISCHARGE_SYMBOL_EN", "A"),
+                        "quality_code": self._map_quality_code(props.get("DISCHARGE_SYMBOL_EN")),
                     }
 
                     observations.append(obs)
-                    
+
                 except Exception as e:
                     self.logger.warning(f"Error parsing feature: {e}")
                     continue
