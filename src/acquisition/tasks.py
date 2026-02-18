@@ -411,33 +411,52 @@ def cleanup_old_logs(days_to_keep: int = 30):
 def _compute_next_run(from_time, schedule_type, schedule_value):
     """Compute the next run time based on schedule type.
 
+    Uses croniter for all schedule types to ensure runs land on the correct
+    wall-clock times (e.g., "daily at 10:30") instead of drifting.
+
     Args:
-        from_time: datetime to compute from
+        from_time: datetime to compute from (typically ``now``)
         schedule_type: one of 'hourly', 'daily', 'weekly', 'custom'
-        schedule_value: cron expression string (used for 'custom')
+        schedule_value: cron expression string.  For 'custom' this is
+            required.  For other types it is optional — when provided it
+            overrides the default cron pattern for that type.
 
     Returns:
         datetime for the next scheduled run
     """
-    from datetime import timedelta
+    from croniter import croniter
 
-    if schedule_type == 'hourly':
-        return from_time + timedelta(hours=1)
-    elif schedule_type == 'daily':
-        return from_time + timedelta(days=1)
-    elif schedule_type == 'weekly':
-        return from_time + timedelta(weeks=1)
-    elif schedule_type == 'custom':
-        try:
-            from croniter import croniter
-            return croniter(schedule_value, from_time).get_next(datetime)
-        except (ImportError, Exception):
-            logger.warning(
-                "croniter unavailable or invalid cron expression %r, falling back to daily",
-                schedule_value,
+    _DEFAULT_CRONS = {
+        'hourly': '0 * * * *',
+        'daily': '0 0 * * *',
+        'weekly': '0 0 * * 0',
+    }
+
+    if schedule_type == 'custom':
+        if not schedule_value:
+            raise ValueError(
+                "schedule_type 'custom' requires a non-empty schedule_value "
+                "(cron expression)"
             )
-            return from_time + timedelta(days=1)
+        cron_expr = schedule_value
     else:
+        # Use schedule_value if the user supplied a cron expression,
+        # otherwise fall back to a sensible default for the type.
+        cron_expr = schedule_value.strip() if schedule_value else ''
+        if not cron_expr:
+            cron_expr = _DEFAULT_CRONS.get(schedule_type, '0 0 * * *')
+
+    try:
+        return croniter(cron_expr, from_time).get_next(datetime)
+    except (ValueError, KeyError) as exc:
+        logger.error(
+            "Invalid cron expression %r for schedule_type %r: %s. "
+            "Falling back to 24 h offset.",
+            cron_expr,
+            schedule_type,
+            exc,
+        )
+        from datetime import timedelta
         return from_time + timedelta(days=1)
 
 
