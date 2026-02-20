@@ -459,9 +459,12 @@ class CanadaClient:
             response.raise_for_status()
 
             observations = []
-            reader = csv.DictReader(io.StringIO(response.text))
+            # Strip BOM if present so csv.DictReader sees clean field names
+            text = response.text.lstrip("\ufeff")
+            reader = csv.DictReader(io.StringIO(text))
             for row in reader:
-                value_str = row.get("Value", "").strip()
+                # WaterOffice headers are bilingual, e.g. "Value/Valeur"
+                value_str = row.get("Value/Valeur", "").strip()
                 if not value_str:
                     continue
                 try:
@@ -470,7 +473,9 @@ class CanadaClient:
                     continue
 
                 observed_at = pd.to_datetime(row["Date"]).replace(tzinfo=pytz.UTC)
-                quality_code = self._map_wateroffice_approval(row.get("Approval", ""))
+                quality_code = self._map_wateroffice_approval(
+                    row.get("Approval/Approbation", "")
+                )
 
                 observations.append({
                     "observed_at": observed_at,
