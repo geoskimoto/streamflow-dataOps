@@ -1,11 +1,14 @@
 """Environment Canada data acquisition client."""
 
+import io
+import csv
 import requests
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 import logging
 import pytz
+from dateutil.relativedelta import relativedelta
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
@@ -16,6 +19,8 @@ class CanadaClient:
 
     # Conversion factor from cubic meters per second to cubic feet per second
     CMS_TO_CFS = 35.3147
+
+    WATEROFFICE_DISCHARGE_PARAM = 47
 
     # Map EC DISCHARGE_SYMBOL_EN values to short codes that fit the DB
     # quality_code field (max_length=10).
@@ -32,6 +37,7 @@ class CanadaClient:
         self.realtime_endpoint = f"{self.base_url}/collections/hydrometric-realtime/items"
         self.daily_endpoint = f"{self.base_url}/collections/hydrometric-daily-mean/items"
         self.stations_endpoint = f"{self.base_url}/collections/hydrometric-stations/items"
+        self.wateroffice_url = "https://wateroffice.ec.gc.ca/services/real_time_data/csv/inline"
         self.logger = logging.getLogger(__name__)
 
     def _map_quality_code(self, symbol_en: Optional[str]) -> str:
@@ -39,6 +45,12 @@ class CanadaClient:
         if not symbol_en:
             return "A"
         return self._EC_QUALITY_MAP.get(symbol_en, symbol_en[:10])
+
+    def _map_wateroffice_approval(self, approval: str) -> str:
+        """Map a WaterOffice Approval field value to a short quality code."""
+        if approval.strip() == "Final/Finales":
+            return "A"
+        return "P"
 
     # Maximum records per API request (EC GeoMet hard limit)
     PAGE_SIZE = 10000
@@ -404,3 +416,161 @@ class CanadaClient:
         except Exception as e:
             self.logger.error(f"Error fetching {province_code} stations: {e}")
             raise
+
+    def get_wateroffice_realtime_data(
+        self,
+        station_number: str,
+        start_date: datetime,
+        end_date: datetime,
+        timeout: int = 120,
+    ) -> List[Dict]:
+        """Fetch 5-minute real-time discharge data from WaterOffice CSV service.
+
+        Args:
+            station_number: EC station ID (e.g., '08MF005')
+            start_date: Start of the chunk (timezone-aware UTC)
+            end_date: End of the chunk, exclusive (timezone-aware UTC)
+            timeout: HTTP timeout in seconds
+
+        Returns:
+            List of dicts with keys: observed_at, discharge, unit, quality_code
+        """
+        # Normalise to timezone-aware UTC
+        start_tz = start_date if start_date.tzinfo else start_date.replace(tzinfo=pytz.UTC)
+        end_tz = end_date if end_date.tzinfo else end_date.replace(tzinfo=pytz.UTC)
+
+        dt_start = start_tz.strftime("%Y-%m-%d %H:%M:%S")
+        dt_end = end_tz.strftime("%Y-%m-%d %H:%M:%S")
+
+        params = {
+            "stations[]": station_number,
+            "parameters[]": self.WATEROFFICE_DISCHARGE_PARAM,
+            "start_date": dt_start,
+            "end_date": dt_end,
+        }
+
+        self.logger.info(
+            f"Fetching WaterOffice realtime data for {station_number} "
+            f"from {dt_start} to {dt_end}"
+        )
+
+        try:
+            response = requests.get(self.wateroffice_url, params=params, timeout=timeout)
+            response.raise_for_status()
+
+            observations = []
+            reader = csv.DictReader(io.StringIO(response.text))
+            for row in reader:
+                value_str = row.get("Value", "").strip()
+                if not value_str:
+                    continue
+                try:
+                    discharge = float(value_str)
+                except ValueError:
+                    continue
+
+                observed_at = pd.to_datetime(row["Date"]).replace(tzinfo=pytz.UTC)
+                quality_code = self._map_wateroffice_approval(row.get("Approval", ""))
+
+                observations.append({
+                    "observed_at": observed_at,
+                    "discharge": discharge,
+                    "unit": "cms",
+                    "quality_code": quality_code,
+                })
+
+            self.logger.info(
+                f"Retrieved {len(observations)} raw WaterOffice records for {station_number}"
+            )
+            return observations
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(
+                f"HTTP error fetching WaterOffice data for {station_number}: {e}"
+            )
+            raise
+        except Exception as e:
+            self.logger.error(
+                f"Error fetching WaterOffice data for {station_number}: {e}"
+            )
+            raise
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=60),
+        reraise=True,
+    )
+    def get_wateroffice_daily_mean(
+        self,
+        station_number: str,
+        start_date: datetime,
+        end_date: Optional[datetime] = None,
+    ) -> List[Dict]:
+        """Fetch WaterOffice 5-minute data and aggregate to UTC daily means.
+
+        Fetches data in monthly chunks to keep individual requests manageable,
+        then groups by UTC date to produce one daily-mean record per day.
+
+        Args:
+            station_number: EC station ID (e.g., '08MF005')
+            start_date: First day to include (inclusive)
+            end_date: Last day to include (inclusive); defaults to now UTC
+
+        Returns:
+            List of dicts with keys: observed_at, discharge, discharge_cfs,
+            unit, type, quality_code  — sorted ascending by observed_at
+        """
+        if end_date is None:
+            end_date = datetime.now(timezone.utc)
+
+        # Normalise to timezone-aware UTC midnight
+        start_tz = start_date if start_date.tzinfo else start_date.replace(tzinfo=pytz.UTC)
+        start_tz = start_tz.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_tz = end_date if end_date.tzinfo else end_date.replace(tzinfo=pytz.UTC)
+
+        all_raw: List[Dict] = []
+
+        chunk_start = start_tz
+        while chunk_start < end_tz:
+            next_start = chunk_start + relativedelta(months=1)
+            chunk_end = min(next_start, end_tz)
+            # Pass chunk_end - 1 second so ranges don't overlap
+            raw = self.get_wateroffice_realtime_data(
+                station_number,
+                chunk_start,
+                chunk_end - timedelta(seconds=1),
+            )
+            all_raw.extend(raw)
+            chunk_start = next_start
+
+        if not all_raw:
+            self.logger.warning(
+                f"No WaterOffice raw data for {station_number} "
+                f"between {start_tz.date()} and {end_tz.date()}"
+            )
+            return []
+
+        df = pd.DataFrame(all_raw)
+        df["date"] = df["observed_at"].apply(lambda dt: dt.date())
+
+        daily_records = []
+        for date, group in df.groupby("date"):
+            mean_discharge = group["discharge"].mean()
+            quality = "A" if (group["quality_code"] == "A").all() else "P"
+            observed_at = datetime(
+                date.year, date.month, date.day, 0, 0, 0, tzinfo=pytz.UTC
+            )
+            daily_records.append({
+                "observed_at": observed_at,
+                "discharge": round(mean_discharge, 4),
+                "discharge_cfs": round(mean_discharge * self.CMS_TO_CFS, 4),
+                "unit": "cms",
+                "type": "daily_mean",
+                "quality_code": quality,
+            })
+
+        daily_records.sort(key=lambda r: r["observed_at"])
+        self.logger.info(
+            f"Aggregated {len(daily_records)} daily mean records for {station_number}"
+        )
+        return daily_records

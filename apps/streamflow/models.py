@@ -166,6 +166,7 @@ class PullConfiguration(models.Model):
         ("realtime_15min", "Real-time 15 min"),
         ("daily_mean", "Daily Mean"),
         ("forecast", "Forecast"),
+        ("ec_realtime_daily", "EC Wateroffice Daily Mean"),
     ]
 
     FORECAST_TYPE_CHOICES = [

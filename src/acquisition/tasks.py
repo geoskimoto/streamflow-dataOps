@@ -145,6 +145,12 @@ def execute_pull_configuration(self, config_id: int):
                             start_date=start_date,
                             end_date=end_date,
                         )
+                    elif config.data_type == "ec_realtime_daily":
+                        observations = client.get_wateroffice_daily_mean(
+                            station_number=station_number,
+                            start_date=start_date,
+                            end_date=end_date,
+                        )
                     else:
                         logger.error(f"Unknown data type: {config.data_type}")
                         continue
