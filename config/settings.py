@@ -28,12 +28,21 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-s*m6pm+!m!sh(rl2i9u*^i!c!!n%r6eu1j_$24^6(1f)-2&0zw")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 ALLOWED_HOSTS = ['testserver', 'localhost', '127.0.0.1', '72.61.70.144', 'streamflowops.3rdplaces.io']
 
 # Trust nginx X-Forwarded-Proto header for HTTPS detection
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# Production security settings
+SECURE_SSL_REDIRECT = False  # nginx handles HTTPS redirect
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+SECURE_HSTS_SECONDS = 31536000
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
+X_FRAME_OPTIONS = "SAMEORIGIN"
 
 
 # Application definition
@@ -50,6 +59,7 @@ INSTALLED_APPS = [
     
     # Third party apps
     "rest_framework",
+    "rest_framework.authtoken",
     "drf_spectacular",
     "django_filters",
     "corsheaders",
@@ -213,10 +223,11 @@ REST_FRAMEWORK = {
         'rest_framework.renderers.BrowsableAPIRenderer',
     ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',  # Change to IsAuthenticated for production
+        'rest_framework.permissions.IsAuthenticated',
     ],
 }
 
