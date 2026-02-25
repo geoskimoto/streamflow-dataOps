@@ -10,6 +10,7 @@ if 'DJANGO_SETTINGS_MODULE' not in os.environ:
     django.setup()
 
 from celery import Task, shared_task
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import logging
 from config.celery import app
@@ -34,6 +35,163 @@ def test_task(self):
     """Test task to verify Celery setup."""
     logger.info("Test task executed successfully!")
     return "Test task completed"
+
+
+def _process_single_station(config_station, config_id, config):
+    """Fetch, process, and store data for a single station.
+
+    Designed to run inside a ThreadPoolExecutor — all objects are
+    instantiated locally so there is no shared mutable state between threads.
+
+    Returns:
+        dict with keys:
+            records (int): number of records inserted
+            success (bool): True if the station completed without error
+            error (str | None): error message if success is False
+    """
+    station_number = config_station.station_number
+    logger.info(f"\n--- Processing station {station_number} ---")
+
+    smart_append = SmartAppendLogic()
+    processor = DataProcessor()
+
+    try:
+        start_date = smart_append.get_pull_start_date(
+            config_id=config_id,
+            station_number=station_number,
+            config_start_date=config.pull_start_date,
+        )
+        end_date = datetime.now(timezone.utc)
+        logger.info(f"Pulling data from {start_date} to {end_date}")
+
+        observations = []
+        agency = config.data_source
+
+        if agency == "USGS":
+            client = USGSClient()
+            if config.data_type == "daily_mean":
+                observations = client.get_daily_mean(
+                    station_number=station_number,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            elif config.data_type == "realtime_15min":
+                observations = client.get_instantaneous(
+                    station_number=station_number,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            else:
+                logger.error(f"Unknown data type: {config.data_type}")
+                return {"records": 0, "success": False, "error": f"Unknown data type: {config.data_type}"}
+
+        elif agency == "EC":
+            client = CanadaClient()
+            if config.data_type == "daily_mean":
+                observations = client.get_daily_mean(
+                    station_number=station_number,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            elif config.data_type == "realtime_15min":
+                observations = client.get_realtime_data(
+                    station_number=station_number,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            elif config.data_type == "ec_realtime_daily":
+                observations = client.get_wateroffice_daily_mean(
+                    station_number=station_number,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            else:
+                logger.error(f"Unknown data type: {config.data_type}")
+                return {"records": 0, "success": False, "error": f"Unknown data type: {config.data_type}"}
+
+        elif agency == "NOAA":
+            logger.info(f"NOAA source - checking for HADS ID mapping")
+            try:
+                mapping = StationMapping.objects.get(usgs_site_no=station_number)
+                hads_id = mapping.noaa_hads_id
+                if not hads_id:
+                    logger.warning(f"No NOAA HADS ID for USGS {station_number}")
+                    return {"records": 0, "success": True, "error": None}
+                client = NOAAClient()
+                forecast_type = getattr(config, 'forecast_type', 'short')
+                forecast_data = client.get_forecast(hads_id, forecast_type=forecast_type)
+                if forecast_data:
+                    logger.info(f"Retrieved NOAA forecast with {len(forecast_data.get('data', []))} points")
+                else:
+                    logger.warning(f"No forecast data available for HADS {hads_id}")
+                return {"records": 0, "success": True, "error": None}
+            except StationMapping.DoesNotExist:
+                logger.warning(f"No StationMapping found for USGS {station_number}")
+                return {"records": 0, "success": True, "error": None}
+
+        elif agency == "NOAA_RFC":
+            client = NOAAClient()
+            if config.data_type == "forecast":
+                logger.info(f"Fetching RFC forecast for {station_number}")
+                forecast_data = client.get_rfc_forecast(station_number)
+                if forecast_data:
+                    from apps.streamflow.models import Station, ForecastRun
+                    station_obj, _ = Station.objects.get_or_create(
+                        station_number=station_number,
+                        defaults={
+                            'name': config_station.station_name or f"NOAA Station {station_number}",
+                            'agency': 'NOAA_RFC',
+                        }
+                    )
+                    ForecastRun.objects.create(
+                        station=station_obj,
+                        source='NOAA_RFC',
+                        run_date=forecast_data['run_date'],
+                        data=forecast_data['forecast_data'],
+                        rmse=forecast_data.get('rmse')
+                    )
+                    records = len(forecast_data['forecast_data'])
+                    logger.info(
+                        f"✓ Stored forecast run with {records} data points for {station_number}"
+                    )
+                    return {"records": records, "success": True, "error": None}
+                else:
+                    logger.warning(f"No forecast data available for {station_number}")
+                    return {"records": 0, "success": True, "error": None}
+            else:
+                logger.error(f"NOAA_RFC only supports 'forecast' data type, got: {config.data_type}")
+                return {"records": 0, "success": False, "error": f"NOAA_RFC only supports 'forecast' data type, got: {config.data_type}"}
+
+        else:
+            logger.error(f"Unknown agency: {agency}")
+            return {"records": 0, "success": False, "error": f"Unknown agency: {agency}"}
+
+        logger.info(f"Fetched {len(observations)} observations")
+
+        inserted_count = 0
+        if observations:
+            inserted_count = processor.process_observations(
+                station_number=station_number, observations=observations
+            )
+            logger.info(f"Inserted {inserted_count} records")
+            if inserted_count > 0:
+                latest_date = max(obs["observed_at"] for obs in observations)
+                smart_append.update_pull_progress(
+                    config_id=config_id,
+                    station_number=station_number,
+                    successful_pull_date=latest_date,
+                )
+
+        logger.info(f"✓ Successfully processed station {station_number}")
+        return {"records": inserted_count, "success": True, "error": None}
+
+    except Exception as e:
+        error_msg = f"Error processing station {station_number}: {str(e)}"
+        logger.error(error_msg)
+        return {"records": 0, "success": False, "error": error_msg}
+
+
+STATION_WORKERS = 8
 
 
 @shared_task(bind=True, max_retries=3)
@@ -78,194 +236,35 @@ def execute_pull_configuration(self, config_id: int):
             start_time=datetime.now(timezone.utc)
         )
 
-        # Initialize components
+        # Initialize counters
         total_records = 0
         successful_stations = 0
         failed_stations = 0
         errors = []
 
-        smart_append = SmartAppendLogic()
-        processor = DataProcessor()
-
         # Get stations in configuration
-        config_stations = config.configuration_stations.all()
-        logger.info(f"Processing {len(config_stations)} stations")
+        config_stations = list(config.configuration_stations.all())
+        logger.info(f"Processing {len(config_stations)} stations with {STATION_WORKERS} workers")
 
-        for config_station in config_stations:
-            station_number = config_station.station_number
-            logger.info(f"\n--- Processing station {station_number} ---")
-
-            try:
-                # Determine start date using Smart Append Logic
-                start_date = smart_append.get_pull_start_date(
-                    config_id=config_id,
-                    station_number=station_number,
-                    config_start_date=config.pull_start_date,
-                )
-
-                end_date = datetime.now(timezone.utc)
-
-                logger.info(f"Pulling data from {start_date} to {end_date}")
-
-                # Fetch data based on data source and data type
-                observations = []
-                agency = config.data_source  # Use the configuration's data source
-
-                if agency == "USGS":
-                    client = USGSClient()
-
-                    if config.data_type == "daily_mean":
-                        observations = client.get_daily_mean(
-                            station_number=station_number,
-                            start_date=start_date,
-                            end_date=end_date,
-                        )
-                    elif config.data_type == "realtime_15min":
-                        observations = client.get_instantaneous(
-                            station_number=station_number,
-                            start_date=start_date,
-                            end_date=end_date,
-                        )
+        with ThreadPoolExecutor(max_workers=STATION_WORKERS) as executor:
+            futures = {
+                executor.submit(_process_single_station, cs, config_id, config): cs
+                for cs in config_stations
+            }
+            for future in as_completed(futures):
+                cs = futures[future]
+                try:
+                    result = future.result()
+                    total_records += result["records"]
+                    if result["success"]:
+                        successful_stations += 1
                     else:
-                        logger.error(f"Unknown data type: {config.data_type}")
-                        continue
-
-                elif agency == "EC":
-                    client = CanadaClient()
-
-                    if config.data_type == "daily_mean":
-                        observations = client.get_daily_mean(
-                            station_number=station_number,
-                            start_date=start_date,
-                            end_date=end_date,
-                        )
-                    elif config.data_type == "realtime_15min":
-                        observations = client.get_realtime_data(
-                            station_number=station_number,
-                            start_date=start_date,
-                            end_date=end_date,
-                        )
-                    elif config.data_type == "ec_realtime_daily":
-                        observations = client.get_wateroffice_daily_mean(
-                            station_number=station_number,
-                            start_date=start_date,
-                            end_date=end_date,
-                        )
-                    else:
-                        logger.error(f"Unknown data type: {config.data_type}")
-                        continue
-
-                elif agency == "NOAA":
-                    # NOAA provides forecasts, not historical observations
-                    # This is primarily for forecast data retrieval
-                    logger.info(f"NOAA source - checking for HADS ID mapping")
-                    
-                    # Try to get NOAA HADS ID from StationMapping
-                    try:
-                        mapping = StationMapping.objects.get(usgs_site_no=station_number)
-                        hads_id = mapping.noaa_hads_id
-                        
-                        if not hads_id:
-                            logger.warning(f"No NOAA HADS ID for USGS {station_number}")
-                            continue
-                        
-                        client = NOAAClient()
-                        forecast_type = getattr(config, 'forecast_type', 'short')
-                        forecast_data = client.get_forecast(hads_id, forecast_type=forecast_type)
-                        
-                        if forecast_data:
-                            # Store as forecast, not observation
-                            # This would need separate handling via ForecastRun model
-                            logger.info(f"Retrieved NOAA forecast with {len(forecast_data.get('data', []))} points")
-                            # TODO: Implement forecast storage
-                        else:
-                            logger.warning(f"No forecast data available for HADS {hads_id}")
-                        
-                        continue  # NOAA doesn't produce observations
-                        
-                    except StationMapping.DoesNotExist:
-                        logger.warning(f"No StationMapping found for USGS {station_number}")
-                        continue
-
-                elif agency == "NOAA_RFC":
-                    # NOAA River Forecast Center - forecasts only
-                    client = NOAAClient()
-                    
-                    if config.data_type == "forecast":
-                        logger.info(f"Fetching RFC forecast for {station_number}")
-                        forecast_data = client.get_rfc_forecast(station_number)
-                        
-                        if forecast_data:
-                            # Get or create Station record
-                            from apps.streamflow.models import Station, ForecastRun
-                            
-                            station_obj, _ = Station.objects.get_or_create(
-                                station_number=station_number,
-                                defaults={
-                                    'name': config_station.station_name or f"NOAA Station {station_number}",
-                                    'agency': 'NOAA_RFC',
-                                }
-                            )
-                            
-                            # Create ForecastRun record
-                            forecast_run = ForecastRun.objects.create(
-                                station=station_obj,
-                                source='NOAA_RFC',
-                                run_date=forecast_data['run_date'],
-                                data=forecast_data['forecast_data'],
-                                rmse=forecast_data.get('rmse')
-                            )
-                            
-                            total_records += len(forecast_data['forecast_data'])
-                            successful_stations += 1
-                            
-                            logger.info(
-                                f"✓ Stored forecast run with {len(forecast_data['forecast_data'])} "
-                                f"data points for {station_number}"
-                            )
-                        else:
-                            logger.warning(f"No forecast data available for {station_number}")
-                            successful_stations += 1  # Still count as successful
-                        
-                        continue  # NOAA_RFC doesn't produce observations
-                    else:
-                        logger.error(f"NOAA_RFC only supports 'forecast' data type, got: {config.data_type}")
-                        continue
-                
-                else:
-                    logger.error(f"Unknown agency: {agency}")
-                    continue
-
-                logger.info(f"Fetched {len(observations)} observations")
-
-                # Process and store observations
-                if observations:
-                    inserted_count = processor.process_observations(
-                        station_number=station_number, observations=observations
-                    )
-
-                    total_records += inserted_count
-                    logger.info(f"Inserted {inserted_count} records")
-
-                    # Update progress
-                    if inserted_count > 0:
-                        # Use the latest observation date as progress marker
-                        latest_date = max(obs["observed_at"] for obs in observations)
-                        smart_append.update_pull_progress(
-                            config_id=config_id,
-                            station_number=station_number,
-                            successful_pull_date=latest_date,
-                        )
-
-                successful_stations += 1
-                logger.info(f"✓ Successfully processed station {station_number}")
-
-            except Exception as e:
-                failed_stations += 1
-                error_msg = f"Error processing station {station_number}: {str(e)}"
-                logger.error(error_msg)
-                errors.append(error_msg)
-                continue
+                        failed_stations += 1
+                        if result["error"]:
+                            errors.append(result["error"])
+                except Exception as e:
+                    failed_stations += 1
+                    errors.append(f"Error processing {cs.station_number}: {e}")
 
         # Update log entry
         log_status = "success" if failed_stations == 0 else "failed"
