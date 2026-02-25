@@ -24,6 +24,7 @@ from apps.api.views.raster_views import (
     RasterPullConfigurationViewSet,
     RasterPullLogViewSet,
 )
+from apps.api.views.analytics import ComputationLogViewSet, ScheduledComputationViewSet
 
 # Create router and register viewsets
 router = DefaultRouter()
@@ -41,6 +42,10 @@ router.register(r'raster-layers', RasterLayerViewSet, basename='raster-layer')
 router.register(r'raster-configurations', RasterPullConfigurationViewSet, basename='raster-configuration')
 router.register(r'raster-logs', RasterPullLogViewSet, basename='raster-log')
 
+# Register analytics viewsets
+router.register(r'analytics/computations', ScheduledComputationViewSet, basename='computation')
+router.register(r'analytics/logs',         ComputationLogViewSet,       basename='computation-log')
+
 app_name = 'api'
 
 urlpatterns = [
@@ -48,10 +53,10 @@ urlpatterns = [
     path('schema/', SpectacularAPIView.as_view(), name='schema'),
     path('docs/', SpectacularSwaggerView.as_view(url_name='api:schema'), name='swagger-ui'),
     path('redoc/', SpectacularRedocView.as_view(url_name='api:schema'), name='redoc'),
-    
+
     # Legacy redirects (backwards compatibility)
     path('schema/swagger-ui/', RedirectView.as_view(pattern_name='api:swagger-ui', permanent=True), name='legacy-swagger'),
-    
+
     # API endpoints
     path('', include(router.urls)),
 ]

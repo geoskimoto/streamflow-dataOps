@@ -56,7 +56,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.gis",  # PostGIS support
     "django.contrib.humanize",
-    
+
     # Third party apps
     "rest_framework",
     "rest_framework.authtoken",
@@ -67,10 +67,11 @@ INSTALLED_APPS = [
     "crispy_bootstrap5",
     "django_celery_beat",
     "django_celery_results",
-    
+
     # Local apps
     "apps.streamflow",
     "apps.monitoring",
+    "apps.analytics",
 ]
 
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"

@@ -30,7 +30,7 @@ app.conf.beat_schedule = {
             'dataset_name': 'NOAA_RTMA'
         }
     },
-    
+
     # NASA SMAP Soil Moisture - Daily at 3 AM UTC
     'fetch-smap-daily': {
         'task': 'src.acquisition.raster_tasks.scheduled_raster_pulls',
@@ -40,7 +40,7 @@ app.conf.beat_schedule = {
             'dataset_name': 'NASA_SMAP_L4'
         }
     },
-    
+
     # MODIS LST Terra - Daily at 4 AM UTC
     'fetch-modis-terra-daily': {
         'task': 'src.acquisition.raster_tasks.scheduled_raster_pulls',
@@ -50,7 +50,7 @@ app.conf.beat_schedule = {
             'dataset_name': 'MODIS_LST_Terra'
         }
     },
-    
+
     # MODIS LST Aqua - Daily at 4:30 AM UTC
     'fetch-modis-aqua-daily': {
         'task': 'src.acquisition.raster_tasks.scheduled_raster_pulls',
@@ -60,7 +60,7 @@ app.conf.beat_schedule = {
             'dataset_name': 'MODIS_LST_Aqua'
         }
     },
-    
+
     # GPM Precipitation - Daily at 5 AM UTC
     'fetch-gpm-daily': {
         'task': 'src.acquisition.raster_tasks.scheduled_raster_pulls',
@@ -70,7 +70,7 @@ app.conf.beat_schedule = {
             'dataset_name': 'NASA_GPM_IMERG'
         }
     },
-    
+
     # Data retention cleanup - Remove old RTMA data (>7 days)
     'cleanup-rtma-weekly': {
         'task': 'src.acquisition.raster_tasks.cleanup_old_layers',
@@ -81,7 +81,7 @@ app.conf.beat_schedule = {
             'dry_run': False
         }
     },
-    
+
     # Cleanup old raster data (>30 days for NASA datasets)
     'cleanup-earthdata-monthly': {
         'task': 'src.acquisition.raster_tasks.cleanup_old_layers',
@@ -92,13 +92,13 @@ app.conf.beat_schedule = {
             'dry_run': False
         }
     },
-    
+
     # Health check - Monitor pull status and send alerts
     'monitor-pull-health': {
         'task': 'src.acquisition.raster_tasks.monitor_pull_health',
         'schedule': crontab(minute=0, hour='*/6'),  # Every 6 hours
     },
-    
+
     # Database cleanup - Remove old pull logs (>90 days)
     'cleanup-pull-logs': {
         'task': 'src.acquisition.raster_tasks.cleanup_old_pull_logs',
@@ -110,6 +110,12 @@ app.conf.beat_schedule = {
     'dispatch-streamflow-pulls': {
         'task': 'src.acquisition.tasks.scheduled_streamflow_pulls',
         'schedule': crontab(minute='*/5'),
+    },
+
+    # Analytics: Precompute flow percentile bands every 6 hours
+    'compute-flow-percentile-bands': {
+        'task': 'src.analytics.tasks.compute_flow_percentile_bands',
+        'schedule': crontab(minute=0, hour='*/6'),
     },
 }
 

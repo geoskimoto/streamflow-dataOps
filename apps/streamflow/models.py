@@ -674,3 +674,49 @@ class RasterPullLog(models.Model):
             delta = self.completed_at - self.started_at
             self.duration_seconds = delta.total_seconds()
             self.save(update_fields=["duration_seconds"])
+
+class FlowPercentileBand(models.Model):
+    """Precomputed flow percentile band for a station, refreshed every 6 hours."""
+
+    BAND_CHOICES = [
+        ("p0_4",    "Very Low (0–4th percentile)"),
+        ("p5_10",   "Low (5th–10th percentile)"),
+        ("p11_25",  "Below Normal (11th–25th percentile)"),
+        ("p26_50",  "Normal (26th–50th percentile)"),
+        ("p51_75",  "Above Normal (51st–75th percentile)"),
+        ("p76_100", "High (76th–100th percentile)"),
+    ]
+
+    station = models.OneToOneField(
+        Station,
+        on_delete=models.CASCADE,
+        related_name="percentile_band",
+    )
+
+    # Current observation used for comparison
+    current_discharge = models.DecimalField(max_digits=20, decimal_places=4)
+    observation_date  = models.DateField(help_text="Date of current_discharge observation")
+
+    # Computed result
+    percentile_rank = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        help_text="0–100; computed against full period of record",
+    )
+    band                    = models.CharField(max_length=10, choices=BAND_CHOICES)
+    historical_record_count = models.IntegerField(
+        help_text="Number of daily_mean records used in the percentile computation"
+    )
+
+    # Computation metadata
+    computed_at = models.DateTimeField(help_text="When this row was last computed")
+
+    class Meta:
+        db_table = "flow_percentile_bands"
+        indexes = [
+            models.Index(fields=["band"],        name="idx_percentile_band"),
+            models.Index(fields=["computed_at"], name="idx_percentile_computed_at"),
+        ]
+
+    def __str__(self):
+        return f"{self.station.station_number} – {self.band} ({self.percentile_rank:.1f}th pct)"

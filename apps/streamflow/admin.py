@@ -9,6 +9,7 @@ from .models import (
     PullStationProgress,
     MasterStation,
     StationMapping,
+    FlowPercentileBand,
 )
 
 
@@ -75,3 +76,16 @@ class StationMappingAdmin(admin.ModelAdmin):
     list_display = ["source_agency", "source_id", "target_agency", "target_id"]
     list_filter = ["source_agency", "target_agency"]
     search_fields = ["source_id", "target_id"]
+
+
+@admin.register(FlowPercentileBand)
+class FlowPercentileBandAdmin(admin.ModelAdmin):
+    list_display    = ["station", "band", "percentile_rank", "current_discharge",
+                       "observation_date", "computed_at"]
+    list_filter     = ["band"]
+    search_fields   = ["station__station_number", "station__name"]
+    ordering        = ["band", "station__station_number"]
+    readonly_fields = [
+        "station", "current_discharge", "observation_date",
+        "percentile_rank", "band", "historical_record_count", "computed_at",
+    ]
