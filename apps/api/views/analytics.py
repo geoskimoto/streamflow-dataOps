@@ -15,7 +15,7 @@ from apps.api.serializers.analytics import (
     ScheduledComputationListSerializer,
     ScheduledComputationSerializer,
 )
-from src.analytics.tasks import compute_flow_percentile_bands
+from src.analytics.tasks import compute_daily_flow_percentiles
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class ScheduledComputationViewSet(viewsets.ReadOnlyModelViewSet):
         computation = self.get_object()
 
         TASK_MAP = {
-            "src.analytics.tasks.compute_flow_percentile_bands": compute_flow_percentile_bands,
+            "src.analytics.tasks.compute_daily_flow_percentiles": compute_daily_flow_percentiles,
         }
 
         task_fn = TASK_MAP.get(computation.task_path)

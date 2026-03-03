@@ -112,10 +112,13 @@ app.conf.beat_schedule = {
         'schedule': crontab(minute='*/5'),
     },
 
-    # Analytics: Precompute flow percentile bands every 6 hours
-    'compute-flow-percentile-bands': {
-        'task': 'src.analytics.tasks.compute_flow_percentile_bands',
-        'schedule': crontab(minute=0, hour='*/6'),
+    # Analytics: Compute yesterday's daily flow percentile bands.
+    # Runs 3x/day so that late-arriving USGS provisional values (which can
+    # trickle in throughout the day) are captured in the same date's row.
+    # The task uses upsert semantics so re-running the same date is safe.
+    'compute-daily-flow-percentiles': {
+        'task': 'src.analytics.tasks.compute_daily_flow_percentiles',
+        'schedule': crontab(minute=0, hour='6,12,18'),  # 06:00, 12:00, 18:00 UTC
     },
 }
 

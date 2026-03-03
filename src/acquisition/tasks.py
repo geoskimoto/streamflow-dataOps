@@ -87,6 +87,7 @@ def _process_single_station(config_station, config_id, config):
 
         elif agency == "EC":
             client = CanadaClient()
+            logger.info(f"EC branch: data_type={config.data_type!r}")  # DEBUG
             if config.data_type == "daily_mean":
                 observations = client.get_daily_mean(
                     station_number=station_number,

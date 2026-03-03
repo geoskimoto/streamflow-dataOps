@@ -9,7 +9,7 @@ from .models import (
     PullStationProgress,
     MasterStation,
     StationMapping,
-    FlowPercentileBand,
+    DailyFlowPercentile,
 )
 
 
@@ -78,14 +78,14 @@ class StationMappingAdmin(admin.ModelAdmin):
     search_fields = ["source_id", "target_id"]
 
 
-@admin.register(FlowPercentileBand)
-class FlowPercentileBandAdmin(admin.ModelAdmin):
-    list_display    = ["station", "band", "percentile_rank", "current_discharge",
-                       "observation_date", "computed_at"]
+@admin.register(DailyFlowPercentile)
+class DailyFlowPercentileAdmin(admin.ModelAdmin):
+    list_display    = ["station", "date", "band", "percentile_rank", "discharge", "computed_at"]
     list_filter     = ["band"]
     search_fields   = ["station__station_number", "station__name"]
-    ordering        = ["band", "station__station_number"]
+    ordering        = ["-date", "band", "station__station_number"]
+    date_hierarchy  = "date"
     readonly_fields = [
-        "station", "current_discharge", "observation_date",
+        "station", "date", "discharge",
         "percentile_rank", "band", "historical_record_count", "computed_at",
     ]

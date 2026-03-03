@@ -37,21 +37,27 @@ class ObservationStatisticsSerializer(serializers.Serializer):
     latest_timestamp = serializers.DateTimeField(allow_null=True)
 
 
-class FlowPercentileBandSerializer(serializers.Serializer):
-    """Single station percentile band result."""
+class DailyFlowPercentileSerializer(serializers.Serializer):
+    """Single station result within a percentile-bands response."""
 
     station_number          = serializers.CharField()
-    current_discharge       = serializers.FloatField()
+    discharge               = serializers.FloatField()
     percentile_rank         = serializers.FloatField()
     band                    = serializers.CharField()
     historical_record_count = serializers.IntegerField()
-    observation_date        = serializers.DateField()
 
 
 class PercentileBandsResponseSerializer(serializers.Serializer):
-    """Top-level envelope for the percentile-bands endpoint."""
+    """Top-level envelope for GET /observations/discharge/percentile-bands/."""
 
+    date        = serializers.DateField()
     computed_at = serializers.DateTimeField(allow_null=True)
-    days_back   = serializers.IntegerField()
     count       = serializers.IntegerField()
-    results     = FlowPercentileBandSerializer(many=True)
+    results     = DailyFlowPercentileSerializer(many=True)
+
+
+class PercentileDateRangeSerializer(serializers.Serializer):
+    """Date range available in daily_flow_percentiles, for rangeslider bounds."""
+
+    min_date = serializers.DateField(allow_null=True)
+    max_date = serializers.DateField(allow_null=True)

@@ -1,41 +1,51 @@
 """Scheduled analytics computation tasks."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from celery import shared_task
 
 from apps.analytics.models import ComputationLog, ScheduledComputation
-from apps.streamflow.models import FlowPercentileBand
-from src.analytics.percentiles import compute_percentile_bands
+from apps.streamflow.models import DailyFlowPercentile
+from src.analytics.percentiles import compute_percentile_for_date
 
 logger = logging.getLogger(__name__)
 
-TASK_PATH_PERCENTILE_BANDS = "src.analytics.tasks.compute_flow_percentile_bands"
+TASK_PATH = "src.analytics.tasks.compute_daily_flow_percentiles"
+
+# How many rows to pass to bulk_create at once
+_INSERT_BATCH = 5_000
 
 
 @shared_task(bind=True, max_retries=3)
-def compute_flow_percentile_bands(self):
+def compute_daily_flow_percentiles(self, target_date_iso: str | None = None):
     """
-    Precompute exceedance percentile bands for all stations with a daily_mean
-    observation in the past 2 days. Compares current value against the full
-    period of record (no seasonal filter). Results are upserted into the
-    flow_percentile_bands table.
+    Compute and upsert exceedance percentile bands for all stations that have
+    a daily_mean observation on ``target_date`` (defaults to yesterday UTC).
 
-    Runs every 6 hours via Celery beat. Checks the ScheduledComputation
-    registry for the is_enabled flag before doing any work.
+    Runs daily via Celery beat. Checks the ScheduledComputation registry for
+    the is_enabled flag before doing any work.
+
+    Args:
+        target_date_iso: ISO date string (YYYY-MM-DD). Defaults to yesterday.
     """
+    if target_date_iso is None:
+        target_date = date.today() - timedelta(days=1)
+    else:
+        target_date = date.fromisoformat(target_date_iso)
+
     try:
-        computation = ScheduledComputation.objects.get(task_path=TASK_PATH_PERCENTILE_BANDS)
+        computation = ScheduledComputation.objects.get(task_path=TASK_PATH)
     except ScheduledComputation.DoesNotExist:
         logger.error(
-            f"ScheduledComputation record not found for {TASK_PATH_PERCENTILE_BANDS}. "
-            "Run the seed migration or management command."
+            "ScheduledComputation record not found for %s. "
+            "Run migrations to seed it.",
+            TASK_PATH,
         )
         return {"status": "error", "detail": "ScheduledComputation record missing"}
 
     if not computation.is_enabled:
-        logger.info(f"'{computation.name}' is disabled — skipping")
+        logger.info("'%s' is disabled — skipping", computation.name)
         return {"status": "skipped"}
 
     started_at = datetime.now(timezone.utc)
@@ -47,15 +57,14 @@ def compute_flow_percentile_bands(self):
     )
 
     try:
-        rows = compute_percentile_bands()
+        rows = compute_percentile_for_date(target_date)
         computed_at = datetime.now(timezone.utc)
 
-        # Bulk upsert — one row per station, updated in place
         records = [
-            FlowPercentileBand(
+            DailyFlowPercentile(
                 station_id=row["station_id"],
-                current_discharge=row["current_discharge"],
-                observation_date=row["observation_date"],
+                date=row["observation_date"],
+                discharge=row["discharge"],
                 percentile_rank=row["percentile_rank"],
                 band=row["band"],
                 historical_record_count=row["historical_record_count"],
@@ -64,19 +73,20 @@ def compute_flow_percentile_bands(self):
             for row in rows
         ]
 
-        FlowPercentileBand.objects.bulk_create(
-            records,
-            update_conflicts=True,
-            unique_fields=["station"],
-            update_fields=[
-                "current_discharge",
-                "observation_date",
-                "percentile_rank",
-                "band",
-                "historical_record_count",
-                "computed_at",
-            ],
-        )
+        # Upsert — safe to re-run for the same date
+        for i in range(0, len(records), _INSERT_BATCH):
+            DailyFlowPercentile.objects.bulk_create(
+                records[i: i + _INSERT_BATCH],
+                update_conflicts=True,
+                unique_fields=["station", "date"],
+                update_fields=[
+                    "discharge",
+                    "percentile_rank",
+                    "band",
+                    "historical_record_count",
+                    "computed_at",
+                ],
+            )
 
         completed_at = datetime.now(timezone.utc)
         duration = (completed_at - started_at).total_seconds()
@@ -92,10 +102,15 @@ def compute_flow_percentile_bands(self):
         computation.save(update_fields=["last_run_at", "last_run_status"])
 
         logger.info(
-            f"'{computation.name}' complete: {len(records)} stations "
-            f"in {duration:.1f}s"
+            "'%s' complete: %d stations for %s in %.1fs",
+            computation.name, len(records), target_date, duration,
         )
-        return {"status": "success", "stations_computed": len(records), "duration_seconds": duration}
+        return {
+            "status": "success",
+            "target_date": target_date.isoformat(),
+            "stations_computed": len(records),
+            "duration_seconds": duration,
+        }
 
     except Exception as exc:
         completed_at = datetime.now(timezone.utc)
@@ -108,5 +123,5 @@ def compute_flow_percentile_bands(self):
         computation.last_run_status = "failed"
         computation.save(update_fields=["last_run_status"])
 
-        logger.error(f"'{computation.name}' failed: {exc}")
+        logger.error("'%s' failed: %s", computation.name, exc)
         raise

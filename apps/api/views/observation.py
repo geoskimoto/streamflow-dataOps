@@ -1,7 +1,7 @@
 """ViewSets for observation data API."""
 
 import hashlib
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -16,12 +16,15 @@ from drf_spectacular.utils import OpenApiParameter, extend_schema
 from drf_spectacular.openapi import OpenApiTypes
 import csv
 
-from apps.streamflow.models import DischargeObservation, Station, FlowPercentileBand
+from apps.streamflow.models import DischargeObservation, Station, DailyFlowPercentile
 from apps.api.serializers import (
     DischargeObservationSerializer,
     ObservationStatisticsSerializer,
 )
-from apps.api.serializers.observation import PercentileBandsResponseSerializer
+from apps.api.serializers.observation import (
+    PercentileBandsResponseSerializer,
+    PercentileDateRangeSerializer,
+)
 from apps.api.pagination import StandardResultsSetPagination
 
 
@@ -37,7 +40,6 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = DischargeObservationSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    # Only include actual model fields, not serializer properties
     filterset_fields = ['station', 'quality_code', 'type', 'unit']
     ordering_fields = ['observed_at', 'discharge']
     ordering = ['-observed_at']
@@ -46,7 +48,6 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
         """Filter observations by date range and station."""
         queryset = super().get_queryset()
 
-        # Filter by date range
         start_date = self.request.query_params.get('start_date')
         end_date = self.request.query_params.get('end_date')
 
@@ -55,60 +56,11 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
         if end_date:
             queryset = queryset.filter(observed_at__lte=end_date)
 
-        # Filter by station number (via station relationship)
         station_number = self.request.query_params.get('station_number')
         if station_number:
             queryset = queryset.filter(station__station_number=station_number)
 
         return queryset.select_related('station')
-
-    # CSV export disabled - not currently needed
-    # @action(detail=False, methods=['get'])
-    # def export_csv(self, request):
-    #     """
-    #     Export observations to CSV format.
-    #
-    #     Query params:
-    #     - station_number: Required
-    #     - start_date: ISO format datetime
-    #     - end_date: ISO format datetime
-    #     - data_type: realtime_15min or daily_mean
-    #     """
-    #     station_number = request.query_params.get('station_number')
-    #     if not station_number:
-    #         return Response(
-    #             {'error': 'station_number parameter is required'},
-    #             status=status.HTTP_400_BAD_REQUEST
-    #         )
-    #
-    #     # Get observations
-    #     observations = self.get_queryset().filter(station__station_number=station_number)
-    #
-    #     # Create CSV response
-    #     response = HttpResponse(content_type='text/csv')
-    #     response['Content-Disposition'] = f'attachment; filename="discharge_{station_number}.csv"'
-    #
-    #     writer = csv.writer(response)
-    #     writer.writerow([
-    #         'Station Number',
-    #         'Observed At',
-    #         'Discharge',
-    #         'Unit',
-    #         'Type',
-    #         'Quality Code',
-    #     ])
-    #
-    #     for obs in observations:
-    #         writer.writerow([
-    #             obs.station.station_number,
-    #             obs.observed_at.isoformat(),
-    #             obs.discharge,
-    #             obs.unit,
-    #             obs.type,
-    #             obs.quality_code,
-    #         ])
-    #
-    #     return response
 
     @action(detail=False, methods=['get'])
     def statistics(self, request):
@@ -136,7 +88,6 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
             end_date=Max('observed_at'),
         )
 
-        # Get latest observation
         latest = observations.order_by('-observed_at').first()
 
         data = {
@@ -154,15 +105,24 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = ObservationStatisticsSerializer(data)
         return Response(serializer.data)
 
+    # ------------------------------------------------------------------
+    # Percentile band endpoints
+    # ------------------------------------------------------------------
+
     @extend_schema(
         parameters=[
             OpenApiParameter(
-                "days_back", OpenApiTypes.INT,
-                description="Return only stations with data within this many days (default 2)",
+                "date",
+                OpenApiTypes.DATE,
+                description=(
+                    "Return bands for this date (YYYY-MM-DD). "
+                    "Defaults to the latest date available in the database."
+                ),
             ),
             OpenApiParameter(
-                "station", OpenApiTypes.STR,
-                description="Filter to a single station number",
+                "station",
+                OpenApiTypes.STR,
+                description="Filter to a single station number.",
             ),
         ],
         responses={200: PercentileBandsResponseSerializer},
@@ -170,18 +130,36 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=["get"], url_path="percentile-bands")
     def percentile_bands(self, request):
         """
-        Return precomputed flow percentile bands for all recently active stations.
+        Return precomputed exceedance percentile bands for all stations on a
+        given date.
 
-        Data is refreshed every 6 hours by a Celery task. Use the
-        Cache-Control and ETag headers to avoid redundant requests.
+        Data is populated by the daily Celery task and the historical backfill
+        command. Use ``?date=YYYY-MM-DD`` to drive a rangeslider. Omit the
+        parameter to get the latest available date.
+
+        Responses for past dates include long-lived Cache-Control and ETag
+        headers (data never changes once computed). Today's date is uncached.
         """
-        days_back      = int(request.query_params.get("days_back", 2))
         station_filter = request.query_params.get("station")
 
-        queryset = FlowPercentileBand.objects.select_related("station").all()
+        # Resolve target date
+        date_param = request.query_params.get("date")
+        if date_param:
+            try:
+                target_date = date.fromisoformat(date_param)
+            except ValueError:
+                return Response(
+                    {"detail": "Invalid date format. Use YYYY-MM-DD."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            # Default to the latest date that has data
+            latest = DailyFlowPercentile.objects.aggregate(d=Max("date"))["d"]
+            target_date = latest or date.today()
 
-        cutoff = timezone.now() - timedelta(days=days_back)
-        queryset = queryset.filter(observation_date__gte=cutoff.date())
+        queryset = DailyFlowPercentile.objects.filter(
+            date=target_date
+        ).select_related("station")
 
         if station_filter:
             queryset = queryset.filter(station__station_number=station_filter)
@@ -191,26 +169,50 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
         results = [
             {
                 "station_number":          obj.station.station_number,
-                "current_discharge":       float(obj.current_discharge),
+                "discharge":               float(obj.discharge),
                 "percentile_rank":         float(obj.percentile_rank),
                 "band":                    obj.band,
                 "historical_record_count": obj.historical_record_count,
-                "observation_date":        obj.observation_date.isoformat(),
             }
             for obj in queryset
         ]
 
         response = Response({
+            "date":        target_date.isoformat(),
             "computed_at": computed_at.isoformat() if computed_at else None,
-            "days_back":   days_back,
             "count":       len(results),
             "results":     results,
         })
 
-        if computed_at:
-            etag = hashlib.md5(computed_at.isoformat().encode()).hexdigest()
-            response["Cache-Control"] = "public, max-age=21600"
+        # Cache historical dates indefinitely (data never changes).
+        # Don't cache today — the daily task may not have run yet.
+        if computed_at and target_date < date.today():
+            etag = hashlib.md5(
+                f"{target_date.isoformat()}:{computed_at.isoformat()}".encode()
+            ).hexdigest()
+            response["Cache-Control"] = "public, max-age=86400"
             response["Last-Modified"] = http_date(computed_at.timestamp())
-            response["ETag"]          = f'"{etag}"'
+            response["ETag"] = f'"{etag}"'
 
+        return response
+
+    @extend_schema(responses={200: PercentileDateRangeSerializer})
+    @action(detail=False, methods=["get"], url_path="percentile-date-range")
+    def percentile_date_range(self, request):
+        """
+        Return the min and max dates available in daily_flow_percentiles.
+
+        Use this to set the bounds of the rangeslider in the dashboard.
+        Response is cached for 1 hour.
+        """
+        agg = DailyFlowPercentile.objects.aggregate(
+            min_date=Min("date"),
+            max_date=Max("date"),
+        )
+
+        response = Response({
+            "min_date": agg["min_date"].isoformat() if agg["min_date"] else None,
+            "max_date": agg["max_date"].isoformat() if agg["max_date"] else None,
+        })
+        response["Cache-Control"] = "public, max-age=3600"
         return response
