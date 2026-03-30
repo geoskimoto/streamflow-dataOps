@@ -378,6 +378,51 @@ curl -X POST http://localhost:8000/api/v1/raster-layers/extract_points/ \
 
 ### Streamflow Endpoints
 
+#### Station ID Cross-Reference
+
+- `GET /api/v1/master-stations/` - Full reference table of all stations across all networks
+- `GET /api/v1/master-stations/{pk}/` - Single record by primary key
+- `GET /api/v1/master-stations/lookup/?id=<value>` - Resolve any station ID to all known network IDs
+
+The `lookup` endpoint accepts a `station_number` (USGS gauge ID) or `noaa_lid` (NOAA Location ID) and returns all identifiers for that station. Useful for on-the-fly ID translation in analysis workflows.
+
+**Example: Look up by NOAA LID**
+```bash
+curl -H "Authorization: Token <your-token>" \
+  "https://streamflowops.3rdplaces.io/api/v1/master-stations/lookup/?id=PATW1"
+```
+
+```json
+{
+  "station_number": "12149000",
+  "noaa_lid": "PATW1",
+  "rfc_code": "NWRFC",
+  "station_name": "Methow River at Pateros WA",
+  "agency": "USGS",
+  "state_code": "WA",
+  "huc_code": "17020009",
+  "latitude": "48.05340000",
+  "longitude": "-119.90180000",
+  "altitude_ft": null,
+  "drainage_area_sqmi": "2800.0000"
+}
+```
+
+**Example: Look up by USGS gauge ID**
+```bash
+curl -H "Authorization: Token <your-token>" \
+  "https://streamflowops.3rdplaces.io/api/v1/master-stations/lookup/?id=12149000"
+```
+
+Returns the same record. The lookup is case-insensitive and searches both `station_number` and `noaa_lid` fields simultaneously.
+
+**Example: Filter the full list by RFC or state**
+```bash
+# All NWRFC stations in Washington
+curl -H "Authorization: Token <your-token>" \
+  "https://streamflowops.3rdplaces.io/api/v1/master-stations/?rfc_code=NWRFC&state_code=WA"
+```
+
 #### Stations
 - `GET /api/v1/stations/` - List all stations (309 records)
 - `GET /api/v1/stations/{station_number}/` - Station details
