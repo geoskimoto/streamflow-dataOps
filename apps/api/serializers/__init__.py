@@ -4,6 +4,7 @@ from .station import (
     StationSerializer,
     StationListSerializer,
     StationCreateSerializer,
+    MasterStationSerializer,
 )
 from .configuration import (
     PullConfigurationSerializer,
@@ -38,4 +39,5 @@ __all__ = [
     'ForecastStatisticsSerializer',
     'DataPullLogSerializer',
     'DataPullLogListSerializer',
+    'MasterStationSerializer',
 ]

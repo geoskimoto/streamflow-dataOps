@@ -11,6 +11,7 @@ from drf_spectacular.views import (
 
 from apps.api.views import (
     StationViewSet,
+    MasterStationViewSet,
     PullConfigurationViewSet,
     DischargeObservationViewSet,
     ForecastRunViewSet,
@@ -29,6 +30,7 @@ from apps.api.views.analytics import ComputationLogViewSet, ScheduledComputation
 # Create router and register viewsets
 router = DefaultRouter()
 router.register(r'stations', StationViewSet, basename='station')
+router.register(r'master-stations', MasterStationViewSet, basename='master-station')
 router.register(r'configurations', PullConfigurationViewSet, basename='configuration')
 router.register(r'observations/discharge', DischargeObservationViewSet, basename='discharge')
 router.register(r'forecasts', ForecastRunViewSet, basename='forecast')

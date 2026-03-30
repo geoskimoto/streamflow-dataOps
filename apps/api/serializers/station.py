@@ -1,7 +1,7 @@
 """Serializers for Station model."""
 
 from rest_framework import serializers
-from apps.streamflow.models import Station
+from apps.streamflow.models import Station, MasterStation
 
 
 class StationSerializer(serializers.ModelSerializer):
@@ -92,3 +92,23 @@ class StationCreateSerializer(serializers.ModelSerializer):
                 "Longitude must be between -180 and 180."
             )
         return value
+
+
+class MasterStationSerializer(serializers.ModelSerializer):
+    """Serializer for MasterStation cross-reference lookups."""
+
+    class Meta:
+        model = MasterStation
+        fields = [
+            'station_number',
+            'noaa_lid',
+            'rfc_code',
+            'station_name',
+            'agency',
+            'state_code',
+            'huc_code',
+            'latitude',
+            'longitude',
+            'altitude_ft',
+            'drainage_area_sqmi',
+        ]
