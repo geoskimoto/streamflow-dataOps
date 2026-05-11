@@ -286,26 +286,35 @@ Log in to Django admin at http://localhost:8000/admin/ and create PullConfigurat
 
 ## Post-Deployment
 
-### Optional: Setup Raster Data
+### Initialize Raster Dataset Metadata (Required)
 
-If using Google Earth Engine for satellite raster data:
+This command seeds the `raster_datasets`, `raster_variables`, and `spatial_extents` tables with metadata definitions for all supported satellite data sources. It does **not** pull or store any raster files — it only registers what sources and variables are available so the gridded configuration UI works.
 
 ```bash
-# Setup GEE datasets
-python manage.py setup_raster_datasets
-
-# Setup spatial extents
-python manage.py setup_spatial_extents
-
-# Test GEE connection
-python manage.py test_gee_connection
+python manage.py init_raster_datasets
 ```
 
-**Required GEE environment variables:**
+**Must be re-run after any migration that drops or recreates these tables.** If the gridded configuration page (`/gridded-configurations/new/`) shows "No datasets with variables found" with no selectable variables, this command has not been run or the metadata was wiped.
+
+Sources initialized:
+
+| Dataset | Source | Resolution | Variables |
+|---------|--------|-----------|-----------|
+| NOAA RTMA | NOMADS | 2.5km hourly | temperature, dewpoint, wind, pressure |
+| NOAA URMA | NOMADS | 2.5km hourly | temperature, dewpoint, wind, pressure |
+| NASA SMAP L4 | EarthData/NSIDC | 9km daily | surface/rootzone/profile soil moisture |
+| MODIS Terra LST | EarthData/LPDAAC | 1km daily | daytime/nighttime land surface temp |
+| MODIS Aqua LST | EarthData/LPDAAC | 1km daily | daytime/nighttime land surface temp |
+| NASA GPM IMERG | EarthData/GES_DISC | 11km daily | precipitation rate |
+| NCEP Stage IV QPE | NOMADS | 4km hourly | 1-hr and 6-hr accumulated precip |
+
+**Optional: Setup Raster Data**
+
+If actively pulling satellite raster data, also set these environment variables:
+
 ```bash
 EARTHDATA_USERNAME=your-earthdata-username
 EARTHDATA_PASSWORD=your-earthdata-password
-GEE_PROJECT=your-gee-project-id
 ```
 
 ### Test Data Pulls
@@ -768,6 +777,9 @@ pip install -r requirements.txt --upgrade
 
 # Run migrations
 python manage.py migrate
+
+# Re-seed raster dataset metadata (safe to re-run; skips existing records)
+python manage.py init_raster_datasets
 
 # Collect static files
 python manage.py collectstatic --noinput
