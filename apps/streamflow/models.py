@@ -681,7 +681,11 @@ BAND_CHOICES = [
     ("p11_25",  "Below Normal (11th–25th percentile)"),
     ("p26_50",  "Normal (26th–50th percentile)"),
     ("p51_75",  "Above Normal (51st–75th percentile)"),
-    ("p76_100", "High (76th–100th percentile)"),
+    ("p76_85",  "High (76th–85th percentile)"),
+    ("p86_90",  "Very High (86th–90th percentile)"),
+    ("p91_95",  "Extreme (91st–95th percentile)"),
+    ("p96_98",  "Severe (96th–98th percentile)"),
+    ("p99_100", "Exceptional (>98th percentile)"),
 ]
 
 

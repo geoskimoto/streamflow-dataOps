@@ -19,7 +19,11 @@ BAND_THRESHOLDS = [
     (25,  "p11_25"),
     (50,  "p26_50"),
     (75,  "p51_75"),
-    (101, "p76_100"),
+    (85,  "p76_85"),
+    (90,  "p86_90"),
+    (95,  "p91_95"),
+    (98,  "p96_98"),
+    (101, "p99_100"),
 ]
 
 MIN_HISTORICAL_RECORDS = 30
@@ -30,7 +34,7 @@ def classify_band(percentile_rank: float) -> str:
     for threshold, band in BAND_THRESHOLDS:
         if percentile_rank <= threshold:
             return band
-    return "p76_100"
+    return "p99_100"
 
 
 # ---------------------------------------------------------------------------

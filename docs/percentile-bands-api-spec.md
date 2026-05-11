@@ -184,7 +184,26 @@ Apply the colour mapping to map markers / legend.
 | `p11_25`    | 11 – 25          | `#FFA500` (orange) | Below normal |
 | `p26_50`    | 26 – 50          | `#90EE90` (light green) | Normal |
 | `p51_75`    | 51 – 75          | `#228B22` (forest green) | Above normal |
-| `p76_100`   | 76 – 100         | `#00008B` (dark blue) | Much above normal |
+| `p76_85`    | 76 – 85          | `#0D47A1` (navy)        | High |
+| `p86_90`    | 86 – 90          | `#283593` (indigo)      | Very high |
+| `p91_95`    | 91 – 95          | `#4527A0` (deep purple) | Extreme |
+| `p96_98`    | 96 – 98          | `#7B1FA2` (purple)      | Severe |
+| `p99_100`   | > 98             | `#AD1457` (magenta)     | Exceptional |
+
+The classification uses inclusive upper bounds:
+
+```python
+if   percentile_rank <=  4: band = 'p0_4'
+elif percentile_rank <= 10: band = 'p5_10'
+elif percentile_rank <= 25: band = 'p11_25'
+elif percentile_rank <= 50: band = 'p26_50'
+elif percentile_rank <= 75: band = 'p51_75'
+elif percentile_rank <= 85: band = 'p76_85'
+elif percentile_rank <= 90: band = 'p86_90'
+elif percentile_rank <= 95: band = 'p91_95'
+elif percentile_rank <= 98: band = 'p96_98'
+else:                        band = 'p99_100'
+```
 
 Stations with fewer than 30 historical daily_mean observations are excluded from
 the results entirely (insufficient data for a meaningful percentile).
