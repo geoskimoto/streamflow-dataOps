@@ -736,3 +736,51 @@ class DailyFlowPercentile(models.Model):
 
     def __str__(self):
         return f"{self.station.station_number} – {self.date} – {self.band} ({self.percentile_rank:.1f}th pct)"
+
+
+class ForecastPercentile(models.Model):
+    """
+    Precomputed exceedance percentile band for a forecast value at a station on a future date.
+
+    One row per (station, target_date, source). Upserted each time the
+    compute_forecast_percentile_bands task runs — always reflects the most
+    recent ForecastRun for that source.
+    """
+
+    station = models.ForeignKey(
+        Station,
+        on_delete=models.CASCADE,
+        related_name="forecast_percentiles",
+        db_index=True,
+    )
+    target_date        = models.DateField(db_index=True, help_text="Forecasted date")
+    source             = models.CharField(max_length=20, help_text="Forecast source label, e.g. NWRFC")
+    forecast_run_date  = models.DateTimeField(help_text="Issuance datetime of the ForecastRun used")
+    forecast_discharge = models.DecimalField(max_digits=12, decimal_places=4)
+    percentile_rank    = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        help_text="0–100; compared against station's full period-of-record daily_mean observations",
+    )
+    band                    = models.CharField(max_length=10, choices=BAND_CHOICES)
+    historical_record_count = models.IntegerField(
+        help_text="Total daily_mean records used in the percentile computation"
+    )
+    computed_at = models.DateTimeField(help_text="When this row was computed")
+
+    class Meta:
+        db_table = "forecast_percentiles"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["station", "target_date", "source"],
+                name="unique_forecast_percentile",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["station", "target_date"], name="idx_fcst_pct_station_date"),
+            models.Index(fields=["source", "target_date"],  name="idx_fcst_pct_source_date"),
+        ]
+        ordering = ["target_date"]
+
+    def __str__(self):
+        return f"{self.station.station_number} – {self.target_date} – {self.source} – {self.band}"
