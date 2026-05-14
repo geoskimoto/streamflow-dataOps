@@ -754,9 +754,9 @@ class ForecastPercentile(models.Model):
         db_index=True,
     )
     target_date        = models.DateField(db_index=True, help_text="Forecasted date")
-    source             = models.CharField(max_length=20, help_text="Forecast source label, e.g. NWRFC")
+    source             = models.CharField(max_length=50, help_text="Forecast source label, e.g. NWRFC")
     forecast_run_date  = models.DateTimeField(help_text="Issuance datetime of the ForecastRun used")
-    forecast_discharge = models.DecimalField(max_digits=12, decimal_places=4)
+    forecast_discharge = models.DecimalField(max_digits=20, decimal_places=4)
     percentile_rank    = models.DecimalField(
         max_digits=5,
         decimal_places=2,
