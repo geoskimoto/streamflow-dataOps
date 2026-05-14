@@ -1,5 +1,7 @@
 """API views for forecast data."""
 
+from datetime import date, timedelta
+
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -8,11 +10,15 @@ from django.db.models import Count, Avg, Min, Max
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
-from apps.streamflow.models import ForecastRun
+from apps.streamflow.models import ForecastRun, ForecastPercentile
 from apps.api.serializers.forecast import (
     ForecastRunSerializer,
     ForecastRunListSerializer,
     ForecastStatisticsSerializer,
+)
+from apps.api.serializers.forecast_percentile import (
+    ForecastPercentileBandsResponseSerializer,
+    ForecastPercentileDateRangeSerializer,
 )
 from apps.api.pagination import StandardResultsSetPagination
 
@@ -169,6 +175,110 @@ class ForecastRunViewSet(viewsets.ReadOnlyModelViewSet):
                 {'detail': 'No forecasts found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
         serializer = self.get_serializer(latest_forecast)
         return Response(serializer.data)
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('date', OpenApiTypes.DATE,
+                             description='Forecast date (YYYY-MM-DD). Defaults to earliest available.'),
+            OpenApiParameter('source', OpenApiTypes.STR,
+                             description='Forecast source label (default: NWRFC).'),
+            OpenApiParameter('station', OpenApiTypes.STR,
+                             description='Filter to a single station number.'),
+        ],
+        responses={200: ForecastPercentileBandsResponseSerializer},
+    )
+    @action(detail=False, methods=['get'], url_path='discharge/percentile-bands')
+    def percentile_bands(self, request):
+        """
+        Return precomputed exceedance percentile bands for all stations with
+        NWRFC forecast data on a given date.
+
+        Use ``?date=YYYY-MM-DD`` to drive the dashboard date picker in the
+        forecast period. Omit the parameter to get the earliest available date.
+        No caching — forecasts update intraday.
+        """
+        source         = request.query_params.get('source', 'NWRFC')
+        station_filter = request.query_params.get('station')
+
+        date_param = request.query_params.get('date')
+        if date_param:
+            try:
+                target_date = date.fromisoformat(date_param)
+            except ValueError:
+                return Response(
+                    {'detail': 'Invalid date format. Use YYYY-MM-DD.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            earliest = ForecastPercentile.objects.filter(
+                source=source
+            ).aggregate(d=Min('target_date'))['d']
+            target_date = earliest or (date.today() + timedelta(days=1))
+
+        queryset = ForecastPercentile.objects.filter(
+            target_date=target_date,
+            source=source,
+        ).select_related('station')
+
+        if station_filter:
+            queryset = queryset.filter(station__station_number=station_filter)
+
+        agg = queryset.aggregate(
+            computed_at=Max('computed_at'),
+            forecast_run_date=Max('forecast_run_date'),
+        )
+
+        results = [
+            {
+                'station_number':          obj.station.station_number,
+                'forecast_discharge':      float(obj.forecast_discharge),
+                'percentile_rank':         float(obj.percentile_rank),
+                'band':                    obj.band,
+                'historical_record_count': obj.historical_record_count,
+            }
+            for obj in queryset
+        ]
+
+        return Response({
+            'date':              target_date.isoformat(),
+            'source':            source,
+            'forecast_run_date': agg['forecast_run_date'].isoformat() if agg['forecast_run_date'] else None,
+            'computed_at':       agg['computed_at'].isoformat() if agg['computed_at'] else None,
+            'count':             len(results),
+            'results':           results,
+        })
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('source', OpenApiTypes.STR,
+                             description='Forecast source label (default: NWRFC).'),
+        ],
+        responses={200: ForecastPercentileDateRangeSerializer},
+    )
+    @action(detail=False, methods=['get'], url_path='discharge/percentile-date-range')
+    def percentile_date_range(self, request):
+        """
+        Return the min and max forecast dates available in forecast_percentiles.
+
+        Use this to extend the dashboard rangeslider into the forecast period.
+        Response is cached for 1 hour.
+        """
+        source = request.query_params.get('source', 'NWRFC')
+
+        agg = ForecastPercentile.objects.filter(source=source).aggregate(
+            min_date=Min('target_date'),
+            max_date=Max('target_date'),
+            forecast_run_date=Max('forecast_run_date'),
+        )
+
+        response = Response({
+            'source':            source,
+            'min_date':          agg['min_date'].isoformat() if agg['min_date'] else None,
+            'max_date':          agg['max_date'].isoformat() if agg['max_date'] else None,
+            'forecast_run_date': agg['forecast_run_date'].isoformat() if agg['forecast_run_date'] else None,
+        })
+        response['Cache-Control'] = 'public, max-age=3600'
+        return response
