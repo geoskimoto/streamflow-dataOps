@@ -1,7 +1,7 @@
 """Flow percentile computation logic."""
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from typing import Generator
 
 from django.db import connection
@@ -227,3 +227,143 @@ def iter_station_id_chunks(
 
     for i in range(0, len(ids), chunk_size):
         yield ids[i: i + chunk_size]
+
+
+# ---------------------------------------------------------------------------
+# Forecast percentile computation
+# ---------------------------------------------------------------------------
+
+# Maps ForecastPercentile.source label -> ForecastRun.source value
+_FORECAST_RUN_SOURCE_MAP = {
+    'NWRFC': 'NOAA_RFC',
+}
+
+
+def compute_forecast_percentiles(
+    source: str = 'NWRFC',
+    max_days: int = 8,
+) -> list[dict]:
+    """
+    Compute exceedance percentile bands for the most recent NOAA_RFC ForecastRun
+    per station, covering the next max_days calendar days from today.
+
+    Compares each forecasted discharge against the station's full period-of-record
+    daily_mean observations — the same methodology as compute_percentile_for_date().
+
+    Args:
+        source: ForecastPercentile.source label (e.g. 'NWRFC'). Determines which
+                ForecastRun.source to query via _FORECAST_RUN_SOURCE_MAP.
+        max_days: Number of calendar days ahead to include (today is day 0,
+                  so max_days=8 covers today+1 through today+8).
+
+    Returns:
+        List of dicts with keys:
+            station_id, target_date, forecast_discharge, source,
+            forecast_run_date, historical_record_count, percentile_rank, band
+    """
+    from apps.streamflow.models import ForecastRun  # avoid circular import at module load
+
+    run_source = _FORECAST_RUN_SOURCE_MAP.get(source)
+    if run_source is None:
+        raise ValueError(f"Unknown forecast source: {source!r}. Add it to _FORECAST_RUN_SOURCE_MAP.")
+
+    today = date.today()
+    cutoff = today + timedelta(days=max_days)
+
+    # Latest ForecastRun per station (DISTINCT ON station_id ORDER BY run_date DESC)
+    latest_runs = (
+        ForecastRun.objects
+        .filter(source=run_source)
+        .order_by('station_id', '-run_date')
+        .distinct('station_id')
+        .values('station_id', 'run_date', 'data')
+    )
+
+    # Build flat list of forecast points within (today, cutoff)
+    forecast_rows: list[dict] = []
+    for run in latest_runs:
+        for point in (run['data'] or []):
+            try:
+                pt_date = date.fromisoformat(str(point['date'])[:10])
+            except (KeyError, ValueError, TypeError):
+                continue
+            if today < pt_date < cutoff:
+                forecast_rows.append({
+                    'station_id':        run['station_id'],
+                    'target_date':       pt_date,
+                    'discharge':         float(point['value']),
+                    'forecast_run_date': run['run_date'],
+                })
+
+    if not forecast_rows:
+        logger.info("compute_forecast_percentiles(%s): no forecast data found", source)
+        return []
+
+    # Build VALUES clause with type hints on first row so PostgreSQL infers column types
+    value_parts = []
+    flat_params: list = []
+    for i, row in enumerate(forecast_rows):
+        if i == 0:
+            value_parts.append('(%s::bigint, %s::date, %s::numeric)')
+        else:
+            value_parts.append('(%s, %s, %s)')
+        flat_params.extend([row['station_id'], row['target_date'].isoformat(), row['discharge']])
+
+    values_clause = ', '.join(value_parts)
+
+    sql = f"""
+        WITH forecast_vals (station_id, target_date, discharge) AS (
+            VALUES {values_clause}
+        )
+        SELECT
+            fv.station_id,
+            fv.target_date,
+            fv.discharge,
+            COUNT(h.id)                                              AS historical_record_count,
+            ROUND(
+                COUNT(h.id) FILTER (WHERE h.discharge <= fv.discharge) * 100.0
+                / NULLIF(COUNT(h.id), 0),
+            2)                                                       AS percentile_rank
+        FROM forecast_vals fv
+        JOIN discharge_observations h
+            ON h.station_id = fv.station_id
+           AND h.type = 'daily_mean'
+        GROUP BY fv.station_id, fv.target_date, fv.discharge
+        HAVING COUNT(h.id) >= %s
+        ORDER BY fv.station_id, fv.target_date
+    """
+
+    flat_params.append(MIN_HISTORICAL_RECORDS)
+
+    # Build lookup: (station_id, target_date) -> forecast_run_date
+    run_date_lookup = {
+        (r['station_id'], r['target_date']): r['forecast_run_date']
+        for r in forecast_rows
+    }
+
+    with connection.cursor() as cursor:
+        cursor.execute(sql, flat_params)
+        columns = [col[0] for col in cursor.description]
+        rows = cursor.fetchall()
+
+    results = []
+    for row in rows:
+        d = dict(zip(columns, row))
+        station_id  = d['station_id']
+        target_date = d['target_date']
+        rank = float(d['percentile_rank'])
+        results.append({
+            'station_id':              station_id,
+            'target_date':             target_date,
+            'forecast_discharge':      float(d['discharge']),
+            'source':                  source,
+            'forecast_run_date':       run_date_lookup[(station_id, target_date)],
+            'historical_record_count': int(d['historical_record_count']),
+            'percentile_rank':         rank,
+            'band':                    classify_band(rank),
+        })
+
+    logger.info(
+        "compute_forecast_percentiles(%s, max_days=%d): %d rows", source, max_days, len(results)
+    )
+    return results
