@@ -125,11 +125,14 @@ class ComputeForecastPercentilesTest(TestCase):
         ForecastRun.objects.filter(station=self.station).update(
             data=[
                 {'date': (today + timedelta(days=1)).isoformat() + 'T00:00:00Z', 'value': 50.0},
+                {'date': (today + timedelta(days=3)).isoformat() + 'T00:00:00Z', 'value': 50.0},
                 {'date': (today + timedelta(days=9)).isoformat() + 'T00:00:00Z', 'value': 50.0},
             ]
         )
         results = compute_forecast_percentiles(source='NWRFC', max_days=3)
         dates = {r['target_date'] for r in results}
+        self.assertIn(today + timedelta(days=1), dates)
+        self.assertIn(today + timedelta(days=3), dates)   # boundary — must be included
         self.assertNotIn(today + timedelta(days=9), dates)
 
     def test_station_with_no_nwrfc_run_skipped(self):
@@ -202,3 +205,7 @@ class ComputeForecastPercentilesTest(TestCase):
         by_date = {r['target_date']: r for r in results}
         # Should use the newer run's value (50.0), not the older (10.0)
         self.assertAlmostEqual(by_date[self.tomorrow]['forecast_discharge'], 50.0, places=1)
+
+    def test_invalid_source_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            compute_forecast_percentiles(source='BOGUS')

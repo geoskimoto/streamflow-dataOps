@@ -253,8 +253,8 @@ def compute_forecast_percentiles(
     Args:
         source: ForecastPercentile.source label (e.g. 'NWRFC'). Determines which
                 ForecastRun.source to query via _FORECAST_RUN_SOURCE_MAP.
-        max_days: Number of calendar days ahead to include (today is day 0,
-                  so max_days=8 covers today+1 through today+8).
+        max_days: Number of calendar days ahead to include. today+1 through
+                  today+max_days are included (today itself is excluded).
 
     Returns:
         List of dicts with keys:
@@ -270,7 +270,11 @@ def compute_forecast_percentiles(
     today = date.today()
     cutoff = today + timedelta(days=max_days)
 
-    # Latest ForecastRun per station (DISTINCT ON station_id ORDER BY run_date DESC)
+    # Latest ForecastRun per station (DISTINCT ON station_id ORDER BY run_date DESC).
+    # When multiple forecast_types share the same run_date (e.g., short + medium from
+    # the parquet importer), PostgreSQL picks one non-deterministically. This is
+    # acceptable for the current 8-day window since both types cover it, but if
+    # max_days is extended beyond the short-range horizon, revisit to union all types.
     latest_runs = (
         ForecastRun.objects
         .filter(source=run_source)
@@ -285,13 +289,18 @@ def compute_forecast_percentiles(
         for point in (run['data'] or []):
             try:
                 pt_date = date.fromisoformat(str(point['date'])[:10])
+                discharge = float(point['value'])
             except (KeyError, ValueError, TypeError):
+                logger.warning(
+                    "Skipping malformed forecast point for station_id=%s: %r",
+                    run['station_id'], point,
+                )
                 continue
-            if today < pt_date < cutoff:
+            if today < pt_date <= cutoff:
                 forecast_rows.append({
                     'station_id':        run['station_id'],
                     'target_date':       pt_date,
-                    'discharge':         float(point['value']),
+                    'discharge':         discharge,
                     'forecast_run_date': run['run_date'],
                 })
 
