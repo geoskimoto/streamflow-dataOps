@@ -45,3 +45,12 @@ data/rasters/**/*.png
 data/rasters/**/*.hdf
 data/rasters/**/*.h5
 data/rasters/**/temp/
+
+# Diagnostic and one-off scripts (not project source)
+diag.py
+diag2.py
+verify_fix.py
+update_periodic_task.py
+
+# Binary data exports
+*.parquet
