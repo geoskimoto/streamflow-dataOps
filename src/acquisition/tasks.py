@@ -11,7 +11,7 @@ if 'DJANGO_SETTINGS_MODULE' not in os.environ:
 
 from celery import Task, shared_task
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 from config.celery import app
 from django.db import transaction
@@ -466,6 +466,9 @@ def _compute_next_run(from_time, schedule_type, schedule_value):
         return from_time + timedelta(days=1)
 
 
+RUNNING_LOG_STALE_AFTER = timedelta(minutes=30)
+
+
 @shared_task
 def scheduled_streamflow_pulls():
     """Dispatcher that checks enabled PullConfigurations and kicks off due pulls.
@@ -474,17 +477,35 @@ def scheduled_streamflow_pulls():
     next_run_at is in the past (or NULL), it dispatches
     execute_pull_configuration and atomically sets the next next_run_at.
     Configs that already have a running DataPullLog are skipped to prevent
-    double-dispatch.
+    double-dispatch — but any "running" log older than
+    RUNNING_LOG_STALE_AFTER is reaped (marked failed) first so a crashed
+    worker can't permanently jam this config.
     """
     now = datetime.now(timezone.utc)
     configs = PullConfiguration.objects.filter(is_enabled=True)
+
+    stale_cutoff = now - RUNNING_LOG_STALE_AFTER
+    reaped = DataPullLog.objects.filter(
+        status='running',
+        start_time__lt=stale_cutoff,
+    ).update(
+        status='failed',
+        end_time=now,
+        error_message='Reaped by dispatcher: log stuck in "running" past staleness window',
+    )
+    if reaped:
+        logger.warning("Reaped %d stale 'running' DataPullLog row(s)", reaped)
 
     dispatched = 0
     skipped = 0
 
     for config in configs:
-        # Skip if there is already a running pull for this config
-        if DataPullLog.objects.filter(configuration=config, status='running').exists():
+        # Skip if there is already a fresh running pull for this config
+        if DataPullLog.objects.filter(
+            configuration=config,
+            status='running',
+            start_time__gte=stale_cutoff,
+        ).exists():
             logger.debug("Skipping config %s (%s): already running", config.id, config.name)
             skipped += 1
             continue
