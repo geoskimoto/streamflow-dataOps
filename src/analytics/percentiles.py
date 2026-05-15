@@ -283,9 +283,45 @@ def compute_forecast_percentiles(
         .values('station_id', 'run_date', 'data')
     )
 
+    # Load NOAA_RFC → USGS station PK mapping via station_mappings table
+    from apps.streamflow.models import StationMapping, Station as _Station
+
+    _sm_rows = StationMapping.objects.filter(
+        source_agency='NOAA_RFC', target_agency='USGS'
+    ).values('source_id', 'target_id')
+
+    _usgs_pk = {
+        s['station_number']: s['id']
+        for s in _Station.objects.filter(agency='USGS').values('id', 'station_number')
+    }
+    _noaa_pk = {
+        s['station_number']: s['id']
+        for s in _Station.objects.filter(agency='NOAA_RFC').values('id', 'station_number')
+    }
+
+    # {noaa_station_id (pk): usgs_station_id (pk)}
+    _noaa_to_usgs: dict[int, int] = {}
+    for sm in _sm_rows:
+        noaa_pk = _noaa_pk.get(sm['source_id'])
+        usgs_pk = _usgs_pk.get(sm['target_id'])
+        if noaa_pk and usgs_pk:
+            _noaa_to_usgs[noaa_pk] = usgs_pk
+
+    logger.info(
+        "compute_forecast_percentiles: loaded %d NOAA_RFC→USGS station mappings",
+        len(_noaa_to_usgs),
+    )
+
     # Build flat list of forecast points within (today, cutoff)
     forecast_rows: list[dict] = []
     for run in latest_runs:
+        usgs_station_id = _noaa_to_usgs.get(run['station_id'])
+        if usgs_station_id is None:
+            logger.debug(
+                "compute_forecast_percentiles: no USGS mapping for NOAA_RFC station_id=%s, skipping",
+                run['station_id'],
+            )
+            continue
         for point in (run['data'] or []):
             try:
                 pt_date = date.fromisoformat(str(point['date'])[:10])
@@ -298,7 +334,7 @@ def compute_forecast_percentiles(
                 continue
             if today < pt_date <= cutoff:
                 forecast_rows.append({
-                    'station_id':        run['station_id'],
+                    'station_id':        usgs_station_id,   # USGS PK — used for discharge join and ForecastPercentile FK
                     'target_date':       pt_date,
                     'discharge':         discharge,
                     'forecast_run_date': run['run_date'],
