@@ -340,6 +340,16 @@ def compute_forecast_percentiles(
                     'forecast_run_date': run['run_date'],
                 })
 
+    # Deduplicate by (station_id, target_date) — multiple NOAA stations may map to the same
+    # USGS station, producing duplicate keys that violate the unique constraint on upsert.
+    # Keep the row with the latest forecast_run_date.
+    _seen: dict[tuple, dict] = {}
+    for row in forecast_rows:
+        key = (row['station_id'], row['target_date'])
+        if key not in _seen or row['forecast_run_date'] > _seen[key]['forecast_run_date']:
+            _seen[key] = row
+    forecast_rows = list(_seen.values())
+
     if not forecast_rows:
         logger.info("compute_forecast_percentiles(%s): no forecast data found", source)
         return []
