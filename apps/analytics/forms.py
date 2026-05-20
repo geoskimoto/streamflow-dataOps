@@ -15,26 +15,23 @@ class StatisticsConfigurationForm(forms.ModelForm):
             'is_enabled',
         ]
         widgets = {
-            'description': forms.Textarea(attrs={'rows': 3}),
-            'schedule_value': forms.TextInput(attrs={'placeholder': '0 0 1 10 *'}),
+            'name': forms.TextInput(attrs={'class': 'form-control'}),
+            'description': forms.Textarea(attrs={'rows': 3, 'class': 'form-control'}),
+            'computation_type': forms.Select(attrs={'class': 'form-select'}),
+            'agency_filter': forms.Select(attrs={'class': 'form-select'}),
+            'schedule_type': forms.Select(attrs={'class': 'form-select'}),
+            'annual_run_month': forms.NumberInput(attrs={'class': 'form-control'}),
+            'annual_run_day': forms.NumberInput(attrs={'class': 'form-control'}),
+            'schedule_value': forms.TextInput(attrs={
+                'placeholder': '0 0 1 10 *',
+                'class': 'form-control',
+            }),
         }
         help_texts = {
             'schedule_value': 'Required for Custom schedule. 5-field cron (min hr dom mon dow).',
             'annual_run_month': '1–12. Default 10 (October = water year start).',
             'annual_run_day': '1–31. Default 1.',
         }
-
-    def clean_annual_run_month(self):
-        value = self.cleaned_data.get('annual_run_month')
-        if value is not None and not (1 <= value <= 12):
-            raise forms.ValidationError('Month must be between 1 and 12.')
-        return value
-
-    def clean_annual_run_day(self):
-        value = self.cleaned_data.get('annual_run_day')
-        if value is not None and not (1 <= value <= 31):
-            raise forms.ValidationError('Day must be between 1 and 31.')
-        return value
 
     def clean(self):
         cleaned_data = super().clean()
