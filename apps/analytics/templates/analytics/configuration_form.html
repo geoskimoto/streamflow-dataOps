@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}{% if form.instance.pk %}Edit{% else %}New{% endif %} Analytics Configuration{% endblock %}
+
+{% block content %}
+<div class="container mt-4" style="max-width: 760px;">
+    <h2><i class="fas fa-chart-bar"></i> {% if form.instance.pk %}Edit{% else %}New{% endif %} Analytics Configuration</h2>
+
+    <form method="post" class="mt-4">
+        {% csrf_token %}
+        {% if form.non_field_errors %}
+        <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+        {% endif %}
+
+        <div class="card mb-3">
+            <div class="card-header bg-light"><strong>Basic Information</strong></div>
+            <div class="card-body">
+                <div class="mb-3">
+                    {{ form.name.label_tag }}
+                    {{ form.name }}
+                    {% if form.name.errors %}<div class="invalid-feedback d-block">{{ form.name.errors }}</div>{% endif %}
+                </div>
+                <div class="mb-3">
+                    {{ form.description.label_tag }}
+                    {{ form.description }}
+                    {% if form.description.errors %}<div class="invalid-feedback d-block">{{ form.description.errors }}</div>{% endif %}
+                </div>
+                <div class="mb-3">
+                    {{ form.computation_type.label_tag }}
+                    {{ form.computation_type }}
+                    {% if form.computation_type.errors %}<div class="invalid-feedback d-block">{{ form.computation_type.errors }}</div>{% endif %}
+                </div>
+                <div class="mb-3">
+                    {{ form.agency_filter.label_tag }}
+                    {{ form.agency_filter }}
+                    {% if form.agency_filter.errors %}<div class="invalid-feedback d-block">{{ form.agency_filter.errors }}</div>{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header bg-light"><strong>Schedule</strong></div>
+            <div class="card-body">
+                <div class="mb-3">
+                    {{ form.schedule_type.label_tag }}
+                    {{ form.schedule_type }}
+                </div>
+                <div id="annual-fields">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {{ form.annual_run_month.label_tag }}
+                            {{ form.annual_run_month }}
+                            {% if form.annual_run_month.help_text %}<div class="form-text">{{ form.annual_run_month.help_text }}</div>{% endif %}
+                            {% if form.annual_run_month.errors %}<div class="invalid-feedback d-block">{{ form.annual_run_month.errors }}</div>{% endif %}
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            {{ form.annual_run_day.label_tag }}
+                            {{ form.annual_run_day }}
+                            {% if form.annual_run_day.help_text %}<div class="form-text">{{ form.annual_run_day.help_text }}</div>{% endif %}
+                            {% if form.annual_run_day.errors %}<div class="invalid-feedback d-block">{{ form.annual_run_day.errors }}</div>{% endif %}
+                        </div>
+                    </div>
+                </div>
+                <div id="custom-field" style="display:none;">
+                    <div class="mb-3">
+                        {{ form.schedule_value.label_tag }}
+                        {{ form.schedule_value }}
+                        {% if form.schedule_value.help_text %}<div class="form-text">{{ form.schedule_value.help_text }}</div>{% endif %}
+                        {% if form.schedule_value.errors %}<div class="invalid-feedback d-block">{{ form.schedule_value.errors }}</div>{% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header bg-light"><strong>Status</strong></div>
+            <div class="card-body">
+                <div class="form-check">
+                    {{ form.is_enabled }}
+                    <label class="form-check-label" for="{{ form.is_enabled.id_for_label }}">Enable this configuration</label>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Configuration</button>
+            <a href="{% url 'analytics:configuration_list' %}" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const scheduleType = document.querySelector('[name=schedule_type]');
+    const annualFields = document.getElementById('annual-fields');
+    const customField = document.getElementById('custom-field');
+
+    function updateVisibility() {
+        const val = scheduleType.value;
+        annualFields.style.display = val === 'annual' ? '' : 'none';
+        customField.style.display = val === 'custom' ? '' : 'none';
+    }
+
+    scheduleType.addEventListener('change', updateVisibility);
+    updateVisibility();
+});
+</script>
+{% endblock %}

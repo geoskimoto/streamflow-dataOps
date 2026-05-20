@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Delete {{ config.name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-5" style="max-width: 540px;">
+    <div class="card border-danger">
+        <div class="card-header bg-danger text-white">
+            <h5 class="mb-0"><i class="fas fa-exclamation-triangle"></i> Confirm Deletion</h5>
+        </div>
+        <div class="card-body">
+            <p>Delete configuration <strong>{{ config.name }}</strong> and all its computation logs?</p>
+            <p class="text-danger"><small>This cannot be undone.</small></p>
+            <form method="post">
+                {% csrf_token %}
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-danger"><i class="fas fa-trash"></i> Delete</button>
+                    <a href="{% url 'analytics:configuration_detail' config.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
