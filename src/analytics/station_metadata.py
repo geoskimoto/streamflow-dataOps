@@ -54,10 +54,9 @@ def compute_station_metadata(station_ids=None):
             obs_count,
             CASE
                 WHEN rec_end > rec_start THEN
-                    ROUND(
-                        obs_count::numeric /
-                        (rec_end - rec_start + 1) * 100,
-                        2
+                    LEAST(
+                        ROUND(obs_count::numeric / (rec_end - rec_start + 1) * 100, 2),
+                        100.0
                     )
                 ELSE 100.0
             END                                            AS completeness_pct,
