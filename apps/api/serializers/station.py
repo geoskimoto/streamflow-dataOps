@@ -6,7 +6,16 @@ from apps.streamflow.models import Station, MasterStation
 
 class StationSerializer(serializers.ModelSerializer):
     """Serializer for Station model."""
-    
+
+    last_observation_date = serializers.SerializerMethodField()
+
+    def get_last_observation_date(self, obj):
+        try:
+            d = obj.metadata.last_observation_date
+            return d.isoformat() if d is not None else None
+        except Exception:
+            return None
+
     class Meta:
         model = Station
         fields = [
@@ -26,13 +35,23 @@ class StationSerializer(serializers.ModelSerializer):
             'record_end_date',
             'is_active',
             'last_updated',
+            'last_observation_date',
         ]
         read_only_fields = ['id', 'last_updated']
 
 
 class StationListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for station lists."""
-    
+
+    last_observation_date = serializers.SerializerMethodField()
+
+    def get_last_observation_date(self, obj):
+        try:
+            d = obj.metadata.last_observation_date
+            return d.isoformat() if d is not None else None
+        except Exception:
+            return None
+
     class Meta:
         model = Station
         fields = [
@@ -43,13 +62,14 @@ class StationListSerializer(serializers.ModelSerializer):
             'latitude',
             'longitude',
             'is_active',
+            'last_observation_date',
         ]
         read_only_fields = ['id']
 
 
 class StationCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating stations."""
-    
+
     class Meta:
         model = Station
         fields = [
@@ -68,7 +88,7 @@ class StationCreateSerializer(serializers.ModelSerializer):
             'record_end_date',
             'is_active',
         ]
-    
+
     def validate_station_number(self, value):
         """Validate station number uniqueness."""
         if Station.objects.filter(station_number=value).exists():
@@ -76,7 +96,7 @@ class StationCreateSerializer(serializers.ModelSerializer):
                 f"Station {value} already exists."
             )
         return value
-    
+
     def validate_latitude(self, value):
         """Validate latitude range."""
         if value and (value < -90 or value > 90):
@@ -84,7 +104,7 @@ class StationCreateSerializer(serializers.ModelSerializer):
                 "Latitude must be between -90 and 90."
             )
         return value
-    
+
     def validate_longitude(self, value):
         """Validate longitude range."""
         if value and (value < -180 or value > 180):

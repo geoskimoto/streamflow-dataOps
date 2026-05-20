@@ -19,7 +19,7 @@ from apps.api.serializers.station import MasterStationSerializer
 class StationViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing stations.
-    
+
     list: Get all stations with filtering and search
     retrieve: Get a single station by ID
     create: Create a new station
@@ -27,7 +27,7 @@ class StationViewSet(viewsets.ModelViewSet):
     partial_update: Partially update a station
     destroy: Delete a station
     """
-    
+
     queryset = Station.objects.all()
     serializer_class = StationSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -37,7 +37,7 @@ class StationViewSet(viewsets.ModelViewSet):
     ordering = ['station_number']
     lookup_field = 'station_number'
     lookup_url_kwarg = 'station_number'
-    
+
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
         if self.action == 'list':
@@ -45,16 +45,16 @@ class StationViewSet(viewsets.ModelViewSet):
         elif self.action == 'create':
             return StationCreateSerializer
         return StationSerializer
-    
+
     @action(detail=True, methods=['get'])
     def statistics(self, request, station_number=None):
         """
         Get statistics for a station.
-        
+
         Returns observation counts, data availability, and date ranges.
         """
         station = self.get_object()
-        
+
         # Get discharge observation stats
         discharge_stats = DischargeObservation.objects.filter(
             station=station
@@ -64,7 +64,7 @@ class StationViewSet(viewsets.ModelViewSet):
             daily_count=Count('id', filter=Q(type='daily_mean')),
             latest_timestamp=Max('observed_at')
         )
-        
+
         data = {
             'station_number': station.station_number,
             'name': station.name,
@@ -81,19 +81,19 @@ class StationViewSet(viewsets.ModelViewSet):
                 'years': float(station.years_of_record) if station.years_of_record else None,
             }
         }
-        
+
         return Response(data)
-    
+
     @action(detail=False, methods=['get'])
     def by_region(self, request):
         """
         Get stations grouped by region (state or HUC).
-        
+
         Query params:
         - group_by: 'state' or 'huc'
         """
         group_by = request.query_params.get('group_by', 'state')
-        
+
         if group_by == 'state':
             grouped = Station.objects.values('state').annotate(
                 count=Count('id')
@@ -109,6 +109,33 @@ class StationViewSet(viewsets.ModelViewSet):
             )
 
         return Response(grouped)
+
+    @action(detail=False, methods=['get'], url_path='last-observation')
+    def last_observation(self, request):
+        """Return all stations with their last observation date in one response.
+
+        Intended for downstream apps that need to determine active gages
+        without querying each station individually.
+        """
+        stations = (
+            Station.objects.select_related('metadata')
+            .order_by('station_number')
+        )
+        data = [
+            {
+                'station_number': s.station_number,
+                'name': s.name,
+                'agency': s.agency,
+                'is_active': s.is_active,
+                'last_observation_date': (
+                    s.metadata.last_observation_date.isoformat()
+                    if hasattr(s, 'metadata') and s.metadata and s.metadata.last_observation_date
+                    else None
+                ),
+            }
+            for s in stations
+        ]
+        return Response(data)
 
 
 class MasterStationViewSet(viewsets.ReadOnlyModelViewSet):
