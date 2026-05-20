@@ -43,7 +43,7 @@ def _extract_threshold(stageflow, category, field):
     if value is None or value == '':
         return None
     try:
-        return float(value) if value else None
+        return float(value)
     except (TypeError, ValueError):
         return None
 
