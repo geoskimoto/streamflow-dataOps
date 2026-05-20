@@ -151,3 +151,72 @@ class FloodThresholdFetcherTest(TestCase):
 
         from apps.analytics.models import FloodThreshold
         self.assertEqual(FloodThreshold.objects.filter(station=self.noaa_station).count(), 1)
+
+
+class StatisticsDispatcherTest(TestCase):
+    def setUp(self):
+        self.config = StatisticsConfiguration.objects.create(
+            name='Test Dispatch',
+            computation_type='station_metadata',
+            agency_filter='ALL',
+            schedule_type='monthly',
+            is_enabled=True,
+            next_run_at=None,  # overdue — should dispatch
+        )
+
+    @patch('src.analytics.tasks.run_station_metadata_task')
+    def test_dispatcher_fires_overdue_config(self, mock_task):
+        from src.analytics.tasks import dispatch_statistics_computations
+        result = dispatch_statistics_computations()
+        mock_task.delay.assert_called_once_with(self.config.id)
+        self.assertEqual(result['dispatched'], 1)
+
+    @patch('src.analytics.tasks.run_station_metadata_task')
+    def test_dispatcher_skips_future_config(self, mock_task):
+        from datetime import timedelta
+        from django.utils import timezone
+        self.config.next_run_at = timezone.now() + timedelta(days=10)
+        self.config.save()
+        from src.analytics.tasks import dispatch_statistics_computations
+        result = dispatch_statistics_computations()
+        mock_task.delay.assert_not_called()
+        self.assertEqual(result['dispatched'], 0)
+
+    @patch('src.analytics.tasks.run_station_metadata_task')
+    def test_dispatcher_skips_disabled_config(self, mock_task):
+        self.config.is_enabled = False
+        self.config.save()
+        from src.analytics.tasks import dispatch_statistics_computations
+        result = dispatch_statistics_computations()
+        mock_task.delay.assert_not_called()
+
+    @patch('src.analytics.tasks.run_station_metadata_task')
+    def test_dispatcher_skips_already_running(self, mock_task):
+        from django.utils import timezone
+        StatisticsComputationLog.objects.create(
+            configuration=self.config,
+            status='running',
+            started_at=timezone.now(),
+        )
+        from src.analytics.tasks import dispatch_statistics_computations
+        result = dispatch_statistics_computations()
+        mock_task.delay.assert_not_called()
+
+    def test_compute_stats_next_run_monthly(self):
+        from src.analytics.tasks import _compute_stats_next_run
+        from django.utils import timezone as tz
+        now = tz.now()
+        next_run = _compute_stats_next_run(now, self.config)
+        self.assertGreater(next_run, now.replace(tzinfo=None))
+
+    def test_compute_stats_next_run_annual(self):
+        from src.analytics.tasks import _compute_stats_next_run
+        from django.utils import timezone as tz
+        self.config.schedule_type = 'annual'
+        self.config.annual_run_month = 10
+        self.config.annual_run_day = 1
+        now = tz.now()
+        next_run = _compute_stats_next_run(now, self.config)
+        self.assertGreater(next_run, now.replace(tzinfo=None))
+        self.assertEqual(next_run.month, 10)
+        self.assertEqual(next_run.day, 1)

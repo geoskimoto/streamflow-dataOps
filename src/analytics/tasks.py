@@ -229,3 +229,162 @@ def compute_forecast_percentile_bands(self):
 
         logger.error("'%s' failed: %s", computation.name, exc)
         raise
+
+
+# ---------------------------------------------------------------------------
+# Statistics Configuration dispatcher and execution tasks
+# ---------------------------------------------------------------------------
+
+def _compute_stats_next_run(from_time, config):
+    """Compute next run datetime for a StatisticsConfiguration using croniter."""
+    from croniter import croniter
+    from datetime import datetime
+
+    schedule_type = config.schedule_type
+
+    if schedule_type == 'daily':
+        cron_expr = '0 0 * * *'
+    elif schedule_type == 'weekly':
+        cron_expr = '0 0 * * 0'
+    elif schedule_type == 'monthly':
+        cron_expr = '0 0 1 * *'
+    elif schedule_type == 'annual':
+        day = max(1, min(31, config.annual_run_day))
+        month = max(1, min(12, config.annual_run_month))
+        cron_expr = f'0 0 {day} {month} *'
+    elif schedule_type == 'custom':
+        if not config.schedule_value:
+            raise ValueError(f'StatisticsConfiguration {config.id} has custom schedule but no schedule_value')
+        cron_expr = config.schedule_value
+    else:
+        raise ValueError(f'Unknown schedule_type: {schedule_type!r}')
+
+    # Strip tzinfo so croniter always returns a naive datetime for consistent comparison
+    naive_from = from_time.replace(tzinfo=None) if hasattr(from_time, "tzinfo") and from_time.tzinfo is not None else from_time
+    it = croniter(cron_expr, naive_from)
+    return it.get_next(datetime)
+
+
+@shared_task
+def dispatch_statistics_computations():
+    """Hourly dispatcher: fires StatisticsConfiguration tasks that are due."""
+    from apps.analytics.models import StatisticsConfiguration, StatisticsComputationLog
+    from django.utils import timezone
+
+    now = timezone.now()
+    configs = StatisticsConfiguration.objects.filter(is_enabled=True)
+    dispatched = skipped = 0
+
+    for config in configs:
+        # Skip if not yet due
+        if config.next_run_at is not None and config.next_run_at > now:
+            skipped += 1
+            continue
+
+        # Skip if a run is already in progress
+        if config.logs.filter(status='running').exists():
+            logger.debug('Skipping config %s: already running', config.id)
+            skipped += 1
+            continue
+
+        if config.computation_type == 'station_metadata':
+            run_station_metadata_task.delay(config.id)
+        elif config.computation_type == 'flood_thresholds':
+            run_flood_thresholds_task.delay(config.id)
+        else:
+            logger.warning('Unknown computation_type %r for config %s', config.computation_type, config.id)
+            skipped += 1
+            continue
+
+        dispatched += 1
+        next_run = _compute_stats_next_run(now, config)
+        StatisticsConfiguration.objects.filter(id=config.id).update(next_run_at=next_run)
+        logger.info('Dispatched statistics config %s (%s), next_run_at=%s', config.id, config.name, next_run)
+
+    logger.info('dispatch_statistics_computations: dispatched=%d, skipped=%d', dispatched, skipped)
+    return {'dispatched': dispatched, 'skipped': skipped}
+
+
+@shared_task
+def run_station_metadata_task(config_id):
+    """Compute and store StationMetadata for all stations in a StatisticsConfiguration."""
+    from apps.analytics.models import StatisticsConfiguration, StatisticsComputationLog
+    from src.analytics.station_metadata import compute_station_metadata
+    from django.utils import timezone
+    import time
+
+    config = StatisticsConfiguration.objects.get(id=config_id)
+    station_ids = list(config.get_station_queryset().values_list('id', flat=True))
+
+    log = StatisticsComputationLog.objects.create(
+        configuration=config,
+        status='running',
+        started_at=timezone.now(),
+        celery_task_id=run_station_metadata_task.request.id or '',
+    )
+
+    start_time = time.monotonic()
+    try:
+        count = compute_station_metadata(station_ids=station_ids)
+        duration = time.monotonic() - start_time
+        log.status = 'success'
+        log.stations_processed = len(station_ids)
+        log.records_computed = count
+        log.duration_seconds = round(duration, 2)
+        log.completed_at = timezone.now()
+        log.save()
+        StatisticsConfiguration.objects.filter(id=config_id).update(last_run_at=timezone.now())
+        logger.info('run_station_metadata_task: config=%s upserted=%d in %.1fs', config_id, count, duration)
+        return {'status': 'success', 'upserted': count}
+    except Exception as exc:
+        duration = time.monotonic() - start_time
+        log.status = 'failed'
+        log.error_message = str(exc)
+        log.duration_seconds = round(duration, 2)
+        log.completed_at = timezone.now()
+        log.save()
+        logger.error('run_station_metadata_task failed for config %s: %s', config_id, exc)
+        raise
+
+
+@shared_task
+def run_flood_thresholds_task(config_id):
+    """Fetch NOAA NWPS flood thresholds for all stations in a StatisticsConfiguration."""
+    from apps.analytics.models import StatisticsConfiguration, StatisticsComputationLog
+    from src.analytics.flood_thresholds import fetch_flood_thresholds_for_stations
+    from django.utils import timezone
+    import time
+
+    config = StatisticsConfiguration.objects.get(id=config_id)
+    station_ids = list(config.get_station_queryset().values_list('id', flat=True))
+
+    log = StatisticsComputationLog.objects.create(
+        configuration=config,
+        status='running',
+        started_at=timezone.now(),
+        celery_task_id=run_flood_thresholds_task.request.id or '',
+    )
+
+    start_time = time.monotonic()
+    try:
+        result = fetch_flood_thresholds_for_stations(station_ids)
+        duration = time.monotonic() - start_time
+        log.status = 'success' if result['errors'] == 0 else 'partial'
+        log.stations_processed = len(station_ids)
+        log.records_computed = result['updated']
+        log.duration_seconds = round(duration, 2)
+        log.completed_at = timezone.now()
+        if result['errors']:
+            log.error_message = f"{result['errors']} API errors; {result['skipped']} skipped (no HADS LID)"
+        log.save()
+        StatisticsConfiguration.objects.filter(id=config_id).update(last_run_at=timezone.now())
+        return {'status': log.status, **result}
+    except Exception as exc:
+        duration = time.monotonic() - start_time
+        log.status = 'failed'
+        log.error_message = str(exc)
+        log.duration_seconds = round(duration, 2)
+        log.completed_at = timezone.now()
+        log.save()
+        logger.error('run_flood_thresholds_task failed for config %s: %s', config_id, exc)
+        raise

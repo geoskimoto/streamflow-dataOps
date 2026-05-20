@@ -128,6 +128,13 @@ app.conf.beat_schedule = {
         'task': 'src.analytics.tasks.compute_forecast_percentile_bands',
         'schedule': crontab(minute=0, hour='0,6,12,18'),
     },
+
+    # Analytics: Dispatch statistics computation configurations that are due.
+    # Checks every hour; each StatisticsConfiguration controls its own schedule.
+    'dispatch-statistics-computations': {
+        'task': 'src.analytics.tasks.dispatch_statistics_computations',
+        'schedule': crontab(minute=0),  # every hour on the hour
+    },
 }
 
 
