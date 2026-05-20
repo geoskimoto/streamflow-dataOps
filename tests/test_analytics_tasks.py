@@ -79,3 +79,75 @@ class StationMetadataComputationTest(TestCase):
         meta = StationMetadata.objects.get(station=self.station)
         self.assertGreater(float(meta.record_completeness_pct), 0)
         self.assertLessEqual(float(meta.record_completeness_pct), 100)
+
+
+class FloodThresholdFetcherTest(TestCase):
+    def setUp(self):
+        self.noaa_station = make_station('PNCO3', 'NOAA_RFC')
+        self.usgs_station = make_station('14211010', 'USGS')
+
+    @patch('src.analytics.flood_thresholds.requests.get')
+    def test_fetch_noaa_rfc_station(self, mock_get):
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            'gaugeId': 'PNCO3',
+            'flood': {
+                'stageflow': {
+                    'action': {'stage': 12.5, 'flow': 8000},
+                    'flood': {'stage': 15.0, 'flow': 12000},
+                    'moderate': {'stage': 18.0, 'flow': 20000},
+                    'major': {'stage': 22.0, 'flow': 35000},
+                }
+            }
+        }
+        mock_get.return_value = mock_response
+
+        from src.analytics.flood_thresholds import fetch_flood_thresholds_for_stations
+        result = fetch_flood_thresholds_for_stations([self.noaa_station.id])
+
+        self.assertEqual(result['updated'], 1)
+        self.assertEqual(result['errors'], 0)
+
+        from apps.analytics.models import FloodThreshold
+        ft = FloodThreshold.objects.get(station=self.noaa_station)
+        self.assertEqual(ft.noaa_lid, 'PNCO3')
+        self.assertEqual(float(ft.action_stage_ft), 12.5)
+        self.assertEqual(float(ft.minor_stage_ft), 15.0)
+        self.assertEqual(float(ft.moderate_stage_ft), 18.0)
+        self.assertEqual(float(ft.major_stage_ft), 22.0)
+        self.assertIsNone(ft.record_stage_ft)
+
+    @patch('src.analytics.flood_thresholds.requests.get')
+    def test_api_error_counted_not_raised(self, mock_get):
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = Exception('timeout')
+        mock_get.return_value = mock_response
+
+        from src.analytics.flood_thresholds import fetch_flood_thresholds_for_stations
+        result = fetch_flood_thresholds_for_stations([self.noaa_station.id])
+
+        self.assertEqual(result['errors'], 1)
+        self.assertEqual(result['updated'], 0)
+
+    def test_station_without_hads_lid_skipped(self):
+        from src.analytics.flood_thresholds import fetch_flood_thresholds_for_stations
+        result = fetch_flood_thresholds_for_stations([self.usgs_station.id])
+        self.assertEqual(result['skipped'], 1)
+        self.assertEqual(result['updated'], 0)
+
+    @patch('src.analytics.flood_thresholds.requests.get')
+    def test_upsert_on_rerun(self, mock_get):
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            'flood': {'stageflow': {'action': {'stage': 10.0, 'flow': None}}}
+        }
+        mock_get.return_value = mock_response
+
+        from src.analytics.flood_thresholds import fetch_flood_thresholds_for_stations
+        fetch_flood_thresholds_for_stations([self.noaa_station.id])
+        fetch_flood_thresholds_for_stations([self.noaa_station.id])
+
+        from apps.analytics.models import FloodThreshold
+        self.assertEqual(FloodThreshold.objects.filter(station=self.noaa_station).count(), 1)
