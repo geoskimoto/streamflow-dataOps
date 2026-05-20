@@ -4,17 +4,20 @@ from rest_framework import serializers
 from apps.streamflow.models import Station, MasterStation
 
 
-class StationSerializer(serializers.ModelSerializer):
+class LastObservationDateMixin:
+    """Mixin providing safe last_observation_date access via related metadata."""
+
+    def get_last_observation_date(self, obj):
+        metadata = getattr(obj, 'metadata', None)
+        if metadata is None or metadata.last_observation_date is None:
+            return None
+        return metadata.last_observation_date.isoformat()
+
+
+class StationSerializer(LastObservationDateMixin, serializers.ModelSerializer):
     """Serializer for Station model."""
 
     last_observation_date = serializers.SerializerMethodField()
-
-    def get_last_observation_date(self, obj):
-        try:
-            d = obj.metadata.last_observation_date
-            return d.isoformat() if d is not None else None
-        except Exception:
-            return None
 
     class Meta:
         model = Station
@@ -40,17 +43,10 @@ class StationSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'last_updated']
 
 
-class StationListSerializer(serializers.ModelSerializer):
+class StationListSerializer(LastObservationDateMixin, serializers.ModelSerializer):
     """Lightweight serializer for station lists."""
 
     last_observation_date = serializers.SerializerMethodField()
-
-    def get_last_observation_date(self, obj):
-        try:
-            d = obj.metadata.last_observation_date
-            return d.isoformat() if d is not None else None
-        except Exception:
-            return None
 
     class Meta:
         model = Station

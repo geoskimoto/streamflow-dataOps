@@ -28,7 +28,6 @@ class StationViewSet(viewsets.ModelViewSet):
     destroy: Delete a station
     """
 
-    queryset = Station.objects.all()
     serializer_class = StationSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['agency', 'state', 'is_active', 'huc_code']
@@ -37,6 +36,10 @@ class StationViewSet(viewsets.ModelViewSet):
     ordering = ['station_number']
     lookup_field = 'station_number'
     lookup_url_kwarg = 'station_number'
+
+    def get_queryset(self):
+        """Return stations with metadata pre-fetched to avoid N+1 queries."""
+        return Station.objects.select_related('metadata').all()
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -121,21 +124,8 @@ class StationViewSet(viewsets.ModelViewSet):
             Station.objects.select_related('metadata')
             .order_by('station_number')
         )
-        data = [
-            {
-                'station_number': s.station_number,
-                'name': s.name,
-                'agency': s.agency,
-                'is_active': s.is_active,
-                'last_observation_date': (
-                    s.metadata.last_observation_date.isoformat()
-                    if hasattr(s, 'metadata') and s.metadata and s.metadata.last_observation_date
-                    else None
-                ),
-            }
-            for s in stations
-        ]
-        return Response(data)
+        serializer = StationListSerializer(stations, many=True)
+        return Response(serializer.data)
 
 
 class MasterStationViewSet(viewsets.ReadOnlyModelViewSet):
