@@ -1,5 +1,7 @@
 """Tests for analytics models: StationMetadata, FloodThreshold, StatisticsConfiguration."""
 
+from datetime import timedelta
+
 from django.test import TestCase
 from django.utils import timezone
 
@@ -141,7 +143,7 @@ class StatisticsComputationLogTest(TestCase):
 
     def test_ordered_by_started_at_desc(self):
         t1 = timezone.now()
-        t2 = timezone.now()
+        t2 = t1 + timedelta(seconds=1)
         log1 = StatisticsComputationLog.objects.create(
             configuration=self.config, status='success', started_at=t1,
         )

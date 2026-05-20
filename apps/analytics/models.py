@@ -1,5 +1,6 @@
 """Django models for the analytics application."""
 
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 
@@ -103,6 +104,7 @@ class StationMetadata(models.Model):
 
     # Record extent
     last_observation_date  = models.DateField(null=True, blank=True, db_index=True)
+    # Authoritative computed values — supersede the legacy fields on Station which are unreliably populated.
     record_start_date      = models.DateField(null=True, blank=True)
     record_end_date        = models.DateField(null=True, blank=True)
     years_on_record        = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
@@ -201,9 +203,21 @@ class StatisticsConfiguration(models.Model):
 
     # Schedule
     schedule_type    = models.CharField(max_length=20, choices=SCHEDULE_TYPE_CHOICES, default='annual')
-    annual_run_month = models.IntegerField(default=10)
-    annual_run_day   = models.IntegerField(default=1)
-    schedule_value   = models.CharField(max_length=100, blank=True)
+    annual_run_month = models.IntegerField(
+        default=10,
+        validators=[MinValueValidator(1), MaxValueValidator(12)],
+        help_text='Month for annual runs (1–12). Default: 10 (October, water year start).',
+    )
+    annual_run_day   = models.IntegerField(
+        default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(31)],
+        help_text='Day of month for annual runs (1–31). Default: 1.',
+    )
+    schedule_value   = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Cron expression (5 fields: min hr dom mon dow) — required when schedule_type is 'custom'.",
+    )
 
     is_enabled  = models.BooleanField(default=True)
     last_run_at = models.DateTimeField(null=True, blank=True)
@@ -246,6 +260,7 @@ class StatisticsConfigurationStation(models.Model):
     station = models.ForeignKey(
         'streamflow.Station',
         on_delete=models.CASCADE,
+        related_name='statistics_configuration_stations',
     )
 
     class Meta:
