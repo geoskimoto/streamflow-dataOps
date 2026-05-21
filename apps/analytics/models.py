@@ -176,9 +176,11 @@ class StatisticsConfiguration(models.Model):
     """
 
     COMPUTATION_TYPE_CHOICES = [
-        ('station_metadata',  'Station Metadata & Statistics'),
-        ('flood_thresholds',  'Flood Thresholds (NOAA NWPS)'),
-        ('percentile_backfill', 'Percentile Band Backfill'),
+        ('station_metadata',       'Station Metadata & Statistics'),
+        ('flood_thresholds',       'Flood Thresholds (NOAA NWPS)'),
+        ('daily_flow_percentiles', 'Observed Flow Percentiles (Daily)'),
+        ('forecast_percentiles',   'Forecast Flow Percentiles (NOAA NWRFC)'),
+        ('percentile_backfill',    'Percentile Band Historical Backfill'),
     ]
 
     AGENCY_FILTER_CHOICES = [
