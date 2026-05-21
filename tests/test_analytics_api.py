@@ -8,7 +8,7 @@ from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from rest_framework import status
 
-from apps.analytics.models import StationMetadata
+from apps.analytics.models import StationMetadata, StatisticsConfiguration
 from apps.streamflow.models import Station
 
 
@@ -72,3 +72,39 @@ class LastObservationEndpointTest(TestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsNone(response.data['last_observation_date'])
+
+
+class StatisticsConfigurationAPITest(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user('apitestuser', password='testpass')
+        self.client = APIClient()
+        self.client.force_login(self.user)
+        self.config = StatisticsConfiguration.objects.create(
+            name='API Test Config',
+            computation_type='station_metadata',
+            agency_filter='USGS',
+            schedule_type='monthly',
+            is_enabled=True,
+        )
+
+    def test_configurations_list_returns_200(self):
+        response = self.client.get('/api/v1/analytics/configurations/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_configurations_detail_returns_200(self):
+        response = self.client.get(f'/api/v1/analytics/configurations/{self.config.id}/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_configurations_list_includes_config_fields(self):
+        response = self.client.get('/api/v1/analytics/configurations/')
+        data = response.json()
+        results = data.get('results', data)
+        self.assertGreater(len(results), 0)
+        config = results[0]
+        self.assertIn('name', config)
+        self.assertIn('computation_type', config)
+        self.assertIn('is_enabled', config)
+
+    def test_logs_list_returns_200(self):
+        response = self.client.get('/api/v1/analytics/logs/')
+        self.assertEqual(response.status_code, 200)

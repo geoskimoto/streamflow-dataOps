@@ -15,7 +15,12 @@ logger = logging.getLogger(__name__)
 
 
 class StatisticsConfigurationViewSet(viewsets.ReadOnlyModelViewSet):
-    """Read-only view of analytics statistics configurations."""
+    """
+    Read-only view of analytics statistics configurations.
+
+    Manual trigger is available via the Django analytics web UI (analytics:trigger view).
+    A REST API trigger action can be added here if needed for external automation.
+    """
 
     queryset = StatisticsConfiguration.objects.all()
     serializer_class = StatisticsConfigurationSerializer

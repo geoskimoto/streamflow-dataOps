@@ -695,9 +695,9 @@ class DailyFlowPercentile(models.Model):
 
     One row per (station, date). The percentile rank compares that day's
     discharge against the station's full period of record (all daily_mean
-    observations regardless of year). Populated by the historical backfill
-    command and appended daily by the Celery task
-    src.analytics.tasks.compute_daily_flow_percentiles.
+    observations regardless of year). Population: Historical backfill via
+    `run_percentile_backfill_task` and daily updates via `run_daily_flow_percentiles_task`
+    triggered by StatisticsConfiguration dispatcher.
     """
 
     station = models.ForeignKey(
@@ -743,8 +743,8 @@ class ForecastPercentile(models.Model):
     Precomputed exceedance percentile band for a forecast value at a station on a future date.
 
     One row per (station, target_date, source). Upserted each time the
-    compute_forecast_percentile_bands task runs — always reflects the most
-    recent ForecastRun for that source.
+    `run_forecast_percentiles_task` is triggered by StatisticsConfiguration dispatcher —
+    always reflects the most recent ForecastRun for that source.
     """
 
     station = models.ForeignKey(
