@@ -263,3 +263,61 @@ class ComputePercentileForDateFilterTest(TestCase):
             {r['station_id'] for r in results_none},
             {r['station_id'] for r in results_default},
         )
+
+
+class ComputeForecastPercentilesFilterTest(TestCase):
+    """Tests for the optional station_ids filter on compute_forecast_percentiles."""
+
+    def setUp(self):
+        from apps.streamflow.models import ForecastRun, StationMapping
+        self.noaa_station = make_station('NWRFC001', 'NOAA_RFC')
+        self.usgs_station_a = make_station('14211010', 'USGS')
+        self.usgs_station_b = make_station('14246900', 'USGS')
+
+        # Give USGS stations historical discharge data (>30 records for threshold)
+        start = date(2020, 1, 1)
+        add_daily_obs(self.usgs_station_a, start, 60)
+        add_daily_obs(self.usgs_station_b, start, 60)
+
+        # Create NOAA_RFC → USGS station mapping
+        StationMapping.objects.create(
+            source_agency='NOAA_RFC',
+            source_id=self.noaa_station.station_number,
+            target_agency='USGS',
+            target_id=self.usgs_station_a.station_number,
+        )
+
+        # Create a ForecastRun for the NOAA station with data for the next 3 days
+        today = date.today()
+        ForecastRun.objects.create(
+            station=self.noaa_station,
+            source='NOAA_RFC',
+            run_date=today,
+            forecast_type='short',
+            data=[
+                {'date': (today + timedelta(days=i)).isoformat(), 'value': 1000.0 + i * 10}
+                for i in range(1, 4)
+            ],
+        )
+
+    def test_station_ids_none_returns_all_mappable_stations(self):
+        from src.analytics.percentiles import compute_forecast_percentiles
+        results = compute_forecast_percentiles(source='NWRFC', max_days=4, station_ids=None)
+        ids = {r['station_id'] for r in results}
+        self.assertIn(self.usgs_station_a.id, ids)
+
+    def test_station_ids_filter_excludes_unspecified_stations(self):
+        from src.analytics.percentiles import compute_forecast_percentiles
+        # Filter to only usgs_station_b — which has no NOAA mapping, so should be empty
+        results = compute_forecast_percentiles(
+            source='NWRFC',
+            max_days=4,
+            station_ids=[self.usgs_station_b.id],
+        )
+        ids = {r['station_id'] for r in results}
+        self.assertNotIn(self.usgs_station_a.id, ids)
+
+    def test_empty_station_ids_returns_no_results(self):
+        from src.analytics.percentiles import compute_forecast_percentiles
+        results = compute_forecast_percentiles(source='NWRFC', max_days=4, station_ids=[])
+        self.assertEqual(results, [])

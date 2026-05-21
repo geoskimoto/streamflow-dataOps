@@ -260,6 +260,7 @@ _FORECAST_RUN_SOURCE_MAP = {
 def compute_forecast_percentiles(
     source: str = 'NWRFC',
     max_days: int = 8,
+    station_ids: list[int] | None = None,
 ) -> list[dict]:
     """
     Compute exceedance percentile bands for the most recent NOAA_RFC ForecastRun
@@ -367,6 +368,11 @@ def compute_forecast_percentiles(
         if key not in _seen or row['forecast_run_date'] > _seen[key]['forecast_run_date']:
             _seen[key] = row
     forecast_rows = list(_seen.values())
+
+    # Apply station_ids filter after NOAA→USGS mapping (station_ids refers to USGS PKs)
+    if station_ids is not None:
+        station_id_set = set(station_ids)
+        forecast_rows = [r for r in forecast_rows if r['station_id'] in station_id_set]
 
     if not forecast_rows:
         logger.info("compute_forecast_percentiles(%s): no forecast data found", source)
