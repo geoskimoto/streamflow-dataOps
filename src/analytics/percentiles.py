@@ -41,20 +41,33 @@ def classify_band(percentile_rank: float) -> str:
 # Single-date computation (used by the daily Celery task)
 # ---------------------------------------------------------------------------
 
-def compute_percentile_for_date(target_date: date) -> list[dict]:
+def compute_percentile_for_date(
+    target_date: date,
+    station_ids: list[int] | None = None,
+) -> list[dict]:
     """
-    Compute exceedance percentile bands for all stations that have a
-    daily_mean observation on ``target_date``, comparing each value
-    against the station's full period of record.
+    Compute exceedance percentile bands for stations with a daily_mean observation
+    on ``target_date``, comparing each value against the station's full period of record.
 
     Uses one SQL query (no per-station round-trips).
+
+    Args:
+        target_date: Date to compute percentiles for.
+        station_ids: Optional list of Station PKs to restrict computation to.
+                     Pass None to compute all qualifying stations.
+                     Pass [] to compute none.
 
     Returns:
         List of dicts with keys:
             station_id, station_number, discharge, observation_date,
             historical_record_count, percentile_rank, band
     """
-    sql = """
+    if station_ids is not None:
+        station_filter = "AND station_id = ANY(%(station_ids)s)"
+    else:
+        station_filter = ""
+
+    sql = f"""
         WITH obs_on_date AS (
             -- One row per station for the target date (take latest if multiple)
             SELECT DISTINCT ON (station_id)
@@ -64,6 +77,7 @@ def compute_percentile_for_date(target_date: date) -> list[dict]:
             FROM discharge_observations
             WHERE type = 'daily_mean'
               AND observed_at::date = %(target_date)s
+              {station_filter}
             ORDER BY station_id, observed_at DESC
         )
         SELECT
@@ -91,11 +105,12 @@ def compute_percentile_for_date(target_date: date) -> list[dict]:
         ORDER BY s.station_number
     """
 
+    params: dict = {"target_date": target_date, "min_records": MIN_HISTORICAL_RECORDS}
+    if station_ids is not None:
+        params["station_ids"] = station_ids
+
     with connection.cursor() as cursor:
-        cursor.execute(sql, {
-            "target_date": target_date,
-            "min_records": MIN_HISTORICAL_RECORDS,
-        })
+        cursor.execute(sql, params)
         columns = [col[0] for col in cursor.description]
         rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
@@ -113,7 +128,10 @@ def compute_percentile_for_date(target_date: date) -> list[dict]:
         })
 
     logger.info(
-        "compute_percentile_for_date(%s): %d stations", target_date, len(results)
+        "compute_percentile_for_date(%s, station_ids=%s): %d stations",
+        target_date,
+        "all" if station_ids is None else len(station_ids),
+        len(results),
     )
     return results
 

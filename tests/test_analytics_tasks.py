@@ -220,3 +220,46 @@ class StatisticsDispatcherTest(TestCase):
         self.assertGreater(next_run, now.replace(tzinfo=None))
         self.assertEqual(next_run.month, 10)
         self.assertEqual(next_run.day, 1)
+
+
+class ComputePercentileForDateFilterTest(TestCase):
+    """Tests for the optional station_ids filter on compute_percentile_for_date."""
+
+    def setUp(self):
+        self.station_a = make_station('FILTER_A', 'USGS')
+        self.station_b = make_station('FILTER_B', 'EC')
+        start = date(2020, 1, 1)
+        # Both stations get 60 days of history (> 30 minimum threshold)
+        add_daily_obs(self.station_a, start, 60)
+        add_daily_obs(self.station_b, start, 60)
+
+    def test_no_filter_returns_both_stations(self):
+        from src.analytics.percentiles import compute_percentile_for_date
+        results = compute_percentile_for_date(date(2020, 2, 29))
+        ids = {r['station_id'] for r in results}
+        self.assertIn(self.station_a.id, ids)
+        self.assertIn(self.station_b.id, ids)
+
+    def test_station_ids_restricts_to_specified_stations(self):
+        from src.analytics.percentiles import compute_percentile_for_date
+        results = compute_percentile_for_date(
+            date(2020, 2, 29),
+            station_ids=[self.station_a.id],
+        )
+        ids = {r['station_id'] for r in results}
+        self.assertIn(self.station_a.id, ids)
+        self.assertNotIn(self.station_b.id, ids)
+
+    def test_empty_station_ids_returns_no_results(self):
+        from src.analytics.percentiles import compute_percentile_for_date
+        results = compute_percentile_for_date(date(2020, 2, 29), station_ids=[])
+        self.assertEqual(results, [])
+
+    def test_none_station_ids_computes_all(self):
+        from src.analytics.percentiles import compute_percentile_for_date
+        results_none = compute_percentile_for_date(date(2020, 2, 29), station_ids=None)
+        results_default = compute_percentile_for_date(date(2020, 2, 29))
+        self.assertEqual(
+            {r['station_id'] for r in results_none},
+            {r['station_id'] for r in results_default},
+        )
