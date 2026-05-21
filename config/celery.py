@@ -112,23 +112,6 @@ app.conf.beat_schedule = {
         'schedule': crontab(minute='*/5'),
     },
 
-    # Analytics: Compute yesterday's daily flow percentile bands.
-    # Runs 3x/day so that late-arriving USGS provisional values (which can
-    # trickle in throughout the day) are captured in the same date's row.
-    # The task uses upsert semantics so re-running the same date is safe.
-    'compute-daily-flow-percentiles': {
-        'task': 'src.analytics.tasks.compute_daily_flow_percentiles',
-        'schedule': crontab(minute=0, hour='6,12,18'),  # 06:00, 12:00, 18:00 UTC
-    },
-
-    # Analytics: Compute NWRFC forecast percentile bands.
-    # Runs every 6 hours to stay current with NWRFC's twice-daily issuance.
-    # Upsert semantics make re-runs safe.
-    'compute-forecast-percentile-bands': {
-        'task': 'src.analytics.tasks.compute_forecast_percentile_bands',
-        'schedule': crontab(minute=0, hour='0,6,12,18'),
-    },
-
     # Analytics: Dispatch statistics computation configurations that are due.
     # Checks every hour; each StatisticsConfiguration controls its own schedule.
     'dispatch-statistics-computations': {

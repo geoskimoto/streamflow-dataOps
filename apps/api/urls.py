@@ -25,7 +25,7 @@ from apps.api.views.raster_views import (
     RasterPullConfigurationViewSet,
     RasterPullLogViewSet,
 )
-from apps.api.views.analytics import ComputationLogViewSet, ScheduledComputationViewSet
+from apps.api.views.analytics import StatisticsComputationLogViewSet, StatisticsConfigurationViewSet
 
 # Create router and register viewsets
 router = DefaultRouter()
@@ -45,8 +45,8 @@ router.register(r'raster-configurations', RasterPullConfigurationViewSet, basena
 router.register(r'raster-logs', RasterPullLogViewSet, basename='raster-log')
 
 # Register analytics viewsets
-router.register(r'analytics/computations', ScheduledComputationViewSet, basename='computation')
-router.register(r'analytics/logs',         ComputationLogViewSet,       basename='computation-log')
+router.register(r'analytics/configurations', StatisticsConfigurationViewSet,   basename='statistics-configuration')
+router.register(r'analytics/logs',           StatisticsComputationLogViewSet,  basename='statistics-log')
 
 app_name = 'api'
 

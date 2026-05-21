@@ -2,69 +2,54 @@
 
 from rest_framework import serializers
 
-from apps.analytics.models import ComputationLog, ScheduledComputation
+from apps.analytics.models import StatisticsComputationLog, StatisticsConfiguration
 
 
-class ComputationLogSerializer(serializers.ModelSerializer):
-    """Full detail serializer for computation run logs."""
+class StatisticsComputationLogSerializer(serializers.ModelSerializer):
+    """Full detail serializer for statistics computation run logs."""
 
     class Meta:
-        model = ComputationLog
+        model = StatisticsComputationLog
         fields = [
             "id",
-            "computation",
+            "configuration",
             "status",
             "celery_task_id",
             "started_at",
             "completed_at",
             "duration_seconds",
+            "stations_processed",
             "records_computed",
             "error_message",
         ]
         read_only_fields = fields
 
 
-class ScheduledComputationListSerializer(serializers.ModelSerializer):
-    """Lightweight serializer for list view."""
-
-    class Meta:
-        model = ScheduledComputation
-        fields = [
-            "id",
-            "name",
-            "schedule",
-            "is_enabled",
-            "last_run_at",
-            "last_run_status",
-        ]
-        read_only_fields = fields
-
-
-class ScheduledComputationSerializer(serializers.ModelSerializer):
-    """Full detail serializer including recent logs."""
+class StatisticsConfigurationSerializer(serializers.ModelSerializer):
+    """Full detail serializer for statistics configurations including recent logs."""
 
     recent_logs = serializers.SerializerMethodField()
 
     class Meta:
-        model = ScheduledComputation
+        model = StatisticsConfiguration
         fields = [
             "id",
             "name",
             "description",
-            "task_path",
-            "schedule",
+            "computation_type",
+            "agency_filter",
+            "schedule_type",
             "is_enabled",
             "last_run_at",
-            "last_run_status",
+            "next_run_at",
             "created_at",
             "updated_at",
             "recent_logs",
         ]
         read_only_fields = [
-            "id", "task_path", "last_run_at", "last_run_status",
-            "created_at", "updated_at", "recent_logs",
+            "id", "last_run_at", "next_run_at", "created_at", "updated_at", "recent_logs",
         ]
 
     def get_recent_logs(self, obj):
         logs = obj.logs.order_by("-started_at")[:10]
-        return ComputationLogSerializer(logs, many=True).data
+        return StatisticsComputationLogSerializer(logs, many=True).data

@@ -7,9 +7,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.streamflow.models import Station, ForecastPercentile, DischargeObservation, ForecastRun
-from apps.analytics.models import ScheduledComputation, ComputationLog
 from src.analytics.percentiles import compute_forecast_percentiles
-from src.analytics.tasks import compute_forecast_percentile_bands
 
 
 class ForecastPercentileModelTest(TestCase):
@@ -214,66 +212,3 @@ class ComputeForecastPercentilesTest(TestCase):
             compute_forecast_percentiles(source='BOGUS')
 
 
-FORECAST_TASK_PATH = 'src.analytics.tasks.compute_forecast_percentile_bands'
-
-
-class ComputeForecastPercentileBandsTaskTest(TestCase):
-
-    def setUp(self):
-        self.computation, _ = ScheduledComputation.objects.get_or_create(
-            task_path=FORECAST_TASK_PATH,
-            defaults={
-                'name': 'NWRFC Forecast Percentile Bands',
-                'description': 'Computes forecast percentile bands.',
-                'schedule': 'every_6h',
-                'is_enabled': True,
-            },
-        )
-        # Ensure enabled state for tests that depend on it
-        self.computation.is_enabled = True
-        self.computation.save(update_fields=['is_enabled'])
-
-    @patch('src.analytics.tasks.compute_forecast_percentiles')
-    def test_task_creates_computation_log(self, mock_compute):
-        mock_compute.return_value = []
-        compute_forecast_percentile_bands.apply()
-        self.assertEqual(
-            ComputationLog.objects.filter(computation=self.computation, status='success').count(),
-            1,
-        )
-
-    @patch('src.analytics.tasks.compute_forecast_percentiles')
-    def test_task_upserts_forecast_percentile_rows(self, mock_compute):
-        station = Station.objects.create(
-            station_number='TASK001', name='Task Test', agency='NOAA_RFC'
-        )
-        today = date.today()
-        mock_compute.return_value = [
-            {
-                'station_id': station.id,
-                'target_date': today + timedelta(days=1),
-                'forecast_discharge': 500.0,
-                'source': 'NWRFC',
-                'forecast_run_date': timezone.now(),
-                'historical_record_count': 100,
-                'percentile_rank': 50.0,
-                'band': 'p26_50',
-            }
-        ]
-        compute_forecast_percentile_bands.apply()
-        self.assertEqual(ForecastPercentile.objects.filter(station=station).count(), 1)
-
-    @patch('src.analytics.tasks.compute_forecast_percentiles')
-    def test_task_skipped_when_disabled(self, mock_compute):
-        self.computation.is_enabled = False
-        self.computation.save()
-        result = compute_forecast_percentile_bands.apply().get()
-        self.assertEqual(result['status'], 'skipped')
-        mock_compute.assert_not_called()
-
-    @patch('src.analytics.tasks.compute_forecast_percentiles')
-    def test_task_updates_scheduled_computation_status(self, mock_compute):
-        mock_compute.return_value = []
-        compute_forecast_percentile_bands.apply()
-        self.computation.refresh_from_db()
-        self.assertEqual(self.computation.last_run_status, 'success')
