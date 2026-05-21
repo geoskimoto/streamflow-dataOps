@@ -342,3 +342,164 @@ class ComputeForecastPercentilesFilterTest(TestCase):
         from src.analytics.percentiles import compute_forecast_percentiles
         results = compute_forecast_percentiles(source='NWRFC', max_days=4, station_ids=[])
         self.assertEqual(results, [])
+
+
+class RunDailyFlowPercentilesTaskTest(TestCase):
+    def setUp(self):
+        self.station = make_station('DAILY001', 'USGS')
+        add_daily_obs(self.station, date(2020, 1, 1), 60)
+        self.config = StatisticsConfiguration.objects.create(
+            name='Daily USGS Test',
+            computation_type='daily_flow_percentiles',
+            agency_filter='USGS',
+            schedule_type='custom',
+            schedule_value='0 6,12,18 * * *',
+            is_enabled=True,
+        )
+
+    def test_task_creates_computation_log(self):
+        from src.analytics.tasks import run_daily_flow_percentiles_task
+        run_daily_flow_percentiles_task(self.config.id)
+        log = StatisticsComputationLog.objects.get(configuration=self.config)
+        self.assertIn(log.status, ['success', 'partial'])
+        self.assertIsNotNone(log.completed_at)
+        self.assertIsNotNone(log.duration_seconds)
+
+    def test_task_updates_last_run_at(self):
+        from src.analytics.tasks import run_daily_flow_percentiles_task
+        run_daily_flow_percentiles_task(self.config.id)
+        self.config.refresh_from_db()
+        self.assertIsNotNone(self.config.last_run_at)
+
+    def test_task_upserts_daily_flow_percentile_records(self):
+        from apps.streamflow.models import DailyFlowPercentile
+        from src.analytics.tasks import run_daily_flow_percentiles_task
+        yesterday = date.today() - timedelta(days=1)
+        add_daily_obs(self.station, yesterday, 1, base_discharge=1234.0)
+        run_daily_flow_percentiles_task(self.config.id)
+        self.assertTrue(DailyFlowPercentile.objects.filter(
+            station=self.station, date=yesterday
+        ).exists())
+
+    def test_task_is_idempotent(self):
+        from apps.streamflow.models import DailyFlowPercentile
+        from src.analytics.tasks import run_daily_flow_percentiles_task
+        yesterday = date.today() - timedelta(days=1)
+        add_daily_obs(self.station, yesterday, 1, base_discharge=1234.0)
+        run_daily_flow_percentiles_task(self.config.id)
+        run_daily_flow_percentiles_task(self.config.id)
+        self.assertEqual(
+            DailyFlowPercentile.objects.filter(station=self.station, date=yesterday).count(),
+            1,
+        )
+
+
+class RunForecastPercentilesTaskTest(TestCase):
+    def setUp(self):
+        self.config = StatisticsConfiguration.objects.create(
+            name='Forecast Test',
+            computation_type='forecast_percentiles',
+            agency_filter='ALL',
+            schedule_type='custom',
+            schedule_value='0 0,6,12,18 * * *',
+            is_enabled=True,
+        )
+
+    @patch('src.analytics.tasks.compute_forecast_percentiles', return_value=[])
+    def test_task_creates_log_and_calls_computation(self, mock_compute):
+        from src.analytics.tasks import run_forecast_percentiles_task
+        run_forecast_percentiles_task(self.config.id)
+        mock_compute.assert_called_once()
+        log = StatisticsComputationLog.objects.get(configuration=self.config)
+        self.assertEqual(log.status, 'success')
+
+    @patch('src.analytics.tasks.compute_forecast_percentiles', return_value=[])
+    def test_task_passes_station_ids_when_agency_filtered(self, mock_compute):
+        from src.analytics.tasks import run_forecast_percentiles_task
+        usgs = make_station('14211010', 'USGS')
+        self.config.agency_filter = 'USGS'
+        self.config.save()
+        run_forecast_percentiles_task(self.config.id)
+        _, kwargs = mock_compute.call_args
+        self.assertIn(usgs.id, kwargs['station_ids'])
+
+    @patch('src.analytics.tasks.compute_forecast_percentiles', side_effect=RuntimeError('boom'))
+    def test_task_logs_failure_on_exception(self, mock_compute):
+        from src.analytics.tasks import run_forecast_percentiles_task
+        with self.assertRaises(RuntimeError):
+            run_forecast_percentiles_task(self.config.id)
+        log = StatisticsComputationLog.objects.get(configuration=self.config)
+        self.assertEqual(log.status, 'failed')
+        self.assertIn('boom', log.error_message)
+
+
+class RunPercentileBackfillTaskTest(TestCase):
+    def setUp(self):
+        self.station = make_station('BACK001', 'USGS')
+        add_daily_obs(self.station, date(2020, 1, 1), 60)
+        self.config = StatisticsConfiguration.objects.create(
+            name='Backfill Test',
+            computation_type='percentile_backfill',
+            agency_filter='USGS',
+            schedule_type='custom',
+            schedule_value='0 0 1 10 *',
+            is_enabled=False,
+        )
+
+    def test_backfill_creates_daily_flow_percentile_records(self):
+        from apps.streamflow.models import DailyFlowPercentile
+        from src.analytics.tasks import run_percentile_backfill_task
+        run_percentile_backfill_task(self.config.id)
+        self.assertGreater(DailyFlowPercentile.objects.filter(station=self.station).count(), 0)
+
+    def test_backfill_log_records_stations_and_records_counts(self):
+        from src.analytics.tasks import run_percentile_backfill_task
+        run_percentile_backfill_task(self.config.id)
+        log = StatisticsComputationLog.objects.get(configuration=self.config)
+        self.assertEqual(log.status, 'success')
+        self.assertGreater(log.records_computed, 0)
+        self.assertGreater(log.stations_processed, 0)
+
+    def test_backfill_is_idempotent(self):
+        from apps.streamflow.models import DailyFlowPercentile
+        from src.analytics.tasks import run_percentile_backfill_task
+        run_percentile_backfill_task(self.config.id)
+        count_first = DailyFlowPercentile.objects.filter(station=self.station).count()
+        run_percentile_backfill_task(self.config.id)
+        count_second = DailyFlowPercentile.objects.filter(station=self.station).count()
+        self.assertEqual(count_first, count_second)
+
+
+class UpdatedDispatcherTest(TestCase):
+    """Dispatcher routes all five computation types to the correct tasks."""
+
+    def _make_config(self, computation_type):
+        return StatisticsConfiguration.objects.create(
+            name=f'Dispatch {computation_type}',
+            computation_type=computation_type,
+            agency_filter='ALL',
+            schedule_type='monthly',
+            is_enabled=True,
+            next_run_at=None,
+        )
+
+    @patch('src.analytics.tasks.run_daily_flow_percentiles_task')
+    def test_dispatcher_routes_daily_flow_percentiles(self, mock_task):
+        config = self._make_config('daily_flow_percentiles')
+        from src.analytics.tasks import dispatch_statistics_computations
+        dispatch_statistics_computations()
+        mock_task.delay.assert_called_once_with(config.id)
+
+    @patch('src.analytics.tasks.run_forecast_percentiles_task')
+    def test_dispatcher_routes_forecast_percentiles(self, mock_task):
+        config = self._make_config('forecast_percentiles')
+        from src.analytics.tasks import dispatch_statistics_computations
+        dispatch_statistics_computations()
+        mock_task.delay.assert_called_once_with(config.id)
+
+    @patch('src.analytics.tasks.run_percentile_backfill_task')
+    def test_dispatcher_routes_percentile_backfill(self, mock_task):
+        config = self._make_config('percentile_backfill')
+        from src.analytics.tasks import dispatch_statistics_computations
+        dispatch_statistics_computations()
+        mock_task.delay.assert_called_once_with(config.id)
