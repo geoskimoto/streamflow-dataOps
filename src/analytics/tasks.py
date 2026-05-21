@@ -446,8 +446,9 @@ def run_daily_flow_percentiles_task(config_id):
             )
 
         duration = time.monotonic() - start_time
+        unique_stations = len({r['station_id'] for r in rows})
         log.status = 'success'
-        log.stations_processed = len(records)
+        log.stations_processed = unique_stations
         log.records_computed = len(records)
         log.duration_seconds = round(duration, 2)
         log.completed_at = dj_timezone.now()
@@ -573,7 +574,7 @@ def run_percentile_backfill_task(config_id):
 
     try:
         computed_at = datetime.now(timezone.utc)
-        for chunk in iter_station_id_chunks(chunk_size=100, station_ids=station_ids or None):
+        for chunk in iter_station_id_chunks(chunk_size=100, station_ids=station_ids):
             rows = backfill_station_chunk(chunk, computed_at)
             records = [
                 DailyFlowPercentile(
