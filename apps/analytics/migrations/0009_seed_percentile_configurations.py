@@ -1,5 +1,9 @@
+import logging
+
 from django.db import migrations
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 
 STANDARD_CONFIGS = [
@@ -79,6 +83,8 @@ OLD_BEAT_TASK_NAMES = [
 
 def seed_configurations(apps, schema_editor):
     StatisticsConfiguration = apps.get_model('analytics', 'StatisticsConfiguration')
+    # get_or_create is intentional: safe to re-run, does NOT update existing records.
+    # If field values need updating, write a new migration — do not modify this one.
     for cfg in STANDARD_CONFIGS:
         StatisticsConfiguration.objects.get_or_create(
             name=cfg['name'],
@@ -91,7 +97,7 @@ def remove_old_periodic_tasks(apps, schema_editor):
         PeriodicTask = apps.get_model('django_celery_beat', 'PeriodicTask')
         deleted, _ = PeriodicTask.objects.filter(name__in=OLD_BEAT_TASK_NAMES).delete()
         if deleted:
-            print(f'\n  Removed {deleted} orphaned Celery Beat periodic task(s): {OLD_BEAT_TASK_NAMES}')
+            logger.info('Removed %d orphaned Celery Beat periodic task(s): %s', deleted, OLD_BEAT_TASK_NAMES)
     except LookupError:
         # django_celery_beat not installed or tables not created — skip silently
         pass
@@ -99,6 +105,9 @@ def remove_old_periodic_tasks(apps, schema_editor):
 
 def reverse_seed(apps, schema_editor):
     StatisticsConfiguration = apps.get_model('analytics', 'StatisticsConfiguration')
+    # Deletes by name — the same key used by get_or_create. Any user-created config
+    # with a matching name would also be deleted. Rollbacks of this migration are
+    # expected to be rare; proceed with caution.
     StatisticsConfiguration.objects.filter(
         name__in=[cfg['name'] for cfg in STANDARD_CONFIGS]
     ).delete()
