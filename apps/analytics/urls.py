@@ -14,5 +14,6 @@ urlpatterns = [
     path('configurations/<int:pk>/delete/', views.StatisticsConfigurationDeleteView.as_view(), name='configuration_delete'),
     path('configurations/<int:pk>/trigger/', views.trigger_statistics_config, name='trigger'),
     path('configurations/<int:pk>/toggle/', views.toggle_statistics_config, name='toggle'),
+    path('logs/', views.StatisticsComputationLogListView.as_view(), name='log_list'),
     path('station-metadata/', views.station_metadata_list, name='station_metadata_list'),
 ]

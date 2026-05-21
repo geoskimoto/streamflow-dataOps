@@ -1,12 +1,15 @@
 """Analytics section views: StatisticsConfiguration CRUD, dashboard, station metadata browser."""
 
+from datetime import timedelta
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse_lazy
+from django.utils import timezone
 from django.views.generic import CreateView, DeleteView, DetailView, ListView, UpdateView
 
 from apps.analytics.forms import StatisticsConfigurationForm
@@ -29,12 +32,20 @@ def analytics_dashboard(request):
     total_metadata = StationMetadata.objects.count()
     total_thresholds = FloodThreshold.objects.count()
 
+    since_24h = timezone.now() - timedelta(hours=24)
+    all_logs = StatisticsComputationLog.objects.all()
+    recent_24h = all_logs.filter(started_at__gte=since_24h)
+
     return render(request, 'analytics/dashboard.html', {
         'configs': configs,
         'recent_logs': recent_logs,
         'total_metadata': total_metadata,
         'total_thresholds': total_thresholds,
         'enabled_count': configs.filter(is_enabled=True).count(),
+        'total_runs_24h': recent_24h.count(),
+        'success_count_24h': recent_24h.filter(status='success').count(),
+        'failed_count_24h': recent_24h.filter(status__in=['failed', 'partial']).count(),
+        'running_count': all_logs.filter(status='running').count(),
     })
 
 
@@ -121,6 +132,18 @@ def trigger_statistics_config(request, pk):
     elif config.computation_type == 'flood_thresholds':
         from src.analytics.tasks import run_flood_thresholds_task
         run_flood_thresholds_task.delay(config.id)
+    elif config.computation_type == 'daily_flow_percentiles':
+        from src.analytics.tasks import run_daily_flow_percentiles_task
+        run_daily_flow_percentiles_task.delay(config.id)
+    elif config.computation_type == 'forecast_percentiles':
+        from src.analytics.tasks import run_forecast_percentiles_task
+        run_forecast_percentiles_task.delay(config.id)
+    elif config.computation_type == 'percentile_backfill':
+        from src.analytics.tasks import run_percentile_backfill_task
+        run_percentile_backfill_task.delay(config.id)
+    else:
+        messages.error(request, f'Unknown computation type: {config.computation_type}')
+        return redirect('analytics:configuration_detail', pk=pk)
     messages.success(request, f'Triggered "{config.name}" — check logs for status.')
     return redirect('analytics:configuration_detail', pk=pk)
 
@@ -135,6 +158,50 @@ def toggle_statistics_config(request, pk):
     state = 'enabled' if config.is_enabled else 'disabled'
     messages.success(request, f'Configuration "{config.name}" {state}.')
     return redirect('analytics:configuration_detail', pk=pk)
+
+
+class StatisticsComputationLogListView(LoginRequiredMixin, ListView):
+    model = StatisticsComputationLog
+    template_name = 'analytics/computation_log_list.html'
+    context_object_name = 'logs'
+    paginate_by = 50
+
+    def get_queryset(self):
+        qs = StatisticsComputationLog.objects.select_related('configuration').order_by('-started_at')
+
+        search = self.request.GET.get('search', '').strip()
+        if search:
+            qs = qs.filter(
+                Q(configuration__name__icontains=search) |
+                Q(error_message__icontains=search)
+            )
+
+        config_id = self.request.GET.get('configuration')
+        if config_id:
+            qs = qs.filter(configuration_id=config_id)
+
+        status = self.request.GET.get('status')
+        if status:
+            qs = qs.filter(status=status)
+
+        days = self.request.GET.get('days', '7')
+        try:
+            cutoff = timezone.now() - timedelta(days=int(days))
+            qs = qs.filter(started_at__gte=cutoff)
+        except ValueError:
+            pass
+
+        return qs
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx['configurations'] = StatisticsConfiguration.objects.order_by('name')
+        all_in_window = self.get_queryset()
+        ctx['total_logs'] = all_in_window.count()
+        ctx['success_count'] = all_in_window.filter(status='success').count()
+        ctx['failed_count'] = all_in_window.filter(status__in=['failed', 'partial']).count()
+        ctx['running_count'] = all_in_window.filter(status='running').count()
+        return ctx
 
 
 @login_required

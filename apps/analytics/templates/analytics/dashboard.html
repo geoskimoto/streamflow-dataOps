@@ -48,6 +48,47 @@
         </div>
     </div>
 
+    <!-- Run stats row -->
+    <div class="row mb-4">
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card border-secondary">
+                <div class="card-body text-center">
+                    <h3 class="mb-0">{{ total_runs_24h }}</h3>
+                    <small class="text-muted">Runs (last 24h)</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card border-success">
+                <div class="card-body text-center">
+                    <h3 class="mb-0">{{ success_count_24h }}</h3>
+                    <small class="text-muted">Successful (last 24h)</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card {% if failed_count_24h %}border-danger{% else %}border-secondary{% endif %}">
+                <div class="card-body text-center">
+                    <h3 class="mb-0 {% if failed_count_24h %}text-danger{% endif %}">{{ failed_count_24h }}</h3>
+                    <small class="text-muted">Failed / Partial (last 24h)</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card {% if running_count %}border-info{% else %}border-secondary{% endif %}">
+                <div class="card-body text-center">
+                    <h3 class="mb-0">{{ running_count }}</h3>
+                    <small class="text-muted">Currently Running</small>
+                </div>
+                {% if running_count %}
+                <div class="card-footer bg-transparent text-center">
+                    <small><i class="fas fa-spinner fa-spin text-info"></i> active</small>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
     <div class="row">
         <div class="col-lg-6 mb-4">
             <div class="card">
@@ -77,7 +118,10 @@
 
         <div class="col-lg-6 mb-4">
             <div class="card">
-                <div class="card-header bg-light"><h6 class="mb-0"><i class="fas fa-list"></i> Recent Computation Logs</h6></div>
+                <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="fas fa-list"></i> Recent Computation Logs</h6>
+                    <a href="{% url 'analytics:log_list' %}" class="btn btn-sm btn-outline-secondary">View all</a>
+                </div>
                 <div class="list-group list-group-flush">
                     {% for log in recent_logs %}
                     <div class="list-group-item">
@@ -91,11 +135,21 @@
                         <small class="text-muted">
                             {{ log.started_at|naturaltime }}
                             {% if log.stations_processed %} &middot; {{ log.stations_processed|intcomma }} stations{% endif %}
+                            {% if log.records_computed %} &middot; {{ log.records_computed|intcomma }} records{% endif %}
+                            {% if log.duration_seconds %} &middot; {{ log.duration_seconds|floatformat:1 }}s{% endif %}
                         </small>
+                        {% if log.error_message %}
+                        <small class="text-danger d-block"><i class="fas fa-exclamation-triangle"></i> {{ log.error_message|truncatechars:80 }}</small>
+                        {% endif %}
                     </div>
                     {% empty %}
                     <div class="list-group-item text-muted">No runs yet.</div>
                     {% endfor %}
+                </div>
+                <div class="card-footer bg-transparent">
+                    <a href="{% url 'analytics:log_list' %}" class="text-secondary text-decoration-none">
+                        <i class="fas fa-arrow-right"></i> Full log history
+                    </a>
                 </div>
             </div>
         </div>
