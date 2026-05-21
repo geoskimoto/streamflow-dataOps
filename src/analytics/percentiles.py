@@ -274,6 +274,9 @@ def compute_forecast_percentiles(
                 ForecastRun.source to query via _FORECAST_RUN_SOURCE_MAP.
         max_days: Number of calendar days ahead to include. today+1 through
                   today+max_days are included (today itself is excluded).
+        station_ids: Optional list of USGS Station PKs (post-mapping) to restrict
+                     computation to. Pass None to compute all mappable stations.
+                     Pass [] to compute none.
 
     Returns:
         List of dicts with keys:

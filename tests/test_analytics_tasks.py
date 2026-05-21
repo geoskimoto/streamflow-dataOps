@@ -292,7 +292,7 @@ class ComputeForecastPercentilesFilterTest(TestCase):
         ForecastRun.objects.create(
             station=self.noaa_station,
             source='NOAA_RFC',
-            run_date=today,
+            run_date=timezone.now(),
             forecast_type='short',
             data=[
                 {'date': (today + timedelta(days=i)).isoformat(), 'value': 1000.0 + i * 10}
@@ -307,14 +307,35 @@ class ComputeForecastPercentilesFilterTest(TestCase):
         self.assertIn(self.usgs_station_a.id, ids)
 
     def test_station_ids_filter_excludes_unspecified_stations(self):
+        from apps.streamflow.models import ForecastRun, StationMapping
         from src.analytics.percentiles import compute_forecast_percentiles
-        # Filter to only usgs_station_b — which has no NOAA mapping, so should be empty
+        # Give usgs_station_b its own NOAA mapping and forecast so it produces rows
+        noaa_b = make_station('NWRFC002', 'NOAA_RFC')
+        StationMapping.objects.create(
+            source_agency='NOAA_RFC',
+            source_id=noaa_b.station_number,
+            target_agency='USGS',
+            target_id=self.usgs_station_b.station_number,
+        )
+        today = date.today()
+        ForecastRun.objects.create(
+            station=noaa_b,
+            source='NOAA_RFC',
+            run_date=timezone.now(),
+            forecast_type='short',
+            data=[
+                {'date': (today + timedelta(days=i)).isoformat(), 'value': 500.0 + i * 10}
+                for i in range(1, 4)
+            ],
+        )
+        # Filter to only station_b — should include b and exclude a
         results = compute_forecast_percentiles(
             source='NWRFC',
             max_days=4,
             station_ids=[self.usgs_station_b.id],
         )
         ids = {r['station_id'] for r in results}
+        self.assertIn(self.usgs_station_b.id, ids)
         self.assertNotIn(self.usgs_station_a.id, ids)
 
     def test_empty_station_ids_returns_no_results(self):
