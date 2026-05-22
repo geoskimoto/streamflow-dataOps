@@ -1,5 +1,9 @@
 # Daily Flow Percentile Bands — API Implementation Spec
 
+> **Note:** This document covers the original observed-percentile API spec written for the dashboard map integration. For the current complete reference covering all analytics outputs (observed bands, forecast bands, station metadata) and direct DB access, see [`analytics-data-access.md`](analytics-data-access.md).
+
+
+
 This document is a complete specification for implementing a date-driven flow
 conditions map with rangeslider. It describes every API endpoint needed, exact
 request/response shapes, caching rules, band semantics, and integration notes.
