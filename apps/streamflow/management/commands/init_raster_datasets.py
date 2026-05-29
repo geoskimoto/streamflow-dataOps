@@ -183,6 +183,23 @@ class Command(BaseCommand):
                     {'name': 'pres', 'description': 'Surface Pressure', 'units': 'Pa', 'standard_name': 'surface_air_pressure'},
                 ]
             },
+            {
+                'name': 'NWM_MediumRange',
+                'data_source': 'nwm_s3',
+                'collection_id': 'noaa-nwm-pds/nwm.latest/medium_range',
+                'description': 'NOAA National Water Model medium-range 10-day forecast forcings (basin-averaged)',
+                'resolution_m': 1000,
+                'temporal_resolution': 'daily',
+                'update_frequency': 'daily',
+                'file_format': 'NetCDF',
+                'is_active': True,
+                'variables': [
+                    {'name': 'RAINRATE',   'description': 'Precipitation rate (accumulate to daily mm/day)', 'units': 'mm/s',  'standard_name': 'precipitation_flux'},
+                    {'name': 'T2D',        'description': '2-meter air temperature (daily max/min)',          'units': 'K',     'standard_name': 'air_temperature'},
+                    {'name': 'SWDOWN',     'description': 'Downward shortwave radiation (W/m²)',              'units': 'W/m2',  'standard_name': 'downwelling_shortwave_flux_in_air'},
+                    {'name': 'Q2D',        'description': 'Specific humidity (derive vp via P)',              'units': 'kg/kg', 'standard_name': 'specific_humidity'},
+                ]
+            },
         ]
         
         self.stdout.write("\n" + "="*80)

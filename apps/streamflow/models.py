@@ -366,6 +366,7 @@ class RasterDataset(models.Model):
     DATA_SOURCE_CHOICES = [
         ('earthdata', 'NASA EarthData'),
         ('nomads', 'NOAA NOMADS'),
+        ('nwm_s3', 'NOAA NWM S3'),
         ('gee', 'Google Earth Engine (deprecated)'),
     ]
 
