@@ -52,6 +52,19 @@ python manage.py init_raster_datasets
 
 ---
 
+## Gridded Data Configuration — Enforced Rule
+
+**All gridded dataset sources must be visible and configurable through the GUI at `/gridded-configurations/`.** This is a hard requirement — no hidden or code-only configurations.
+
+Specifically:
+
+- Any new `RasterDataset` and its `RasterVariable` entries **must** be registered in `python manage.py init_raster_datasets` (the management command in `apps/streamflow/management/commands/init_raster_datasets.py`). This is what populates the dataset/variable dropdowns in the GUI creation form. A dataset that is not registered here will not appear in the GUI.
+- `RasterPullConfiguration` records (the scheduled pull jobs) must be created and managed through the GUI at `/gridded-configurations/new/` — never hardcoded in scripts, management commands, or migrations.
+- When adding a new gridded source (e.g., NWM, a new NOAA product, a new NASA dataset), the workflow is always: (1) add to `init_raster_datasets`, (2) run the command, (3) create the configuration through the GUI.
+- The GUI must remain the single source of truth for which datasets are actively being pulled and on what schedule.
+
+---
+
 ## Architecture
 
 ### App Layout
