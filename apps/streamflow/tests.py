@@ -33,3 +33,26 @@ class BasinForcingModelTest(TestCase):
             BasinForcing.objects.create(station=station, date="2026-05-29",
                 prcp_mm_day=2.0, tmax_c=21.0, tmin_c=6.0,
                 srad_w_m2=210.0, vp_pa=950.0, dayl_s=43200.0, source="nwm")
+
+    def test_different_source_same_date_is_allowed(self):
+        station = Station.objects.create(
+            station_number="14178002", name="Test3", agency="USGS"
+        )
+        BasinForcing.objects.create(station=station, date="2026-05-29",
+            prcp_mm_day=1.0, tmax_c=20.0, tmin_c=5.0,
+            srad_w_m2=200.0, vp_pa=900.0, dayl_s=43200.0, source="nwm")
+        # Should NOT raise — different source is a distinct row
+        BasinForcing.objects.create(station=station, date="2026-05-29",
+            prcp_mm_day=1.5, tmax_c=21.0, tmin_c=6.0,
+            srad_w_m2=210.0, vp_pa=950.0, dayl_s=43200.0, source="daymet")
+
+    def test_str_representation(self):
+        station = Station.objects.create(
+            station_number="14178003", name="Test4", agency="USGS"
+        )
+        forcing = BasinForcing.objects.create(
+            station=station, date="2026-05-29",
+            prcp_mm_day=1.0, tmax_c=20.0, tmin_c=5.0,
+            srad_w_m2=200.0, vp_pa=900.0, dayl_s=43200.0, source="nwm"
+        )
+        self.assertEqual(str(forcing), "14178003 2026-05-29 (nwm)")

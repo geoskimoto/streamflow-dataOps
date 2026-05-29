@@ -813,7 +813,12 @@ class BasinForcing(models.Model):
 
     class Meta:
         db_table = "basin_forcings"
-        unique_together = [("station", "date", "source")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["station", "date", "source"],
+                name="unique_basin_forcing",
+            )
+        ]
         ordering = ["station", "date"]
 
     def __str__(self) -> str:
