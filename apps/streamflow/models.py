@@ -784,3 +784,37 @@ class ForecastPercentile(models.Model):
 
     def __str__(self):
         return f"{self.station.station_number} – {self.target_date} – {self.source} – {self.band}"
+
+
+class BasinForcing(models.Model):
+    """Daily basin-averaged meteorological forcings for EA-LSTM inference."""
+    SOURCE_CHOICES = [
+        ("nwm", "NWM Medium-Range"),
+        ("daymet", "Daymet CAMELS"),
+    ]
+
+    station = models.ForeignKey(
+        Station,
+        on_delete=models.CASCADE,
+        related_name="basin_forcings",
+        db_index=True,
+    )
+    date = models.DateField(db_index=True)
+
+    prcp_mm_day  = models.FloatField(help_text="Precipitation mm/day")
+    tmax_c       = models.FloatField(help_text="Maximum air temperature °C")
+    tmin_c       = models.FloatField(help_text="Minimum air temperature °C")
+    srad_w_m2    = models.FloatField(help_text="Downward shortwave radiation W/m²")
+    vp_pa        = models.FloatField(help_text="Vapor pressure Pa")
+    dayl_s       = models.FloatField(help_text="Day length seconds/day")
+
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default="nwm")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "basin_forcings"
+        unique_together = [("station", "date", "source")]
+        ordering = ["station", "date"]
+
+    def __str__(self) -> str:
+        return f"{self.station.station_number} {self.date} ({self.source})"
