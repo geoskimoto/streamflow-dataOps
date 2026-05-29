@@ -26,6 +26,7 @@ from apps.api.views.raster_views import (
     RasterPullLogViewSet,
 )
 from apps.api.views.analytics import StatisticsComputationLogViewSet, StatisticsConfigurationViewSet
+from apps.api.views.forcing import BasinForcingView
 
 # Create router and register viewsets
 router = DefaultRouter()
@@ -60,5 +61,6 @@ urlpatterns = [
     path('schema/swagger-ui/', RedirectView.as_view(pattern_name='api:swagger-ui', permanent=True), name='legacy-swagger'),
 
     # API endpoints
+    path("forcings/<str:usgs_id>/", BasinForcingView.as_view(), name="basin-forcings"),
     path('', include(router.urls)),
 ]
