@@ -42,3 +42,8 @@ class BasinForcingAPITest(TestCase):
         resp = self.client.get("/api/v1/forcings/14178000/?days=1")
         data = resp.json()
         self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["date"], "2026-05-29")
+
+    def test_get_forcings_invalid_days_returns_400(self):
+        resp = self.client.get("/api/v1/forcings/14178000/?days=notanumber")
+        self.assertEqual(resp.status_code, 400)

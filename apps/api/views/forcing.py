@@ -15,6 +15,7 @@ class BasinForcingView(APIView):
     ordered oldest-first.
     """
 
+    # This endpoint is intentionally unauthenticated — basin forcing data is public meteorological data.
     permission_classes = [AllowAny]
 
     def get(self, request, usgs_id: str):
@@ -26,10 +27,17 @@ class BasinForcingView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        days = int(request.query_params.get("days", 365))
+        try:
+            days = int(request.query_params.get("days", 365))
+        except (ValueError, TypeError):
+            return Response(
+                {"detail": "days must be a positive integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         forcings = (
             BasinForcing.objects
-            .filter(station=station, source="nwm")
+            .filter(station=station, source="nwm")  # nwm only; Daymet is for historical training
+            .select_related("station")
             .order_by("-date")[:days]
         )
         forcings_list = list(reversed(list(forcings)))
