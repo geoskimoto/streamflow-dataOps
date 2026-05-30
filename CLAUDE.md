@@ -91,8 +91,9 @@ The `src/` tree is not a Django app — it's imported directly by Celery tasks a
 - **PullConfiguration** + **PullConfigurationStation** — Scheduled acquisition jobs linked to stations
 - **PullStationProgress** — Tracks last successful pull per station for smart-append (incremental pulls)
 - **MasterStation** / **StationMapping** — 14,319 reference stations; cross-network ID resolution (USGS ↔ HADS ↔ EC)
-- **RasterDataset / RasterVariable / RasterLayer / SpatialExtent** — Gridded raster metadata (PostGIS geometry on SpatialExtent)
+- **RasterDataset / RasterVariable / RasterLayer / SpatialExtent** — Gridded raster metadata (PostGIS geometry on SpatialExtent); `RasterDataset.DATA_SOURCE_CHOICES` includes `nwm_s3`
 - **DailyFlowPercentile** — Precomputed daily percentile bands per station/DOY
+- **BasinForcing** — Daily basin-averaged meteorological forcings for EA-LSTM inference; fields: `station` (FK→Station), `date`, `prcp_mm_day`, `tmax_c`, `tmin_c`, `srad_w_m2`, `vp_pa`, `dayl_s`, `source` (`nwm` | `daymet`); unique on `(station, date, source)`; table: `basin_forcings`
 
 ### Forecast Types
 
@@ -125,6 +126,24 @@ Key non-obvious endpoints:
 - `GET /api/v1/master-stations/lookup/?id={id}` — Cross-network station ID resolution
 - `POST /api/v1/configurations/{id}/trigger/` — Manual pull trigger
 - `POST /api/v1/raster-layers/extract_points/` — Extract raster values at lat/lon coordinates
+- `GET /api/v1/forcings/{usgs_id}/?days=N` — Basin-averaged daily forcings for EA-LSTM inference; unauthenticated (public met data); returns `source='nwm'` rows, falling back to `source='daymet'` when none exist; ordered oldest-first; 400 on invalid `days`
+
+### BasinForcing / EA-LSTM Integration
+
+The `BasinForcing` model stores daily basin-averaged meteorological forcings used by the resid-cast EA-LSTM precipitation-runoff model. Two sources:
+
+- `source='daymet'` — Historical CAMELS Daymet forcings (1980–2014); backfilled via `backfill_basin_forcings.py` for 37 CAMELS-overlap PNW stations; ~12,784 rows/station (473,008 total)
+- `source='nwm'` — Operational NWM Medium-Range forcings; will be populated once the NWM raster ingestion pipeline is wired up
+
+The forcings endpoint (`GET /api/v1/forcings/{usgs_id}/`) is consumed by `resid-cast/forecast_service/jobs/precip_runner.py`, which calls it to build the dynamic input sequence for EA-LSTM inference. The view returns `nwm` rows first, falling back to `daymet` so inference works from historical data until NWM data is flowing.
+
+**NWM_MediumRange** is registered in `init_raster_datasets.py` with `data_source='nwm_s3'` — this is the future source for populating `source='nwm'` BasinForcing rows. Configure an active pull via the GUI at `/gridded-configurations/`.
+
+**To backfill a new station** (must have a CAMELS Daymet file):
+```bash
+# Add USGS ID to resid_cast_stations.json with ealstm_available: true, then:
+python backfill_basin_forcings.py   # idempotent, skips existing rows
+```
 
 ### Raster Pipeline
 
