@@ -153,8 +153,16 @@ class DischargeObservationViewSet(viewsets.ReadOnlyModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
         else:
-            # Default to the latest date that has data
-            latest = DailyFlowPercentile.objects.aggregate(d=Max("date"))["d"]
+            # Default to the latest date with data that is at least 2 days old.
+            # USGS daily_mean values arrive with 12–36 hour latency, so today-1
+            # is typically incomplete until the evening task runs. Using today-2
+            # ensures the default response reflects a fully-populated day.
+            from datetime import timedelta
+            cutoff = date.today() - timedelta(days=2)
+            latest = DailyFlowPercentile.objects.filter(date__lte=cutoff).aggregate(d=Max("date"))["d"]
+            if latest is None:
+                # Fall back to any available date if nothing is old enough
+                latest = DailyFlowPercentile.objects.aggregate(d=Max("date"))["d"]
             target_date = latest or date.today()
 
         queryset = DailyFlowPercentile.objects.filter(

@@ -186,14 +186,20 @@ def run_flood_thresholds_task(config_id):
 
 @shared_task
 def run_daily_flow_percentiles_task(config_id):
-    """Compute and upsert DailyFlowPercentile for yesterday for all stations in a StatisticsConfiguration."""
+    """Compute and upsert DailyFlowPercentile for the past two days for all stations in a StatisticsConfiguration.
+
+    Computes both today-1 and today-2 on every run. USGS daily_mean values arrive
+    with variable latency (often 12-36 hours), so recomputing today-2 catches stations
+    whose observations weren't yet available on the previous day's run.
+    """
     from apps.analytics.models import StatisticsConfiguration, StatisticsComputationLog
     from django.utils import timezone as dj_timezone
     import time
 
     config = StatisticsConfiguration.objects.get(id=config_id)
     station_ids = list(config.get_station_queryset().values_list('id', flat=True))
-    target_date = date.today() - timedelta(days=1)
+    today = date.today()
+    target_dates = [today - timedelta(days=1), today - timedelta(days=2)]
 
     log = StatisticsComputationLog.objects.create(
         configuration=config,
@@ -203,45 +209,51 @@ def run_daily_flow_percentiles_task(config_id):
     )
 
     start_time = time.monotonic()
+    total_records = 0
+    total_stations: set = set()
     try:
-        rows = compute_percentile_for_date(target_date, station_ids=station_ids)
         computed_at = datetime.now(timezone.utc)
-
-        records = [
-            DailyFlowPercentile(
-                station_id=row['station_id'],
-                date=row['observation_date'],
-                discharge=row['discharge'],
-                percentile_rank=row['percentile_rank'],
-                band=row['band'],
-                historical_record_count=row['historical_record_count'],
-                computed_at=computed_at,
-            )
-            for row in rows
-        ]
-
-        for i in range(0, len(records), _INSERT_BATCH):
-            DailyFlowPercentile.objects.bulk_create(
-                records[i: i + _INSERT_BATCH],
-                update_conflicts=True,
-                unique_fields=['station', 'date'],
-                update_fields=['discharge', 'percentile_rank', 'band', 'historical_record_count', 'computed_at'],
+        for target_date in target_dates:
+            rows = compute_percentile_for_date(target_date, station_ids=station_ids)
+            records = [
+                DailyFlowPercentile(
+                    station_id=row['station_id'],
+                    date=row['observation_date'],
+                    discharge=row['discharge'],
+                    percentile_rank=row['percentile_rank'],
+                    band=row['band'],
+                    historical_record_count=row['historical_record_count'],
+                    computed_at=computed_at,
+                )
+                for row in rows
+            ]
+            for i in range(0, len(records), _INSERT_BATCH):
+                DailyFlowPercentile.objects.bulk_create(
+                    records[i: i + _INSERT_BATCH],
+                    update_conflicts=True,
+                    unique_fields=['station', 'date'],
+                    update_fields=['discharge', 'percentile_rank', 'band', 'historical_record_count', 'computed_at'],
+                )
+            total_records += len(records)
+            total_stations.update(r['station_id'] for r in rows)
+            logger.info(
+                'run_daily_flow_percentiles_task: config=%s date=%s stations=%d',
+                config_id, target_date, len(records),
             )
 
         duration = time.monotonic() - start_time
-        unique_stations = len({r['station_id'] for r in rows})
         log.status = 'success'
-        log.stations_processed = unique_stations
-        log.records_computed = len(records)
+        log.stations_processed = len(total_stations)
+        log.records_computed = total_records
         log.duration_seconds = round(duration, 2)
         log.completed_at = dj_timezone.now()
         log.save()
         StatisticsConfiguration.objects.filter(id=config_id).update(last_run_at=dj_timezone.now())
         logger.info(
-            'run_daily_flow_percentiles_task: config=%s date=%s stations=%d in %.1fs',
-            config_id, target_date, len(records), duration,
+            'run_daily_flow_percentiles_task: config=%s COMPLETE dates=%s total_stations=%d total_records=%d in %.1fs',
+            config_id, [d.isoformat() for d in target_dates], len(total_stations), total_records, duration,
         )
-        return {'status': 'success', 'target_date': target_date.isoformat(), 'stations': len(records)}
+        return {'status': 'success', 'target_dates': [d.isoformat() for d in target_dates], 'stations': len(total_stations)}
 
     except Exception as exc:
         duration = time.monotonic() - start_time
