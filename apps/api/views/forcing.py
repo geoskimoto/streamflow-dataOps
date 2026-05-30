@@ -34,12 +34,10 @@ class BasinForcingView(APIView):
                 {"detail": "days must be a positive integer."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        forcings = (
-            BasinForcing.objects
-            .filter(station=station, source="nwm")  # nwm only; Daymet is for historical training
-            .select_related("station")
-            .order_by("-date")[:days]
-        )
+        forcings_qs = BasinForcing.objects.filter(station=station, source="nwm")
+        if not forcings_qs.exists():
+            forcings_qs = BasinForcing.objects.filter(station=station, source="daymet")
+        forcings = forcings_qs.select_related("station").order_by("-date")[:days]
         forcings_list = list(reversed(list(forcings)))
         serializer = BasinForcingSerializer(forcings_list, many=True)
         return Response(serializer.data)
