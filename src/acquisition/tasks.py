@@ -580,3 +580,22 @@ def scheduled_streamflow_pulls():
 
     logger.info("scheduled_streamflow_pulls: dispatched=%d, skipped=%d", dispatched, skipped)
     return {"dispatched": dispatched, "skipped": skipped}
+
+
+@shared_task
+def run_nwrfc_web_pull():
+    """Look up the nwrfc_web PullConfiguration and trigger a pull.
+
+    Decouples the beat schedule from the config's DB primary key.
+    """
+    try:
+        config = PullConfiguration.objects.get(data_source='nwrfc_web', is_enabled=True)
+    except PullConfiguration.DoesNotExist:
+        logger.warning("run_nwrfc_web_pull: no enabled nwrfc_web PullConfiguration found — skipping")
+        return {"skipped": True}
+    except PullConfiguration.MultipleObjectsReturned:
+        config = PullConfiguration.objects.filter(data_source='nwrfc_web', is_enabled=True).first()
+
+    execute_pull_configuration.delay(config.id)
+    logger.info("run_nwrfc_web_pull: queued execute_pull_configuration(config_id=%d)", config.id)
+    return {"config_id": config.id}

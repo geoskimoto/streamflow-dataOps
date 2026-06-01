@@ -118,6 +118,12 @@ app.conf.beat_schedule = {
         'task': 'src.analytics.tasks.dispatch_statistics_computations',
         'schedule': crontab(minute=0),  # every hour on the hour
     },
+
+    # NWRFC web scrape - Every 6 hours at :30 past the hour (00:30, 06:30, 12:30, 18:30 UTC)
+    'nwrfc-web-pull': {
+        'task': 'src.acquisition.tasks.run_nwrfc_web_pull',
+        'schedule': crontab(minute=30, hour='*/6'),
+    },
 }
 
 
