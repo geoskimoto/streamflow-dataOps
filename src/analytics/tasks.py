@@ -420,3 +420,39 @@ def run_percentile_backfill_task(config_id):
         log.save()
         logger.error('run_percentile_backfill_task failed for config %s: %s', config_id, exc)
         raise
+
+
+# ---------------------------------------------------------------------------
+# Station activity sync (runs daily via Celery beat)
+# ---------------------------------------------------------------------------
+
+@shared_task
+def sync_station_activity_task(months_back: int = 6):
+    """
+    Update Station.is_active for every station based on whether it has a
+    discharge observation within the last ``months_back`` months.
+
+    Uses the (station_id, observed_at, type) composite index — typically
+    completes in a few seconds regardless of total station count.
+    """
+    from django.db import connection
+    import time
+
+    start = time.monotonic()
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            UPDATE stations s
+            SET is_active = EXISTS (
+                SELECT 1 FROM discharge_observations o
+                WHERE o.station_id = s.id
+                  AND o.observed_at >= NOW() - INTERVAL %(months)s
+            )
+        """, {"months": f"{months_back} months"})
+        updated = cursor.rowcount
+
+    duration = time.monotonic() - start
+    logger.info(
+        "sync_station_activity_task: updated %d stations in %.1fs (months_back=%d)",
+        updated, duration, months_back,
+    )
+    return {"updated": updated, "duration_seconds": round(duration, 2)}
