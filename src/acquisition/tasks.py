@@ -24,6 +24,7 @@ from apps.streamflow.models import (
 from src.acquisition.usgs_client import USGSClient
 from src.acquisition.canada_client import CanadaClient
 from src.acquisition.noaa_client import NOAAClient
+from src.acquisition.nwrfc_web_client import NWRFCWebClient
 from src.acquisition.smart_append import SmartAppendLogic
 from src.acquisition.data_processor import DataProcessor
 
@@ -35,6 +36,36 @@ def test_task(self):
     """Test task to verify Celery setup."""
     logger.info("Test task executed successfully!")
     return "Test task completed"
+
+
+def _save_nwrfc_forecast_run(station_obj, rows: list[dict], run_date) -> int:
+    """Create ForecastRun records from a single nwrfc_web scrape.
+
+    Splits rows into observed (is_forecast=False) and forecast (is_forecast=True)
+    and writes one ForecastRun record per category.
+    Uses update_or_create keyed on (station, source, run_date, forecast_type, is_forecast).
+    Returns total number of data points stored across both records.
+    """
+    from apps.streamflow.models import ForecastRun
+
+    observed = [{'date': r['date'], 'value': r['value']} for r in rows if not r['is_forecast']]
+    forecast = [{'date': r['date'], 'value': r['value']} for r in rows if r['is_forecast']]
+
+    total = 0
+    for is_fc, data in [(False, observed), (True, forecast)]:
+        if not data:
+            continue
+        ForecastRun.objects.update_or_create(
+            station=station_obj,
+            source='nwrfc_web',
+            run_date=run_date,
+            forecast_type='medium',
+            is_forecast=is_fc,
+            defaults={'data': data},
+        )
+        total += len(data)
+
+    return total
 
 
 def _process_single_station(config_station, config_id, config):
@@ -162,6 +193,26 @@ def _process_single_station(config_station, config_id, config):
             else:
                 logger.error(f"NOAA_RFC only supports 'forecast' data type, got: {config.data_type}")
                 return {"records": 0, "success": False, "error": f"NOAA_RFC only supports 'forecast' data type, got: {config.data_type}"}
+
+        elif agency == "nwrfc_web":
+            client = NWRFCWebClient()
+            rows = client.fetch_and_parse(station_number)
+            if not rows:
+                logger.warning(f"nwrfc_web: no data returned for {station_number}")
+                return {"records": 0, "success": True, "error": None}
+
+            from apps.streamflow.models import Station as StationModel
+            station_obj, _ = StationModel.objects.get_or_create(
+                station_number=station_number,
+                agency='NOAA_RFC',
+                defaults={
+                    'name': getattr(config_station, 'station_name', None) or f"NWRFC Station {station_number}",
+                }
+            )
+            run_date = datetime.now(timezone.utc)
+            records = _save_nwrfc_forecast_run(station_obj, rows, run_date)
+            logger.info(f"nwrfc_web: stored {records} data points for {station_number}")
+            return {"records": records, "success": True, "error": None}
 
         else:
             logger.error(f"Unknown agency: {agency}")

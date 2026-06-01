@@ -111,3 +111,64 @@ def test_live_fetch_daid1():
     client = NWRFCWebClient()
     rows = client.fetch_and_parse("DAID1")
     assert len(rows) > 0
+
+
+# ── Dispatch integration test ─────────────────────────────────────────────────
+
+import os
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+
+import django
+django.setup()
+
+from django.test import TestCase
+from unittest.mock import MagicMock
+
+
+class TestNwrfcWebDispatch(TestCase):
+    """_process_single_station with data_source='nwrfc_web' creates two ForecastRun
+    records (observed + forecast) for the station."""
+
+    def test_nwrfc_web_dispatch_saves_two_forecast_runs(self):
+        from django.utils import timezone as dj_timezone
+        from apps.streamflow.models import Station, ForecastRun
+        from src.acquisition.tasks import _process_single_station
+        from unittest.mock import patch
+
+        station = Station.objects.get_or_create(
+            station_number='REVQ2_TASK3',
+            defaults={'name': 'Test REVQ2 Task3', 'agency': 'NOAA_RFC'},
+        )[0]
+
+        config = MagicMock()
+        config.data_source = 'nwrfc_web'
+        config.data_type = 'forecast'
+        config.pull_start_date = dj_timezone.now()
+
+        config_station = MagicMock()
+        config_station.station_number = 'REVQ2_TASK3'
+        config_station.station_name = 'Test REVQ2 Task3'
+
+        sample_rows = [
+            {'date': '2026-06-01T06:00:00Z', 'value': 12000.0, 'is_forecast': False},
+            {'date': '2026-06-02T00:00:00Z', 'value': 14000.0, 'is_forecast': True},
+        ]
+
+        with patch('src.acquisition.tasks.NWRFCWebClient') as MockClient:
+            MockClient.return_value.fetch_and_parse.return_value = sample_rows
+            result = _process_single_station(config_station, config_id=99, config=config)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(
+            ForecastRun.objects.filter(station=station, source='nwrfc_web').count(), 2
+        )
+        self.assertEqual(
+            ForecastRun.objects.filter(
+                station=station, source='nwrfc_web', is_forecast=False
+            ).count(), 1
+        )
+        self.assertEqual(
+            ForecastRun.objects.filter(
+                station=station, source='nwrfc_web', is_forecast=True
+            ).count(), 1
+        )
