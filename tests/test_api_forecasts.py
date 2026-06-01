@@ -430,17 +430,17 @@ class ForecastErrorHandlingTest(TestCase):
 
 class ForecastPaginationTest(TestCase):
     """Test pagination for forecast endpoints."""
-    
+
     def setUp(self):
         """Set up test data."""
         self.client = APIClient()
-        
+
         self.station = Station.objects.create(
             station_number='FCST_PAGE_01',
             name='Pagination Test Station',
             agency='NOAA_RFC',
         )
-        
+
         # Create 50 forecasts
         for i in range(50):
             ForecastRun.objects.create(
@@ -450,17 +450,56 @@ class ForecastPaginationTest(TestCase):
                 forecast_type='short',
                 data=[{'date': f'2026-02-04T00:00:00Z', 'value': 100.0}]
             )
-    
+
     def test_forecast_pagination(self):
         """Test that forecast list is paginated."""
         url = reverse('api:forecast-list')
         response = self.client.get(url, {'station_number': 'FCST_PAGE_01'})
-        
+
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('count', response.data)
         self.assertIn('next', response.data)
         self.assertIn('previous', response.data)
-        
+
         # Should have 50 total, but paginated results
         self.assertEqual(response.data['count'], 50)
         self.assertLess(len(response.data['results']), 50)
+
+
+class ForecastRunNwrfcWebModelTest(TestCase):
+    """Test ForecastRun model supports nwrfc_web source and is_forecast field."""
+
+    def setUp(self):
+        self.station = Station.objects.create(
+            station_number='REVQ2',
+            name='Revelstoke Web Test',
+            agency='NOAA_RFC',
+        )
+
+    def test_nwrfc_web_source_accepted(self):
+        run = ForecastRun(
+            station=self.station,
+            source='nwrfc_web',
+            run_date=timezone.now(),
+            forecast_type='medium',
+            is_forecast=True,
+            data=[{'date': '2026-06-02T00:00:00Z', 'value': 5000.0}],
+        )
+        run.full_clean()  # raises if 'nwrfc_web' is not a valid choice
+        run.save()
+        self.assertEqual(ForecastRun.objects.filter(source='nwrfc_web').count(), 1)
+
+    def test_two_records_per_scrape_observed_and_forecast(self):
+        """Observed (is_forecast=False) and forecast (is_forecast=True) can coexist."""
+        now = timezone.now()
+        ForecastRun.objects.create(
+            station=self.station, source='nwrfc_web', run_date=now,
+            forecast_type='medium', is_forecast=False,
+            data=[{'date': '2026-06-01T18:00:00Z', 'value': 4800.0}],
+        )
+        ForecastRun.objects.create(
+            station=self.station, source='nwrfc_web', run_date=now,
+            forecast_type='medium', is_forecast=True,
+            data=[{'date': '2026-06-02T00:00:00Z', 'value': 5100.0}],
+        )
+        self.assertEqual(ForecastRun.objects.filter(source='nwrfc_web').count(), 2)

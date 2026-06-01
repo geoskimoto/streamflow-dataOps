@@ -109,6 +109,7 @@ class ForecastRun(models.Model):
 
     SOURCE_CHOICES = [
         ("NOAA_RFC", "NOAA River Forecast Center"),
+        ("nwrfc_web", "NWRFC Website"),
     ]
 
     FORECAST_TYPE_CHOICES = [
@@ -131,6 +132,10 @@ class ForecastRun(models.Model):
         default="short",
         help_text="Forecast duration type"
     )
+    is_forecast = models.BooleanField(
+        default=True,
+        help_text="True = forecast rows; False = observed rows scraped from same page",
+    )
     data = models.JSONField(help_text="Array of { date: string, value: number }")
     rmse = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True, help_text="Accuracy metric")
 
@@ -138,7 +143,7 @@ class ForecastRun(models.Model):
         db_table = "forecast_runs"
         constraints = [
             models.UniqueConstraint(
-                fields=["station", "source", "run_date", "forecast_type"],
+                fields=["station", "source", "run_date", "forecast_type", "is_forecast"],
                 name="unique_forecast_run",
             )
         ]
@@ -160,6 +165,7 @@ class PullConfiguration(models.Model):
         ("EC", "Environment Canada"),
         ("NOAA", "NOAA National Water Model"),
         ("NOAA_RFC", "NOAA River Forecast Center"),
+        ("nwrfc_web", "NWRFC Website (scraper)"),
     ]
 
     DATA_TYPE_CHOICES = [

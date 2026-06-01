@@ -33,7 +33,7 @@ class ForecastRunViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = ForecastRun.objects.select_related('station').order_by('-run_date')
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['station', 'source', 'run_date']
+    filterset_fields = ['station', 'source', 'run_date', 'is_forecast']
     search_fields = ['station__station_number', 'station__name']
     ordering_fields = ['run_date', 'station__station_number']
     
