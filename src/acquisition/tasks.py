@@ -13,6 +13,7 @@ from celery import Task, shared_task
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 import logging
+import time
 from config.celery import app
 from django.db import transaction
 from apps.streamflow.models import (
@@ -195,6 +196,7 @@ def _process_single_station(config_station, config_id, config):
                 return {"records": 0, "success": False, "error": f"NOAA_RFC only supports 'forecast' data type, got: {config.data_type}"}
 
         elif agency == "nwrfc_web":
+            time.sleep(1.0)  # rate-limit: NWRFC website throttles parallel requests
             client = NWRFCWebClient()
             rows = client.fetch_and_parse(station_number)
             if not rows:
