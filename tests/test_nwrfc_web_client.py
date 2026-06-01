@@ -1,30 +1,32 @@
 """Unit tests for NWRFCWebClient."""
 
 import pytest
-from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 import requests
 
 from src.acquisition.nwrfc_web_client import NWRFCWebClient
 
 
-# Minimal representative HTML from textPlot.cgi
-# The page returns a PRE block with space-aligned date/time/value columns.
-# First two rows are past (observed), last two are future (forecast).
+# Representative HTML matching the real textPlot.cgi table structure.
+# Row 0: section headers ("Observed" / "Forecast/Trend Issued: ...")
+# Row 1: column headers
+# Rows 2+: data rows with up to 4 cells [obs_time, obs_val, fc_time, fc_val]
 SAMPLE_HTML = """
-<html><body><pre>
-   DATE/TIME         FLOW(KCFS)
--------------------------------------------------------------------
-  06/01/2026 06:00      12.50
-  06/01/2026 12:00      13.10
-  06/02/2026 00:00      14.80
-  06/02/2026 06:00       ---
-  06/02/2026 12:00      15.20
-</pre></body></html>
+<html><body>
+<table border="0" cellspacing="5">
+<tr><td colspan="2">Observed</td><td colspan="2">Forecast/Trend&nbsp;Issued:&nbsp;2026-06-01 10:00 PDT</td></tr>
+<tr><td>Date/Time (PDT)</td><td>Discharge</td><td>Date/Time (PDT)</td><td>Discharge</td></tr>
+<tr><td>2026-06-01 06:00</td><td>1250</td><td>2026-06-02 00:00</td><td>1480</td></tr>
+<tr><td>2026-06-01 12:00</td><td>1310</td><td>2026-06-02 06:00</td><td>1520</td></tr>
+<tr><td></td><td></td><td>2026-06-02 12:00</td><td>1550</td></tr>
+</table>
+</body></html>
 """
 
-# Scrape time lands between the second and third row
-SCRAPE_TIME = datetime(2026, 6, 1, 18, 0, 0, tzinfo=timezone.utc)
+# Page with no data — should return empty list
+NO_DATA_HTML = """
+<head><pre>*** Please note: No data was found for this station. ***</pre></head>
+"""
 
 
 @pytest.fixture
@@ -33,55 +35,66 @@ def client():
 
 
 def test_parse_returns_list_of_dicts(client):
-    rows = client.parse(SAMPLE_HTML, SCRAPE_TIME)
+    rows = client.parse(SAMPLE_HTML)
     assert isinstance(rows, list)
-    assert len(rows) == 4  # row with "---" is skipped
+    # 2 observed rows + 3 forecast rows = 5
+    assert len(rows) == 5
 
 
 def test_parse_row_has_required_keys(client):
-    rows = client.parse(SAMPLE_HTML, SCRAPE_TIME)
+    rows = client.parse(SAMPLE_HTML)
     for row in rows:
         assert 'date' in row
         assert 'value' in row
         assert 'is_forecast' in row
 
 
-def test_parse_missing_value_rows_skipped(client):
-    rows = client.parse(SAMPLE_HTML, SCRAPE_TIME)
-    values = [r['value'] for r in rows]
-    assert None not in values
-
-
 def test_parse_observed_rows_flagged_correctly(client):
-    rows = client.parse(SAMPLE_HTML, SCRAPE_TIME)
+    rows = client.parse(SAMPLE_HTML)
     observed = [r for r in rows if not r['is_forecast']]
-    # 06/01 06:00 and 06/01 12:00 are before scrape_time
     assert len(observed) == 2
 
 
 def test_parse_forecast_rows_flagged_correctly(client):
-    rows = client.parse(SAMPLE_HTML, SCRAPE_TIME)
+    rows = client.parse(SAMPLE_HTML)
     forecast = [r for r in rows if r['is_forecast']]
-    # 06/02 00:00 and 06/02 12:00 are after scrape_time (06/02 06:00 had ---)
-    assert len(forecast) == 2
+    assert len(forecast) == 3
 
 
 def test_parse_date_is_iso_utc_string(client):
-    rows = client.parse(SAMPLE_HTML, SCRAPE_TIME)
+    rows = client.parse(SAMPLE_HTML)
     for row in rows:
         assert row['date'].endswith('Z') or '+00:00' in row['date']
 
 
-def test_parse_value_is_cfs_float(client):
-    """Values in KCFS on the page are converted to CFS."""
-    rows = client.parse(SAMPLE_HTML, SCRAPE_TIME)
-    # 12.50 KCFS → 12500.0 CFS
-    first_observed = [r for r in rows if not r['is_forecast']][0]
-    assert first_observed['value'] == pytest.approx(12500.0)
+def test_parse_pdt_converted_to_utc(client):
+    """PDT (UTC-7) timestamps should be stored as UTC."""
+    rows = client.parse(SAMPLE_HTML)
+    # 2026-06-01 06:00 PDT = 2026-06-01 13:00 UTC
+    obs = [r for r in rows if not r['is_forecast']]
+    assert obs[0]['date'] == '2026-06-01T13:00:00Z'
+
+
+def test_parse_values_are_floats(client):
+    rows = client.parse(SAMPLE_HTML)
+    for row in rows:
+        assert isinstance(row['value'], float)
+
+
+def test_parse_observed_value_correct(client):
+    """Values are CFS — no conversion applied."""
+    rows = client.parse(SAMPLE_HTML)
+    obs = [r for r in rows if not r['is_forecast']]
+    assert obs[0]['value'] == pytest.approx(1250.0)
+
+
+def test_parse_no_data_returns_empty(client):
+    rows = client.parse(NO_DATA_HTML)
+    assert rows == []
 
 
 def test_fetch_raises_on_http_error(client):
-    with patch('requests.get') as mock_get:
+    with patch('src.acquisition.nwrfc_web_client.requests.get') as mock_get:
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = requests.HTTPError("404 Not Found")
         mock_get.return_value = mock_resp
@@ -91,26 +104,31 @@ def test_fetch_raises_on_http_error(client):
 
 def test_fetch_and_parse_returns_list(client):
     with patch.object(client, 'fetch', return_value=SAMPLE_HTML):
-        rows = client.fetch_and_parse("REVQ2")
+        rows = client.fetch_and_parse("WTLO3")
     assert isinstance(rows, list)
-    assert len(rows) == 4
+    assert len(rows) == 5
 
 
 @pytest.mark.integration
-def test_live_fetch_revq2():
-    """Live test — requires internet. Marked integration, off by default."""
+def test_live_fetch_wtlo3():
+    """Live test for a US station with observed + forecast data."""
     client = NWRFCWebClient()
-    rows = client.fetch_and_parse("REVQ2")
+    rows = client.fetch_and_parse("WTLO3")
     assert len(rows) > 0
     assert all('date' in r and 'value' in r and 'is_forecast' in r for r in rows)
+    assert any(r['is_forecast'] for r in rows)
 
 
 @pytest.mark.integration
-def test_live_fetch_daid1():
-    """Live test for a US station."""
+def test_live_fetch_tdao3():
+    """Live test for The Dalles Dam — should have both observed and forecast."""
     client = NWRFCWebClient()
-    rows = client.fetch_and_parse("DAID1")
+    rows = client.fetch_and_parse("TDAO3")
     assert len(rows) > 0
+    obs = [r for r in rows if not r['is_forecast']]
+    fcs = [r for r in rows if r['is_forecast']]
+    assert len(obs) > 0
+    assert len(fcs) > 0
 
 
 # ── Dispatch integration test ─────────────────────────────────────────────────
