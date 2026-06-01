@@ -32,12 +32,25 @@ class FloodThresholdAdmin(admin.ModelAdmin):
     readonly_fields = ["last_updated"]
 
 
+class StatisticsConfigurationStationInline(admin.TabularInline):
+    model         = StatisticsConfigurationStation
+    extra         = 0
+    raw_id_fields = ["station"]
+    fields        = ["station"]
+    show_change_link = True
+
+
 @admin.register(StatisticsConfiguration)
 class StatisticsConfigurationAdmin(admin.ModelAdmin):
-    list_display    = ["name", "computation_type", "agency_filter", "schedule_type", "is_enabled", "last_run_at", "next_run_at"]
+    list_display    = ["name", "computation_type", "agency_filter", "resolved_station_count", "schedule_type", "is_enabled", "last_run_at", "next_run_at"]
     list_filter     = ["computation_type", "agency_filter", "schedule_type", "is_enabled"]
     search_fields   = ["name"]
-    readonly_fields = ["last_run_at", "next_run_at", "created_at", "updated_at"]
+    readonly_fields = ["resolved_station_count", "last_run_at", "next_run_at", "created_at", "updated_at"]
+    inlines         = [StatisticsConfigurationStationInline]
+
+    @admin.display(description="Stations")
+    def resolved_station_count(self, obj):
+        return obj.get_station_queryset().count()
 
 
 @admin.register(StatisticsConfigurationStation)
