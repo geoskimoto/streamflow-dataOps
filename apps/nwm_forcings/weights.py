@@ -6,7 +6,6 @@ basin polygon, plus the basin centroid lat/lon for dayl_s computation.
 """
 from __future__ import annotations
 import logging
-import math
 from pathlib import Path
 import numpy as np
 
