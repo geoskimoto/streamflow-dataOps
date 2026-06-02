@@ -72,6 +72,7 @@ INSTALLED_APPS = [
     "apps.streamflow",
     "apps.monitoring",
     "apps.analytics",
+    "apps.nwm_forcings",
 ]
 
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
@@ -293,3 +294,28 @@ GEE_DATASETS = {
     'RTMA': 'NOAA/NWS/RTMA',
     'SMAP_SPL4': 'NASA/SMAP/SPL4SMGP/008',
 }
+
+# ---------------------------------------------------------------------------
+# NWM Forcings Pipeline
+# ---------------------------------------------------------------------------
+NWM_WEIGHTS_DIR = BASE_DIR / "data" / "nwm_weights"
+NWM_TEMP_DIR = BASE_DIR / "data" / "nwm_temp"
+NWM_NOMADS_BASE = os.getenv(
+    "NWM_NOMADS_BASE",
+    "https://nomads.ncep.noaa.gov/pub/data/nccf/com/nwm/prod",
+)
+NWM_S3_BASE = os.getenv(
+    "NWM_S3_BASE",
+    "https://noaa-nwm-pds.s3.amazonaws.com",
+)
+
+NWM_EA_LSTM_USGS_IDS = [
+    "10396000", "12010000", "12013500", "12020000", "12025000",
+    "12035000", "12043000", "12048000", "12056500", "12082500",
+    "12095000", "12141300", "12167000", "12175500", "12186000",
+    "12189500", "12358500", "12390700", "12411000", "12414500",
+    "12451000", "13011500", "13011900", "13023000", "13235000",
+    "13337000", "13338500", "13340000", "14020000", "14137000",
+    "14236202", "14301000", "14305500", "14306500", "14316700",
+    "14325000", "14400000",
+]
