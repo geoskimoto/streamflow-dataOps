@@ -9,6 +9,7 @@ Usage:
 """
 from __future__ import annotations
 
+import argparse
 import logging
 import shutil
 from datetime import date, timedelta
@@ -47,9 +48,9 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--skip-existing",
-            action="store_true",
+            action=argparse.BooleanOptionalAction,
             default=True,
-            help="Skip dates that already have a success log entry (default: True)",
+            help="Skip dates that already have a success log entry (use --no-skip-existing to reprocess)",
         )
 
     def handle(self, *args, **options):
@@ -98,7 +99,7 @@ class Command(BaseCommand):
                     try:
                         download_file(url, dest)
                         downloaded.append((hour, dest))
-                    except (NWMDownloadError, Exception) as exc:
+                    except Exception as exc:
                         logger.debug("Hour %02d failed: %s", hour, exc)
                         failed_hours.append(hour)
 
@@ -133,6 +134,14 @@ class Command(BaseCommand):
                     self.style.SUCCESS(f"  {current} — {n} stations ({status})")
                 )
                 processed += 1
+
+            except Exception as exc:
+                logger.error("Failed to process %s: %s", current, exc)
+                self.stdout.write(self.style.ERROR(f"  {current} — ERROR: {exc}"))
+                NWMIngestionLog.objects.update_or_create(
+                    ingest_date=current,
+                    defaults={"stations_updated": 0, "status": "failed", "error_message": str(exc)},
+                )
 
             finally:
                 shutil.rmtree(temp_dir, ignore_errors=True)

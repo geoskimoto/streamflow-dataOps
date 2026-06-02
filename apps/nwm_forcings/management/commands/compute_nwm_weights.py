@@ -69,7 +69,9 @@ def _basin_centroid(coords: list[tuple[float, float]]) -> tuple[float, float]:
 
 def _download_sample_file(nomads_base: str) -> Path:
     """Download the most recent available NWM analysis file to a temp path."""
-    tmp = Path(tempfile.mktemp(suffix=".nc"))
+    _tmp_fd = tempfile.NamedTemporaryFile(delete=False, suffix=".nc")
+    tmp = Path(_tmp_fd.name)
+    _tmp_fd.close()
     for days_back in range(1, 4):
         target_date = date.today() - timedelta(days=days_back)
         date_str = target_date.strftime("%Y%m%d")

@@ -24,6 +24,10 @@ class NWMDownloadError(Exception):
     """Raised when an NWM file cannot be downloaded."""
 
 
+class NWMTransientError(NWMDownloadError):
+    """Raised for transient server errors (5xx) that warrant retry."""
+
+
 def build_nomads_url(base: str, dt: date, hour: int) -> str:
     """Return the NOMADS URL for a specific NWM analysis forcing file."""
     return _FILE_PATTERN.format(
@@ -55,7 +59,7 @@ def list_day_urls(base: str, dt: date, source: str = "nomads") -> list[str]:
 
 
 @retry(
-    retry=retry_if_exception_type(requests.RequestException),
+    retry=retry_if_exception_type((requests.RequestException, NWMTransientError)),
     wait=wait_exponential(multiplier=2, min=4, max=60),
     stop=stop_after_attempt(3),
     reraise=True,
@@ -77,9 +81,9 @@ def download_file(url: str, dest: Path) -> Path:
     session = requests.Session()
     resp = session.get(url, timeout=120, stream=True)
     if not resp.ok:
-        raise NWMDownloadError(
-            f"HTTP {resp.status_code} downloading {url}"
-        )
+        if resp.status_code >= 500:
+            raise NWMTransientError(f"HTTP {resp.status_code} downloading {url}")
+        raise NWMDownloadError(f"HTTP {resp.status_code} downloading {url}")
     dest.parent.mkdir(parents=True, exist_ok=True)
     with open(dest, "wb") as fh:
         for chunk in resp.iter_content(chunk_size=1024 * 1024):

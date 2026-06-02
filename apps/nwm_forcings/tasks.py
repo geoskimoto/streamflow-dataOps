@@ -56,8 +56,17 @@ def ingest_day(
             logger.warning("Station %s not in DB — skipping", usgs_id)
             continue
 
+        # Deduplicate by resolved path to avoid bias in mean calculations from fill-duplicated files
+        seen_paths: set[str] = set()
+        unique_files: list[Path] = []
+        for p in hourly_files:
+            key = str(p.resolve())
+            if key not in seen_paths:
+                seen_paths.add(key)
+                unique_files.append(p)
+
         hourly_records = []
-        for nc_path in hourly_files:
+        for nc_path in unique_files:
             try:
                 record = extract_hourly_basin_record(nc_path, basin_weights)
                 hourly_records.append(record)
@@ -112,7 +121,7 @@ def ingest_nwm_forcings_daily() -> dict:
             try:
                 download_file(url, dest)
                 downloaded.append(dest)
-            except (NWMDownloadError, Exception) as exc:
+            except Exception as exc:
                 logger.warning("Hour %02d download failed: %s", hour, exc)
                 failed_hours.append(hour)
 
@@ -135,8 +144,15 @@ def ingest_nwm_forcings_daily() -> dict:
                 last_good = dl_map[h]
 
         stations_updated = ingest_day(yesterday, ordered)
-        status = "success" if not failed_hours else "partial"
-        error_msg = f"Missing hours: {failed_hours}" if failed_hours else ""
+        if stations_updated == 0:
+            status = "failed"
+            error_msg = "No stations updated — check weight files and station DB entries"
+        elif failed_hours:
+            status = "partial"
+            error_msg = f"Missing hours: {failed_hours}"
+        else:
+            status = "success"
+            error_msg = ""
 
         NWMIngestionLog.objects.update_or_create(
             ingest_date=yesterday,

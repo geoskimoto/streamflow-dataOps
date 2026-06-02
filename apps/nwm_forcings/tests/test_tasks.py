@@ -1,9 +1,26 @@
 """Integration tests for the NWM daily ingestion task."""
+import shutil
 import numpy as np
 import pytest
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
+
+
+def make_24_hourly_files(tmp_path: Path, nc_file: Path) -> list[Path]:
+    """Return 24 distinct copies of nc_file named nwm_t00z.nc … nwm_t23z.nc.
+
+    Deduplication in ingest_day works by resolved path, so each copy must
+    be a separate file on disk.
+    """
+    hourly_dir = tmp_path / "hourly"
+    hourly_dir.mkdir(exist_ok=True)
+    files = []
+    for h in range(24):
+        dest = hourly_dir / f"nwm_t{h:02d}z.nc"
+        shutil.copy(str(nc_file), str(dest))
+        files.append(dest)
+    return files
 
 
 def make_synthetic_nc(tmp_path: Path, ny=50, nx=60) -> Path:
@@ -57,11 +74,12 @@ def test_ingest_day_writes_basin_forcing(tmp_path, db):
         defaults={"agency": "USGS", "name": "Test Station"},
     )
 
+    hourly_files = make_24_hourly_files(tmp_path, nc_file)
     ingest_date = date(2026, 1, 15)
     with patch("apps.nwm_forcings.tasks.settings") as mock_settings, \
          patch("apps.nwm_forcings.tasks.EA_LSTM_USGS_IDS", [usgs_id]):
         mock_settings.NWM_WEIGHTS_DIR = str(weights_dir)
-        ingest_day(ingest_date=ingest_date, hourly_files=[nc_file] * 24)
+        ingest_day(ingest_date=ingest_date, hourly_files=hourly_files)
 
     forcing = BasinForcing.objects.filter(
         station=station, date=ingest_date, source="nwm"
@@ -96,12 +114,13 @@ def test_ingest_day_upserts_on_rerun(tmp_path, db):
         defaults={"agency": "USGS", "name": "Test Station"},
     )
 
+    hourly_files = make_24_hourly_files(tmp_path, nc_file)
     ingest_date = date(2026, 1, 15)
     with patch("apps.nwm_forcings.tasks.settings") as ms, \
          patch("apps.nwm_forcings.tasks.EA_LSTM_USGS_IDS", [usgs_id]):
         ms.NWM_WEIGHTS_DIR = str(weights_dir)
-        ingest_day(ingest_date=ingest_date, hourly_files=[nc_file] * 24)
-        ingest_day(ingest_date=ingest_date, hourly_files=[nc_file] * 24)
+        ingest_day(ingest_date=ingest_date, hourly_files=hourly_files)
+        ingest_day(ingest_date=ingest_date, hourly_files=hourly_files)
 
     assert BasinForcing.objects.filter(
         station=station, date=ingest_date, source="nwm"
@@ -134,8 +153,15 @@ def test_ingest_nwm_forcings_daily_writes_log(tmp_path, db):
 
     yesterday = date.today() - timedelta(days=1)
 
+    import shutil as _shutil
+
+    def _fake_download(url, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        _shutil.copy(str(nc_file), str(dest))
+        return dest
+
     with patch("apps.nwm_forcings.tasks.settings") as ms, \
-         patch("apps.nwm_forcings.tasks.download_file", return_value=nc_file), \
+         patch("apps.nwm_forcings.tasks.download_file", side_effect=_fake_download), \
          patch("apps.nwm_forcings.tasks.build_nomads_url", return_value="http://x"), \
          patch("apps.nwm_forcings.tasks.EA_LSTM_USGS_IDS", [usgs_id]):
         ms.NWM_WEIGHTS_DIR = str(weights_dir)
@@ -143,5 +169,7 @@ def test_ingest_nwm_forcings_daily_writes_log(tmp_path, db):
         ms.NWM_TEMP_DIR = str(tmp_path / "temp")
         result = ingest_nwm_forcings_daily()
 
-    assert result["status"] in ("success", "partial")
-    assert NWMIngestionLog.objects.filter(ingest_date=yesterday).exists()
+    assert result["status"] == "success"
+    assert result["stations_updated"] == 1
+    log = NWMIngestionLog.objects.get(ingest_date=yesterday)
+    assert log.stations_updated == 1
