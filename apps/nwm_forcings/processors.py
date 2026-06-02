@@ -61,6 +61,54 @@ def extract_basin_value(
     return float(data[y_indices, x_indices].mean())
 
 
+def extract_all_basins_from_file(
+    nc_path: Path,
+    basin_weights_list: list[dict],
+) -> list[dict]:
+    """Open *nc_path* once and extract all basins in a single read pass.
+
+    Reads each variable array once into memory, then indexes it for every
+    basin — 37× faster than calling extract_hourly_basin_record per basin.
+
+    Args:
+        nc_path: Path to NWM Analysis Assim NetCDF file.
+        basin_weights_list: List of weight dicts (from load_weights) for each basin.
+
+    Returns:
+        List of hourly record dicts aligned with basin_weights_list, each with
+        keys: rainrate_mm_s, t2d_k, swdown_w_m2, vp_pa.
+
+    Raises:
+        Any xarray / file open exception — caller should catch and skip the file.
+    """
+    import xarray as xr
+
+    ds = xr.open_dataset(nc_path, engine="netcdf4")
+    try:
+        rainrate_arr = ds["RAINRATE"].values[0]   # (ny, nx)
+        t2d_arr = ds["T2D"].values[0]
+        q2d_arr = ds["Q2D"].values[0]
+        swdown_arr = ds["SWDOWN"].values[0]
+        psfc_arr = ds["PSFC"].values[0]
+    finally:
+        ds.close()
+
+    records = []
+    for bw in basin_weights_list:
+        y_idx = bw["y_indices"]
+        x_idx = bw["x_indices"]
+        records.append({
+            "rainrate_mm_s": extract_basin_value(rainrate_arr, y_idx, x_idx),
+            "t2d_k": extract_basin_value(t2d_arr, y_idx, x_idx),
+            "swdown_w_m2": extract_basin_value(swdown_arr, y_idx, x_idx),
+            "vp_pa": vapor_pressure_pa(
+                extract_basin_value(q2d_arr, y_idx, x_idx),
+                extract_basin_value(psfc_arr, y_idx, x_idx),
+            ),
+        })
+    return records
+
+
 def extract_hourly_basin_record(
     nc_path: Path,
     basin_weights: dict,

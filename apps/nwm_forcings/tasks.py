@@ -14,7 +14,7 @@ from apps.streamflow.models import BasinForcing, Station
 from .constants import EA_LSTM_USGS_IDS
 from .models import NWMIngestionLog
 from .nwm_client import build_nomads_url, download_file
-from .processors import extract_hourly_basin_record, aggregate_hourly_to_daily
+from .processors import extract_all_basins_from_file, aggregate_hourly_to_daily
 from .weights import load_weights
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,9 @@ def ingest_day(
 ) -> int:
     """Process 24 hourly NWM files for *ingest_date* and write BasinForcing rows.
 
+    Opens each unique file exactly once and extracts all basin values in a
+    single read pass (O(n_files) I/O rather than O(n_files × n_stations)).
+
     Args:
         ingest_date: Calendar date the forcings represent.
         hourly_files: Sequence of 24 paths to hourly NetCDF files (hours 0–23).
@@ -35,52 +38,61 @@ def ingest_day(
     """
     weights_dir = Path(settings.NWM_WEIGHTS_DIR)
     doy = ingest_date.timetuple().tm_yday
-    updated = 0
 
+    # --- Step 1: pre-load all valid stations (weights + DB lookup) ---
+    valid_stations: list[tuple[str, object, dict]] = []
     for usgs_id in EA_LSTM_USGS_IDS:
         weight_path = weights_dir / f"{usgs_id}.npz"
         if not weight_path.exists():
             logger.warning("No weight file for %s — skipping", usgs_id)
             continue
-
         try:
             basin_weights = load_weights(weight_path)
         except Exception as exc:
             logger.warning("Failed to load weights for %s: %s", usgs_id, exc)
             continue
-
         try:
             station = Station.objects.get(station_number=usgs_id, agency="USGS")
         except Station.DoesNotExist:
             logger.warning("Station %s not in DB — skipping", usgs_id)
             continue
+        valid_stations.append((usgs_id, station, basin_weights))
 
-        # Deduplicate by resolved path to avoid bias in mean calculations from fill-duplicated files
-        seen_paths: set[str] = set()
-        unique_files: list[Path] = []
-        for p in hourly_files:
-            key = str(p.resolve())
-            if key not in seen_paths:
-                seen_paths.add(key)
-                unique_files.append(p)
+    if not valid_stations:
+        return 0
 
-        hourly_records = []
-        for nc_path in unique_files:
-            try:
-                record = extract_hourly_basin_record(nc_path, basin_weights)
-                hourly_records.append(record)
-            except Exception as exc:
-                logger.warning("Error extracting %s from %s: %s", usgs_id, nc_path.name, exc)
+    # --- Step 2: deduplicate files (avoid mean bias from fill-duplicated paths) ---
+    seen_paths: set[str] = set()
+    unique_files: list[Path] = []
+    for p in hourly_files:
+        key = str(p.resolve())
+        if key not in seen_paths:
+            seen_paths.add(key)
+            unique_files.append(p)
 
+    # --- Step 3: open each file once, extract all basins in a single read pass ---
+    basin_weights_list = [bw for _, _, bw in valid_stations]
+    hourly_records_by_station: dict[str, list[dict]] = {uid: [] for uid, _, _ in valid_stations}
+
+    for nc_path in unique_files:
+        try:
+            all_records = extract_all_basins_from_file(nc_path, basin_weights_list)
+            for (usgs_id, _, _), record in zip(valid_stations, all_records):
+                hourly_records_by_station[usgs_id].append(record)
+        except Exception as exc:
+            logger.warning("Error extracting from %s: %s", nc_path.name, exc)
+
+    # --- Step 4: aggregate and write one DB row per station ---
+    updated = 0
+    for usgs_id, station, basin_weights in valid_stations:
+        hourly_records = hourly_records_by_station[usgs_id]
         if len(hourly_records) < 20:
             logger.warning(
                 "Only %d/24 hours for %s on %s — skipping",
                 len(hourly_records), usgs_id, ingest_date,
             )
             continue
-
         daily = aggregate_hourly_to_daily(hourly_records, basin_weights["centroid_lat"], doy)
-
         BasinForcing.objects.update_or_create(
             station=station,
             date=ingest_date,
