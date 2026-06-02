@@ -9,12 +9,11 @@ from typing import Sequence
 
 from celery import shared_task
 from django.conf import settings
-from django.db import transaction
 
 from apps.streamflow.models import BasinForcing, Station
 from .constants import EA_LSTM_USGS_IDS
 from .models import NWMIngestionLog
-from .nwm_client import build_nomads_url, download_file, NWMDownloadError
+from .nwm_client import build_nomads_url, download_file
 from .processors import extract_hourly_basin_record, aggregate_hourly_to_daily
 from .weights import load_weights
 
@@ -82,20 +81,19 @@ def ingest_day(
 
         daily = aggregate_hourly_to_daily(hourly_records, basin_weights["centroid_lat"], doy)
 
-        with transaction.atomic():
-            BasinForcing.objects.update_or_create(
-                station=station,
-                date=ingest_date,
-                source="nwm",
-                defaults={
-                    "prcp_mm_day": daily["prcp_mm_day"],
-                    "tmax_c": daily["tmax_c"],
-                    "tmin_c": daily["tmin_c"],
-                    "srad_w_m2": daily["srad_w_m2"],
-                    "vp_pa": daily["vp_pa"],
-                    "dayl_s": daily["dayl_s"],
-                },
-            )
+        BasinForcing.objects.update_or_create(
+            station=station,
+            date=ingest_date,
+            source="nwm",
+            defaults={
+                "prcp_mm_day": daily["prcp_mm_day"],
+                "tmax_c": daily["tmax_c"],
+                "tmin_c": daily["tmin_c"],
+                "srad_w_m2": daily["srad_w_m2"],
+                "vp_pa": daily["vp_pa"],
+                "dayl_s": daily["dayl_s"],
+            },
+        )
         updated += 1
 
     return updated
@@ -111,7 +109,7 @@ def ingest_nwm_forcings_daily() -> dict:
     temp_dir = Path(settings.NWM_TEMP_DIR) / yesterday.strftime("%Y%m%d")
     temp_dir.mkdir(parents=True, exist_ok=True)
 
-    downloaded: list[Path] = []
+    downloaded: list[tuple[int, Path]] = []
     failed_hours: list[int] = []
 
     try:
@@ -120,7 +118,7 @@ def ingest_nwm_forcings_daily() -> dict:
             dest = temp_dir / f"nwm_t{hour:02d}z.nc"
             try:
                 download_file(url, dest)
-                downloaded.append(dest)
+                downloaded.append((hour, dest))
             except Exception as exc:
                 logger.warning("Hour %02d download failed: %s", hour, exc)
                 failed_hours.append(hour)
@@ -135,9 +133,9 @@ def ingest_nwm_forcings_daily() -> dict:
             return {"date": str(yesterday), "stations_updated": 0, "status": "failed"}
 
         # Fill missing hours with nearest available file
-        dl_map = {int(p.stem.split("t")[1].split("z")[0]): p for p in downloaded}
+        dl_map = {h: p for h, p in downloaded}
+        last_good = downloaded[0][1]
         ordered = []
-        last_good = downloaded[0]
         for h in range(24):
             ordered.append(dl_map.get(h, last_good))
             if h in dl_map:

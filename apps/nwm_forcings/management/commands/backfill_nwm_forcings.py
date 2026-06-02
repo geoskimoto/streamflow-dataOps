@@ -19,7 +19,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from apps.nwm_forcings.models import NWMIngestionLog
-from apps.nwm_forcings.nwm_client import build_s3_url, download_file, NWMDownloadError
+from apps.nwm_forcings.nwm_client import build_s3_url, download_file
 from apps.nwm_forcings.tasks import ingest_day
 
 logger = logging.getLogger(__name__)
