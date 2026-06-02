@@ -14,7 +14,7 @@ app.config_from_object("django.conf:settings", namespace="CELERY")
 
 # Auto-discover tasks in installed apps AND src/ directory
 # Use lambda to delay evaluation until Django is ready
-app.autodiscover_tasks(lambda: ['src.acquisition', 'src.analytics'] + [n.name for n in __import__('django').apps.apps.get_app_configs()])
+app.autodiscover_tasks(lambda: ['src.acquisition', 'src.analytics', 'apps.nwm_forcings'] + [n.name for n in __import__('django').apps.apps.get_app_configs()])
 
 # Explicitly include raster_tasks module (autodiscover only finds tasks.py)
 app.conf.include = ['src.acquisition.raster_tasks']
@@ -104,6 +104,12 @@ app.conf.beat_schedule = {
         'task': 'src.acquisition.raster_tasks.cleanup_old_pull_logs',
         'schedule': crontab(minute=0, hour=1, day_of_week=0),  # Sunday 1 AM
         'kwargs': {'retention_days': 90}
+    },
+
+    # NWM Analysis Assim daily forcing ingestion — 07:00 UTC
+    'ingest-nwm-forcings-daily': {
+        'task': 'apps.nwm_forcings.tasks.ingest_nwm_forcings_daily',
+        'schedule': crontab(hour=7, minute=0),
     },
 
     # Streamflow pull dispatcher - Check every 5 minutes for due PullConfigurations
