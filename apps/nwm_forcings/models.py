@@ -9,7 +9,7 @@ class NWMIngestionLog(models.Model):
         ("failed", "Failed"),
     ]
 
-    ingest_date = models.DateField(unique=True, db_index=True)
+    ingest_date = models.DateField(unique=True)
     stations_updated = models.IntegerField(default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES)
     error_message = models.TextField(default="", blank=True)

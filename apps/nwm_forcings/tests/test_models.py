@@ -40,3 +40,16 @@ def test_nwm_ingestion_log_unique_date(db):
     NWMIngestionLog.objects.create(ingest_date=date(2026, 1, 15), status="success")
     with pytest.raises(IntegrityError):
         NWMIngestionLog.objects.create(ingest_date=date(2026, 1, 15), status="success")
+
+
+@pytest.mark.django_db
+def test_nwm_ingestion_log_str(db):
+    from apps.nwm_forcings.models import NWMIngestionLog
+
+    log = NWMIngestionLog.objects.create(
+        ingest_date=date(2026, 1, 15), stations_updated=5, status="success"
+    )
+    s = str(log)
+    assert "2026-01-15" in s
+    assert "success" in s
+    assert "5" in s
