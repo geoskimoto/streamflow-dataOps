@@ -29,8 +29,8 @@ from apps.nwm_forcings.weights import find_cells_in_polygon, save_weights
 logger = logging.getLogger(__name__)
 
 NLDI_BASIN_URL = (
-    "https://labs.waterdata.usgs.gov/api/nldi/linked-data"
-    "/nwissite/USGS-{usgs_id}/basin?f=geojson"
+    "https://api.water.usgs.gov/nldi/linked-data"
+    "/nwissite/USGS-{usgs_id}/basin?f=json"
 )
 
 
