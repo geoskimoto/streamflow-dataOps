@@ -106,3 +106,42 @@ def test_ingest_day_upserts_on_rerun(tmp_path, db):
     assert BasinForcing.objects.filter(
         station=station, date=ingest_date, source="nwm"
     ).count() == 1
+
+
+@pytest.mark.django_db
+def test_ingest_nwm_forcings_daily_writes_log(tmp_path, db):
+    """ingest_nwm_forcings_daily writes NWMIngestionLog row."""
+    from apps.nwm_forcings.tasks import ingest_nwm_forcings_daily
+    from apps.nwm_forcings.models import NWMIngestionLog
+    from apps.streamflow.models import Station
+    from apps.nwm_forcings.weights import save_weights
+    from datetime import date, timedelta
+
+    nc_file = make_synthetic_nc(tmp_path)
+    weights_dir = tmp_path / "weights"
+    weights_dir.mkdir()
+    usgs_id = "14306500"
+    save_weights(
+        weights_dir / f"{usgs_id}.npz",
+        np.array([10, 11], dtype=np.int32),
+        np.array([20, 21], dtype=np.int32),
+        47.0, -117.0,
+    )
+    Station.objects.get_or_create(
+        station_number=usgs_id,
+        defaults={"agency": "USGS", "name": "Test"},
+    )
+
+    yesterday = date.today() - timedelta(days=1)
+
+    with patch("apps.nwm_forcings.tasks.settings") as ms, \
+         patch("apps.nwm_forcings.tasks.download_file", return_value=nc_file), \
+         patch("apps.nwm_forcings.tasks.build_nomads_url", return_value="http://x"), \
+         patch("apps.nwm_forcings.tasks.EA_LSTM_USGS_IDS", [usgs_id]):
+        ms.NWM_WEIGHTS_DIR = str(weights_dir)
+        ms.NWM_NOMADS_BASE = "https://nomads.ncep.noaa.gov"
+        ms.NWM_TEMP_DIR = str(tmp_path / "temp")
+        result = ingest_nwm_forcings_daily()
+
+    assert result["status"] in ("success", "partial")
+    assert NWMIngestionLog.objects.filter(ingest_date=yesterday).exists()
