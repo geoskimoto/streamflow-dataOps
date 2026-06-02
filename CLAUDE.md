@@ -71,10 +71,11 @@ Specifically:
 
 ```
 apps/
-  streamflow/   # Core models, web views, management commands, templates
-  api/          # DRF viewsets, serializers, URL registration
-  analytics/    # DailyFlowPercentile model + scheduled computation tracking
-  monitoring/   # Placeholder health monitoring app
+  streamflow/     # Core models, web views, management commands, templates
+  api/            # DRF viewsets, serializers, URL registration
+  analytics/      # DailyFlowPercentile model + scheduled computation tracking
+  monitoring/     # Placeholder health monitoring app
+  nwm_forcings/   # NWM Analysis Assim hourly → daily basin forcing ingestion
 
 src/
   acquisition/  # Data clients, Celery tasks, raster processing (NOT a Django app)
@@ -133,11 +134,56 @@ Key non-obvious endpoints:
 The `BasinForcing` model stores daily basin-averaged meteorological forcings used by the resid-cast EA-LSTM precipitation-runoff model. Two sources:
 
 - `source='daymet'` — Historical CAMELS Daymet forcings (1980–2014); backfilled via `backfill_basin_forcings.py` for 37 CAMELS-overlap PNW stations; ~12,784 rows/station (473,008 total)
-- `source='nwm'` — Operational NWM Medium-Range forcings; will be populated once the NWM raster ingestion pipeline is wired up
+- `source='nwm'` — NWM Analysis Assim daily forcings; populated by the `apps/nwm_forcings/` Celery task (see below) and by `backfill_nwm_forcings` for historical dates
 
 The forcings endpoint (`GET /api/v1/forcings/{usgs_id}/`) is consumed by `resid-cast/forecast_service/jobs/precip_runner.py`, which calls it to build the dynamic input sequence for EA-LSTM inference. The view returns `nwm` rows first, falling back to `daymet` so inference works from historical data until NWM data is flowing.
 
-**NWM_MediumRange** is registered in `init_raster_datasets.py` with `data_source='nwm_s3'` — this is the future source for populating `source='nwm'` BasinForcing rows. Configure an active pull via the GUI at `/gridded-configurations/`.
+### apps/nwm_forcings — NWM Analysis Assim Ingestion
+
+Downloads hourly NWM Analysis Assim NetCDF forcing files, spatially aggregates them to 37 EA-LSTM CAMELS-overlap basin polygons using pre-computed weight indices, derives daily meteorological variables, and upserts `BasinForcing` rows with `source='nwm'`.
+
+**Key modules:**
+
+| File | Purpose |
+|------|---------|
+| `constants.py` | `EA_LSTM_USGS_IDS` — 37 CAMELS-overlap USGS station IDs |
+| `models.py` | `NWMIngestionLog` — per-day ingest audit log |
+| `grid.py` | `load_grid_from_file()` — reads XLAT_M/XLONG_M from NWM NetCDF |
+| `weights.py` | `find_cells_in_polygon()`, `save_weights()`, `load_weights()` — basin polygon → grid cell indices (.npz) |
+| `nwm_client.py` | `download_file()` with tenacity retry; `NWMTransientError` for 5xx (retried); `NWMDownloadError` for 4xx (not retried) |
+| `processors.py` | `extract_hourly_basin_record()`, `aggregate_hourly_to_daily()` — variable extraction and unit conversion |
+| `tasks.py` | `ingest_day()`, `ingest_nwm_forcings_daily()` Celery task |
+
+**Management commands:**
+
+```bash
+# One-time setup: compute basin weight indices (downloads sample NWM file + queries NLDI API)
+python manage.py compute_nwm_weights
+python manage.py compute_nwm_weights --sample-file /path/to/existing.nc  # skip download
+python manage.py compute_nwm_weights --usgs-id 14306500  # single station
+
+# Historical backfill from AWS S3 (available from ~2018-10-01)
+python manage.py backfill_nwm_forcings --start 2018-10-01 --end 2025-06-01
+python manage.py backfill_nwm_forcings --start 2024-01-01 --end 2024-12-31 --dry-run
+python manage.py backfill_nwm_forcings --start 2024-01-01 --end 2024-12-31 --no-skip-existing
+```
+
+**Variable derivations:**
+
+| Variable | Formula |
+|----------|---------|
+| `prcp_mm_day` | `mean(RAINRATE mm/s) × 86400` — mean over actual downloaded hours only |
+| `tmax_c` / `tmin_c` | `max/min(T2D K) − 273.15` |
+| `srad_w_m2` | `mean(SWDOWN W/m²)` — mean over actual downloaded hours only |
+| `vp_pa` | `(Q2D × PSFC) / (0.622 + 0.378 × Q2D)` |
+| `dayl_s` | Astronomical solar declination formula from basin centroid latitude |
+
+**Important conventions:**
+- Weight files live in `data/nwm_weights/{usgs_id}.npz` (configurable via `NWM_WEIGHTS_DIR`)
+- Partial days: fill missing hours with nearest available file for temp min/max; mean-based variables (`prcp_mm_day`, `srad_w_m2`) use only the actually-downloaded hours to avoid bias
+- Skips station if `< 20` unique valid hours, no weight file, or station not in DB
+- `stations_updated == 0` is logged as `status='failed'` — never silently reports success on empty output
+- Tests require PostGIS on the test DB: `CREATE EXTENSION postgis;` as superuser once
 
 **To backfill a new station** (must have a CAMELS Daymet file):
 ```bash
@@ -154,13 +200,17 @@ Clients in `src/acquisition/`: `NomadsClient` (RTMA GRIB2), `EarthDataClient` (S
 Settings live in `config/settings.py` (single file, no split dev/prod). Key env vars:
 
 ```
-DATABASE_URL            # postgresql://user:pass@host:5432/db
-CELERY_BROKER_URL       # redis://localhost:6379/0
+DATABASE_URL                 # postgresql://user:pass@host:5432/db
+CELERY_BROKER_URL            # redis://localhost:6379/0
 EARTHDATA_USERNAME/PASSWORD  # NASA EarthData
 DJANGO_SECRET_KEY
-RASTER_ROOT             # Absolute path for raster file storage
+RASTER_ROOT                  # Absolute path for raster file storage
 ALERT_EMAIL_ENABLED / ALERT_EMAIL_RECIPIENTS
 FLOWER_BASIC_AUTH
+NWM_WEIGHTS_DIR              # Path to basin weight .npz files (default: data/nwm_weights/)
+NWM_TEMP_DIR                 # Scratch dir for hourly NetCDF downloads (default: data/nwm_temp/)
+NWM_NOMADS_BASE              # NOMADS base URL (default: https://nomads.ncep.noaa.gov/pub/data/nccf/com/nwm/prod)
+NWM_S3_BASE                  # AWS S3 base URL for historical data (default: https://noaa-nwm-pds.s3.amazonaws.com)
 ```
 
 `DEBUG=False` is hardcoded; set it via env if needed locally.
@@ -175,6 +225,7 @@ FLOWER_BASIC_AUTH
 | MODIS Terra/Aqua | Daily 04:00/04:30 UTC |
 | GPM precipitation | Daily 05:00 UTC |
 | Daily flow percentiles | 06:00, 12:00, 18:00 UTC |
+| NWM Analysis Assim ingest | Daily 07:00 UTC |
 | RTMA cleanup (>7 days) | Sunday 02:00 UTC |
 | EarthData cleanup (>30 days) | 1st of month 03:00 UTC |
 
