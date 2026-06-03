@@ -27,6 +27,7 @@ from apps.api.views.raster_views import (
 )
 from apps.api.views.analytics import StatisticsComputationLogViewSet, StatisticsConfigurationViewSet
 from apps.api.views.forcing import BasinForcingView
+from apps.api.views.precip_proxy import PrecipForecastProxyView
 
 # Create router and register viewsets
 router = DefaultRouter()
@@ -62,5 +63,6 @@ urlpatterns = [
 
     # API endpoints
     path("forcings/<str:usgs_id>/", BasinForcingView.as_view(), name="basin-forcings"),
+    path("precip-forecasts/<str:station_number>/", PrecipForecastProxyView.as_view(), name="precip-forecasts"),
     path('', include(router.urls)),
 ]
