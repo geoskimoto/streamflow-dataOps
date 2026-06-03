@@ -125,3 +125,30 @@ class StationDetailEALSTMContextTest(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(resp.context["ealstm_available"])
         self.assertIsNone(resp.context["nwrfc_id"])
+
+
+class StationDetailTemplateEALSTMTest(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("tmpl_user", password="pw")
+        self.ea_station = Station.objects.create(
+            station_number="14159500", name="EA Station", agency="USGS", is_active=True
+        )
+        self.plain_station = Station.objects.create(
+            station_number="99999997", name="Plain Station", agency="USGS", is_active=True
+        )
+        StationMapping.objects.create(
+            source_agency="USGS",
+            source_id="14159500",
+            target_agency="HADS",
+            target_id="ARGW1",
+        )
+        self.client.force_login(self.user)
+
+    def test_ealstm_panel_rendered_for_ea_station(self):
+        resp = self.client.get("/stations/14159500/")
+        self.assertContains(resp, "precip-forecast-chart")
+        self.assertContains(resp, "EA-LSTM")
+
+    def test_ealstm_panel_absent_for_non_ea_station(self):
+        resp = self.client.get("/stations/99999997/")
+        self.assertNotContains(resp, "precip-forecast-chart")
