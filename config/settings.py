@@ -293,3 +293,9 @@ GEE_DATASETS = {
     'RTMA': 'NOAA/NWS/RTMA',
     'SMAP_SPL4': 'NASA/SMAP/SPL4SMGP/008',
 }
+
+# ============================================================================
+# ResidCast Forecast Service
+# ============================================================================
+RESIDCAST_API_BASE = os.getenv("RESIDCAST_API_BASE", "http://127.0.0.1:8001")
+RESIDCAST_API_TOKEN = os.getenv("RESIDCAST_API_TOKEN", "")
