@@ -196,7 +196,6 @@ def _process_single_station(config_station, config_id, config):
                 return {"records": 0, "success": False, "error": f"NOAA_RFC only supports 'forecast' data type, got: {config.data_type}"}
 
         elif agency == "nwrfc_web":
-            time.sleep(1.0)  # rate-limit: NWRFC website throttles parallel requests
             client = NWRFCWebClient()
             rows = client.fetch_and_parse(station_number)
             if not rows:
@@ -298,17 +297,13 @@ def execute_pull_configuration(self, config_id: int):
 
         # Get stations in configuration
         config_stations = list(config.configuration_stations.all())
-        logger.info(f"Processing {len(config_stations)} stations with {STATION_WORKERS} workers")
 
-        with ThreadPoolExecutor(max_workers=STATION_WORKERS) as executor:
-            futures = {
-                executor.submit(_process_single_station, cs, config_id, config): cs
-                for cs in config_stations
-            }
-            for future in as_completed(futures):
-                cs = futures[future]
+        # nwrfc_web must run sequentially — the NWRFC website rate-limits parallel requests (429)
+        if config.data_source == 'nwrfc_web':
+            logger.info(f"Processing {len(config_stations)} stations sequentially (nwrfc_web rate-limit mode)")
+            for cs in config_stations:
                 try:
-                    result = future.result()
+                    result = _process_single_station(cs, config_id, config)
                     total_records += result["records"]
                     if result["success"]:
                         successful_stations += 1
@@ -319,6 +314,28 @@ def execute_pull_configuration(self, config_id: int):
                 except Exception as e:
                     failed_stations += 1
                     errors.append(f"Error processing {cs.station_number}: {e}")
+                time.sleep(1.5)
+        else:
+            logger.info(f"Processing {len(config_stations)} stations with {STATION_WORKERS} workers")
+            with ThreadPoolExecutor(max_workers=STATION_WORKERS) as executor:
+                futures = {
+                    executor.submit(_process_single_station, cs, config_id, config): cs
+                    for cs in config_stations
+                }
+                for future in as_completed(futures):
+                    cs = futures[future]
+                    try:
+                        result = future.result()
+                        total_records += result["records"]
+                        if result["success"]:
+                            successful_stations += 1
+                        else:
+                            failed_stations += 1
+                            if result["error"]:
+                                errors.append(result["error"])
+                    except Exception as e:
+                        failed_stations += 1
+                        errors.append(f"Error processing {cs.station_number}: {e}")
 
         # Update log entry
         log_status = "success" if failed_stations == 0 else "failed"
