@@ -92,3 +92,36 @@ class PrecipForecastProxyViewTest(TestCase):
                 self.client.get("/api/v1/precip-forecasts/14159500/")
             headers = mock_get.call_args.kwargs.get("headers", {})
             self.assertEqual(headers.get("Authorization"), "Bearer test-token-abc")
+
+
+from apps.streamflow.views import StationDetailView  # noqa: F401 (used indirectly)
+
+
+class StationDetailEALSTMContextTest(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("tester", password="pw")
+        self.station = Station.objects.create(
+            station_number="14159500", name="EA Station", agency="USGS", is_active=True
+        )
+        self.station_no_mapping = Station.objects.create(
+            station_number="99999998", name="Non-EA Station", agency="USGS", is_active=True
+        )
+        StationMapping.objects.create(
+            source_agency="USGS",
+            source_id="14159500",
+            target_agency="HADS",
+            target_id="ARGW1",
+        )
+        self.client.force_login(self.user)
+
+    def test_ealstm_available_true_for_mapped_station(self):
+        resp = self.client.get("/stations/14159500/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context["ealstm_available"])
+        self.assertEqual(resp.context["nwrfc_id"], "ARGW1")
+
+    def test_ealstm_available_false_for_unmapped_station(self):
+        resp = self.client.get("/stations/99999998/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.context["ealstm_available"])
+        self.assertIsNone(resp.context["nwrfc_id"])

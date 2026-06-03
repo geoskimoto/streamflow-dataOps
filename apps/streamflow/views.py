@@ -971,7 +971,20 @@ class StationDetailView(LoginRequiredMixin, DetailView):
         context['recent_forecasts'] = station.forecast_runs.order_by(
             '-run_date'
         )[:10]
-        
+
+        # EA-LSTM precip-runoff availability
+        try:
+            mapping = StationMapping.objects.get(
+                source_agency="USGS",
+                source_id=station.station_number,
+                target_agency="HADS",
+            )
+            context["ealstm_available"] = True
+            context["nwrfc_id"] = mapping.target_id
+        except StationMapping.DoesNotExist:
+            context["ealstm_available"] = False
+            context["nwrfc_id"] = None
+
         return context
 
 
