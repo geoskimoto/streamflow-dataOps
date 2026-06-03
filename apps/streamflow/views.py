@@ -779,6 +779,15 @@ class StationListView(LoginRequiredMixin, ListView):
             
             queryset = queryset.filter(station_number__in=station_numbers)
         
+        # Filter by EA-LSTM availability
+        ealstm_only = self.request.GET.get('ealstm_only')
+        if ealstm_only == 'true':
+            ealstm_station_numbers = StationMapping.objects.filter(
+                source_agency="USGS",
+                target_agency="HADS",
+            ).values_list('source_id', flat=True)
+            queryset = queryset.filter(station_number__in=ealstm_station_numbers)
+
         # Filter by Configuration
         configuration = self.request.GET.get('configuration')
         if configuration:
@@ -836,7 +845,8 @@ class StationListView(LoginRequiredMixin, ListView):
             'is_active': self.request.GET.get('is_active', ''),
             'rfc': self.request.GET.get('rfc', ''),
             'configuration': self.request.GET.get('configuration', ''),
-            'configured_only': self.request.GET.get('configured_only', ''),  # NEW
+            'configured_only': self.request.GET.get('configured_only', ''),
+            'ealstm_only': self.request.GET.get('ealstm_only', ''),
             'sort': self.request.GET.get('sort', 'station_number'),
         }
         

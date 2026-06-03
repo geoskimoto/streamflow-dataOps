@@ -9,7 +9,9 @@
         <div>
             <h2><i class="fas fa-map-marker-alt"></i> Stations</h2>
             <p class="text-muted mb-0">
-                {% if request.GET.configured_only == 'true' %}
+                {% if request.GET.ealstm_only == 'true' %}
+                    Showing only EA-LSTM precip-runoff forecast stations
+                {% elif request.GET.configured_only == 'true' %}
                     Showing only stations in active configurations
                 {% else %}
                     Showing all stations in database
@@ -42,7 +44,7 @@
                 <!-- Configured Only Toggle - Full width at top -->
                 <div class="col-12">
                     <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="configured_only" 
+                        <input class="form-check-input" type="checkbox" id="configured_only"
                                name="configured_only" value="true"
                                {% if request.GET.configured_only == 'true' %}checked{% endif %}
                                onchange="this.form.submit()">
@@ -51,6 +53,18 @@
                         </label>
                         <small class="form-text text-muted d-block">
                             Filter to stations that are part of at least one pull configuration
+                        </small>
+                    </div>
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" id="ealstm_only"
+                               name="ealstm_only" value="true"
+                               {% if request.GET.ealstm_only == 'true' %}checked{% endif %}
+                               onchange="this.form.submit()">
+                        <label class="form-check-label fw-bold" for="ealstm_only">
+                            <i class="fas fa-cloud-rain"></i> Show only EA-LSTM forecast stations
+                        </label>
+                        <small class="form-text text-muted d-block">
+                            Filter to the 37 CAMELS-overlap basins with precip-runoff forecasts
                         </small>
                     </div>
                 </div>
@@ -139,7 +153,7 @@
     <div class="alert alert-info">
         <i class="fas fa-info-circle"></i>
         Showing {{ page_obj.start_index }} to {{ page_obj.end_index }} of {{ paginator.count }} station{{ paginator.count|pluralize }}
-        {% if request.GET.search or request.GET.agency or request.GET.state or request.GET.huc or request.GET.is_active or request.GET.rfc or request.GET.configuration or request.GET.configured_only %}
+        {% if request.GET.search or request.GET.agency or request.GET.state or request.GET.huc or request.GET.is_active or request.GET.rfc or request.GET.configuration or request.GET.configured_only or request.GET.ealstm_only %}
         (filtered)
         {% endif %}
     </div>
