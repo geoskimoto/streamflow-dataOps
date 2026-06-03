@@ -12,6 +12,9 @@ psycopg2-binary==2.9.9
 GDAL==3.8.3
 rasterio==1.3.9
 Pillow==10.1.0
+geopandas==0.14.4
+shapely==2.0.4
+pyproj==3.6.1
 
 # NASA EarthData & HDF5/NetCDF Processing
 earthaccess==0.9.0

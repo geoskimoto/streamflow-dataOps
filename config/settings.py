@@ -72,6 +72,7 @@ INSTALLED_APPS = [
     "apps.streamflow",
     "apps.monitoring",
     "apps.analytics",
+    "apps.nwm_forcings",
 ]
 
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
@@ -293,6 +294,22 @@ GEE_DATASETS = {
     'RTMA': 'NOAA/NWS/RTMA',
     'SMAP_SPL4': 'NASA/SMAP/SPL4SMGP/008',
 }
+
+# ============================================================================
+# NWM Forcings Pipeline
+# ============================================================================
+NWM_WEIGHTS_DIR = Path(os.getenv("NWM_WEIGHTS_DIR", str(BASE_DIR / "data" / "nwm_weights")))
+NWM_TEMP_DIR = Path(os.getenv("NWM_TEMP_DIR", str(BASE_DIR / "data" / "nwm_temp")))
+NWM_WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+NWM_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+NWM_NOMADS_BASE = os.getenv(
+    "NWM_NOMADS_BASE",
+    "https://nomads.ncep.noaa.gov/pub/data/nccf/com/nwm/prod",
+)
+NWM_S3_BASE = os.getenv(
+    "NWM_S3_BASE",
+    "https://noaa-nwm-pds.s3.amazonaws.com",
+)
 
 # ============================================================================
 # ResidCast Forecast Service

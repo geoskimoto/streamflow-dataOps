@@ -54,3 +54,8 @@ update_periodic_task.py
 
 # Binary data exports
 *.parquet
+
+# NWM Forcings Pipeline — large weight and temp files
+data/nwm_weights/*.npz
+data/nwm_temp/*
+!data/nwm_temp/.gitkeep
