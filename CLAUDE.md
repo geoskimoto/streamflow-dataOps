@@ -136,7 +136,7 @@ The `BasinForcing` model stores daily basin-averaged meteorological forcings use
 - `source='daymet'` — Historical CAMELS Daymet forcings (1980–2014); backfilled via `backfill_basin_forcings.py` for 37 CAMELS-overlap PNW stations; ~12,784 rows/station (473,008 total)
 - `source='nwm'` — NWM Analysis Assim daily forcings; populated by the `apps/nwm_forcings/` Celery task (see below) and by `backfill_nwm_forcings` for historical dates
 
-The forcings endpoint (`GET /api/v1/forcings/{usgs_id}/`) is consumed by `resid-cast/forecast_service/jobs/precip_runner.py`, which calls it to build the dynamic input sequence for EA-LSTM inference. The view returns `nwm` rows first, falling back to `daymet` so inference works from historical data until NWM data is flowing.
+The forcings endpoint (`GET /api/v1/forcings/{usgs_id}/`) is consumed by `precip-runoff-cast/forecast_service/jobs/runner.py`, which calls it to build the dynamic input sequence for EA-LSTM inference. The view returns `nwm` rows first, falling back to `daymet` so inference works from historical data until NWM data is flowing.
 
 ### apps/nwm_forcings — NWM Analysis Assim Ingestion
 
