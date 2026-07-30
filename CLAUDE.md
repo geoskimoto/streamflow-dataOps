@@ -231,9 +231,13 @@ NWM_S3_BASE                  # AWS S3 base URL for historical data (default: htt
 
 ### Deployment
 
-- Systemd service on Hostinger VPS; restart: `sudo systemctl restart <service>`
-- nginx proxies HTTPS, serves static files via `location ^~ /static/`
-- `SECURE_PROXY_SSL_HEADER` set; nginx handles SSL termination
+**⚠️ This working tree IS production.** There is no separate deployed copy — `gunicorn.service`, `celery-worker.service`, `celery-beat.service`, and `flower.service` all run directly from `/home/streamflow/streamflow-dataOps/streamflow-dataOps` using the `venv/` in this directory (verified 2026-07-30 via systemd unit files, running-process CWDs, and nginx config). Uncommitted edits here go live: immediately for management commands and newly picked-up Celery tasks, on next service restart for the web app. Develop in a separate clone or worktree, push, then `git pull` here and restart.
+
+`/home/streamflow/htdocs/streamflowops.3rdplaces.io/` is **not** the app — it's only the Let's Encrypt ACME challenge webroot (CloudPanel site root, reverse-proxy type). Its `.well-known/` is empty between cert renewals; do not delete it or SSL renewal breaks. See the README inside it.
+
+- Systemd services on Hostinger VPS; restart: `sudo systemctl restart gunicorn celery-worker celery-beat`
+- nginx proxies HTTPS to gunicorn on `127.0.0.1:8000`; serves `/static/` via alias to `staticfiles/` in this tree; `/flower/` proxies to `127.0.0.1:5555`
+- `SECURE_PROXY_SSL_HEADER` set; nginx handles SSL termination (cert at `/etc/nginx/ssl-certificates/streamflowops.3rdplaces.io.crt`, auto-renewed by CloudPanel)
 - Static files collected to `staticfiles/`
 - WSGI entry: `config.wsgi.application`
 
