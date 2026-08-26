@@ -30,7 +30,13 @@ SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-s*m6pm+!m!sh(rl2i9u
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
 
-ALLOWED_HOSTS = ['testserver', 'localhost', '127.0.0.1', '72.61.70.144', 'streamflowops.3rdplaces.io']
+# streamflowops.streamflows.org is an additional name for this same service.
+# The 3rdplaces.io entry must stay: downstream apps consume that API hostname.
+ALLOWED_HOSTS = ['testserver', 'localhost', '127.0.0.1', '72.61.70.144',
+                 'streamflowops.3rdplaces.io', 'ops.streamflows.org',
+                 # No A record since 2026-08-24; kept so anything still
+                 # holding the old name fails at DNS rather than as a 400.
+                 'streamflowops.streamflows.org']
 
 # Trust nginx X-Forwarded-Proto header for HTTPS detection
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
@@ -256,6 +262,8 @@ CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = [
     "https://streamflowops.3rdplaces.io",
     "http://streamflowops.3rdplaces.io",
+    "https://ops.streamflows.org",
+    "https://streamflowops.streamflows.org",
 ]
 
 # Authentication redirects
