@@ -207,6 +207,16 @@ class PullConfiguration(models.Model):
     data_strategy = models.CharField(max_length=20, choices=STRATEGY_CHOICES)
     pull_start_date = models.DateTimeField()
     is_enabled = models.BooleanField(default=True)
+    skip_inactive_stations = models.BooleanField(
+        default=False,
+        help_text=(
+            "Only pull stations whose Station record is marked active. Skips "
+            "discontinued gauges instead of requesting them every run. Leave "
+            "off unless is_active is actually maintained for this data "
+            "source — NOAA_RFC stations are all flagged inactive despite "
+            "reporting, so enabling this would empty a forecast pull."
+        ),
+    )
 
     # Schedule (cron-like)
     schedule_type = models.CharField(max_length=20, choices=SCHEDULE_TYPE_CHOICES)
@@ -252,8 +262,16 @@ class DataPullLog(models.Model):
     STATUS_CHOICES = [
         ("running", "Running"),
         ("success", "Success"),
+        # Some stations failed, but few enough that the run is still healthy —
+        # large configs routinely lose a handful to transient upstream errors
+        # that self-heal on the next run. See tasks.classify_pull_status.
+        ("partial", "Partial"),
         ("failed", "Failed"),
     ]
+
+    # Statuses that mean the run did its job. Success-rate math should use
+    # this rather than hardcoding "success" in each view.
+    HEALTHY_STATUSES = ("success", "partial")
 
     configuration = models.ForeignKey(
         PullConfiguration,

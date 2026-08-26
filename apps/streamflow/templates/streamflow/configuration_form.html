@@ -47,6 +47,13 @@
                         <div class="mb-3">
                             {{ form.description|as_crispy_field }}
                         </div>
+                        <div class="form-check form-switch mb-3">
+                            {{ form.skip_inactive_stations }}
+                            <label class="form-check-label" for="{{ form.skip_inactive_stations.id_for_label }}">
+                                <strong>{{ form.skip_inactive_stations.label }}</strong>
+                            </label>
+                            <div class="form-text">{{ form.skip_inactive_stations.help_text }}</div>
+                        </div>
                     </div>
                 </div>
 

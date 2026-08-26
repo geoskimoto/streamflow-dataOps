@@ -23,7 +23,8 @@ class PullConfigurationForm(ModelForm):
         model = PullConfiguration
         fields = [
             'name', 'description', 'data_source', 'data_type', 'forecast_type',
-            'data_strategy', 'pull_start_date', 'is_enabled', 'schedule_type', 'schedule_value'
+            'data_strategy', 'pull_start_date', 'is_enabled', 'skip_inactive_stations',
+            'schedule_type', 'schedule_value'
         ]
         widgets = {
             'description': forms.Textarea(attrs={
@@ -58,6 +59,7 @@ class PullConfigurationForm(ModelForm):
             'data_strategy': 'Data Strategy',
             'pull_start_date': 'Start Date (Optional)',
             'is_enabled': 'Enable Configuration',
+            'skip_inactive_stations': 'Skip Inactive Stations',
             'schedule_type': 'Schedule Type',
             'schedule_value': 'Cron Schedule (for custom)',
         }
@@ -71,6 +73,11 @@ class PullConfigurationForm(ModelForm):
             'schedule_type': 'How frequently to run this configuration',
             'schedule_value': 'Required only for custom schedule type. Use standard cron format',
             'is_enabled': 'Disabled configurations will not run on schedule',
+            'skip_inactive_stations': (
+                'Only pull stations marked active, skipping discontinued gauges. '
+                'Leave off unless the active flag is maintained for this source — '
+                'NOAA RFC stations are all flagged inactive despite reporting.'
+            ),
         }
     
     def clean_name(self):

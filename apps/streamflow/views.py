@@ -53,7 +53,11 @@ class PullConfigurationListView(LoginRequiredMixin, ListView):
             station_count=Count('configuration_stations', distinct=True),
             latest_log=Max('logs__start_time'),
             total_runs=Count('logs', distinct=True),
-            successful_runs=Count('logs', filter=Q(logs__status='success'), distinct=True)
+            successful_runs=Count(
+                'logs',
+                filter=Q(logs__status__in=DataPullLog.HEALTHY_STATUSES),
+                distinct=True,
+            )
         )
         
         # Search functionality
@@ -126,12 +130,14 @@ class PullConfigurationDetailView(LoginRequiredMixin, DetailView):
         all_logs = config.logs.all()
         total_logs = all_logs.count()
         successful_logs = all_logs.filter(status='success').count()
+        partial_logs = all_logs.filter(status='partial').count()
         failed_logs = all_logs.filter(status='failed').count()
         running_logs = all_logs.filter(status='running').count()
-        
-        # Calculate total records across all successful runs
+        healthy_logs = successful_logs + partial_logs
+
+        # Calculate total records across all runs that delivered data
         total_records = all_logs.filter(
-            status='success'
+            status__in=DataPullLog.HEALTHY_STATUSES
         ).aggregate(
             total=models.Sum('records_processed')
         )['total'] or 0
@@ -141,22 +147,27 @@ class PullConfigurationDetailView(LoginRequiredMixin, DetailView):
         from datetime import timedelta
         seven_days_ago = timezone.now() - timedelta(days=7)
         recent_runs = all_logs.filter(start_time__gte=seven_days_ago)
-        recent_success = recent_runs.filter(status='success').count()
+        recent_healthy = recent_runs.filter(
+            status__in=DataPullLog.HEALTHY_STATUSES
+        ).count()
         recent_total = recent_runs.count()
-        
+
         context['stats'] = {
             'total_runs': total_logs,
             'successful_runs': successful_logs,
+            'partial_runs': partial_logs,
             'failed_runs': failed_logs,
             'running_runs': running_logs,
-            'success_rate': (successful_logs / total_logs * 100) if total_logs > 0 else 0,
+            'success_rate': (healthy_logs / total_logs * 100) if total_logs > 0 else 0,
             'total_records': total_records,
-            'recent_success_rate': (recent_success / recent_total * 100) if recent_total > 0 else 0,
+            'recent_success_rate': (recent_healthy / recent_total * 100) if recent_total > 0 else 0,
             'recent_runs_count': recent_total,
         }
-        
-        # Last successful run info
-        last_success = all_logs.filter(status='success').order_by('-start_time').first()
+
+        # Last run that delivered data
+        last_success = all_logs.filter(
+            status__in=DataPullLog.HEALTHY_STATUSES
+        ).order_by('-start_time').first()
         if last_success:
             context['last_success'] = {
                 'time': last_success.start_time,
@@ -294,9 +305,10 @@ class DataPullLogListView(LoginRequiredMixin, ListView):
         logs = self.get_queryset()
         context['total_logs'] = logs.count()
         context['success_count'] = logs.filter(status='success').count()
+        context['partial_count'] = logs.filter(status='partial').count()
         context['failed_count'] = logs.filter(status='failed').count()
         context['running_count'] = logs.filter(status='running').count()
-        
+
         return context
 
 
@@ -419,12 +431,15 @@ def dashboard(request):
     recent_logs = DataPullLog.objects.filter(start_time__gte=recent_cutoff)
     
     recent_success = recent_logs.filter(status='success').count()
+    recent_partial = recent_logs.filter(status='partial').count()
     recent_failed = recent_logs.filter(status='failed').count()
     recent_running = recent_logs.filter(status='running').count()
     total_recent = recent_logs.count()
-    
-    # Success rate
-    success_rate = (recent_success / total_recent * 100) if total_recent > 0 else 0
+
+    # Success rate — a partial run delivered nearly all its stations, so it
+    # counts as healthy here; recent_partial surfaces it separately.
+    healthy_recent = recent_success + recent_partial
+    success_rate = (healthy_recent / total_recent * 100) if total_recent > 0 else 0
     
     # Data statistics
     total_observations = DischargeObservation.objects.count()
@@ -491,6 +506,8 @@ def dashboard(request):
         
         # Recent activity
         'recent_success': recent_success,
+        'recent_partial': recent_partial,
+        'recent_healthy': healthy_recent,
         'recent_failed': recent_failed,
         'recent_running': recent_running,
         'total_recent': total_recent,

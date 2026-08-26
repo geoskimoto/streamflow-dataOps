@@ -66,7 +66,7 @@
                         <div>
                             <h6 class="text-muted mb-2">Success Rate (24h)</h6>
                             <h2 class="mb-0">{{ success_rate|floatformat:0 }}%</h2>
-                            <small class="text-success">{{ recent_success }} / {{ total_recent }} runs</small>
+                            <small class="text-success">{{ recent_healthy }} / {{ total_recent }} runs</small>
                         </div>
                         <div class="text-success" style="font-size: 3rem; opacity: 0.3;">
                             <i class="fas fa-check-circle"></i>
@@ -75,7 +75,7 @@
                 </div>
                 <div class="card-footer bg-transparent">
                     <span class="text-muted">
-                        {{ recent_failed }} failed, {{ recent_running }} running
+                        {{ recent_partial }} partial, {{ recent_failed }} failed, {{ recent_running }} running
                     </span>
                 </div>
             </div>
@@ -214,13 +214,7 @@
                                         </a>
                                     </td>
                                     <td>
-                                        {% if log.status == 'success' %}
-                                        <span class="badge bg-success"><i class="fas fa-check"></i> Success</span>
-                                        {% elif log.status == 'failed' %}
-                                        <span class="badge bg-danger"><i class="fas fa-times"></i> Failed</span>
-                                        {% else %}
-                                        <span class="badge bg-info"><i class="fas fa-spinner"></i> Running</span>
-                                        {% endif %}
+                                        {% include "streamflow/_status_badge.html" with status=log.status show_icon=True %}
                                     </td>
                                     <td>{{ log.records_processed|default:"0" }}</td>
                                     <td><small>{{ log.start_time|timesince }} ago</small></td>

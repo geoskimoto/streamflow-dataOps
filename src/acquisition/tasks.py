@@ -14,11 +14,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 import logging
 import time
+from typing import NamedTuple
 from config.celery import app
 from django.db import transaction
 from apps.streamflow.models import (
     PullConfiguration,
     PullConfigurationStation,
+    Station,
     StationMapping,
     DataPullLog,
 )
@@ -247,6 +249,56 @@ def _process_single_station(config_station, config_id, config):
 STATION_WORKERS = 8
 
 
+class PullPacing(NamedTuple):
+    """How hard we are allowed to hit one upstream source."""
+
+    workers: int
+    delay_seconds: float
+
+
+# Per-source pacing. Each upstream tolerates a different request rate:
+#   - nwrfc_web 429s on any parallelism at all (see 54db0bd)
+#   - USGS NWIS silently degrades under bursts rather than returning 429 —
+#     it hands back empty bodies (surfacing as "Expecting value: line 1
+#     column 1") and truncated gzip payloads. 8 unpaced workers over 2890
+#     stations meant ~14 req/s and lost 7-40 stations per run.
+# Anything not listed keeps the historical unpaced behavior.
+SOURCE_PACING = {
+    "nwrfc_web": PullPacing(workers=1, delay_seconds=1.5),
+    "USGS": PullPacing(workers=3, delay_seconds=1.0),
+}
+
+DEFAULT_PACING = PullPacing(workers=STATION_WORKERS, delay_seconds=0)
+
+
+def get_pull_pacing(data_source: str) -> PullPacing:
+    """Return the concurrency and inter-request delay to use for a source."""
+    return SOURCE_PACING.get(data_source, DEFAULT_PACING)
+
+
+# Share of stations that may fail before a run stops counting as healthy.
+# Large configs always lose a few stations to transient upstream errors; those
+# self-heal on the next run. Treating that as an outright failure hid the runs
+# that were genuinely broken.
+PARTIAL_FAILURE_THRESHOLD = 0.05
+
+
+def classify_pull_status(successful: int, failed: int) -> str:
+    """Classify a completed run as success, partial, or failed.
+
+    Clean run -> success. Failures within PARTIAL_FAILURE_THRESHOLD of the
+    stations attempted -> partial. Anything worse -> failed.
+    """
+    if failed == 0:
+        return "success"
+
+    attempted = successful + failed
+    if failed <= attempted * PARTIAL_FAILURE_THRESHOLD:
+        return "partial"
+
+    return "failed"
+
+
 @shared_task(bind=True, max_retries=3)
 def execute_pull_configuration(self, config_id: int):
     """
@@ -298,48 +350,90 @@ def execute_pull_configuration(self, config_id: int):
         # Get stations in configuration
         config_stations = list(config.configuration_stations.all())
 
-        # nwrfc_web must run sequentially — the NWRFC website rate-limits parallel requests (429)
-        if config.data_source == 'nwrfc_web':
-            logger.info(f"Processing {len(config_stations)} stations sequentially (nwrfc_web rate-limit mode)")
+        if config.skip_inactive_stations:
+            active = set(
+                Station.objects.filter(
+                    station_number__in=[cs.station_number for cs in config_stations],
+                    is_active=True,
+                ).values_list("station_number", flat=True)
+            )
+            skipped = len(config_stations) - len(active)
+            config_stations = [
+                cs for cs in config_stations if cs.station_number in active
+            ]
+            logger.info(
+                f"Skipping {skipped} inactive/unknown stations "
+                f"({len(config_stations)} remain)"
+            )
+
+            if not config_stations:
+                # Every station filtered out means the config is misconfigured;
+                # reporting success on an empty run would hide that.
+                log.status = "failed"
+                log.records_processed = 0
+                log.end_time = datetime.now(timezone.utc)
+                log.error_message = (
+                    f"Configuration has no active stations: all {skipped} "
+                    f"configured stations are inactive or missing a Station record."
+                )
+                log.save()
+                logger.error(f"Configuration {config_id} has no active stations")
+                return {
+                    "status": "failed",
+                    "records_processed": 0,
+                    "successful_stations": 0,
+                    "failed_stations": 0,
+                    "errors": [log.error_message],
+                }
+
+        # Rate-limited sources get reduced concurrency and spaced-out submissions
+        # so we don't trip upstream throttling (see SOURCE_PACING).
+        pacing = get_pull_pacing(config.data_source)
+
+        def _record(result):
+            nonlocal total_records, successful_stations, failed_stations
+            total_records += result["records"]
+            if result["success"]:
+                successful_stations += 1
+            else:
+                failed_stations += 1
+                if result["error"]:
+                    errors.append(result["error"])
+
+        if pacing.workers == 1:
+            logger.info(
+                f"Processing {len(config_stations)} stations sequentially "
+                f"({config.data_source} rate-limit mode, {pacing.delay_seconds}s delay)"
+            )
             for cs in config_stations:
                 try:
-                    result = _process_single_station(cs, config_id, config)
-                    total_records += result["records"]
-                    if result["success"]:
-                        successful_stations += 1
-                    else:
-                        failed_stations += 1
-                        if result["error"]:
-                            errors.append(result["error"])
+                    _record(_process_single_station(cs, config_id, config))
                 except Exception as e:
                     failed_stations += 1
                     errors.append(f"Error processing {cs.station_number}: {e}")
-                time.sleep(1.5)
+                time.sleep(pacing.delay_seconds)
         else:
-            logger.info(f"Processing {len(config_stations)} stations with {STATION_WORKERS} workers")
-            with ThreadPoolExecutor(max_workers=STATION_WORKERS) as executor:
-                futures = {
-                    executor.submit(_process_single_station, cs, config_id, config): cs
-                    for cs in config_stations
-                }
+            logger.info(
+                f"Processing {len(config_stations)} stations with {pacing.workers} "
+                f"workers ({pacing.delay_seconds}s between submissions)"
+            )
+            with ThreadPoolExecutor(max_workers=pacing.workers) as executor:
+                futures = {}
+                for cs in config_stations:
+                    futures[executor.submit(_process_single_station, cs, config_id, config)] = cs
+                    if pacing.delay_seconds:
+                        time.sleep(pacing.delay_seconds)
                 for future in as_completed(futures):
                     cs = futures[future]
                     try:
-                        result = future.result()
-                        total_records += result["records"]
-                        if result["success"]:
-                            successful_stations += 1
-                        else:
-                            failed_stations += 1
-                            if result["error"]:
-                                errors.append(result["error"])
+                        _record(future.result())
                     except Exception as e:
                         failed_stations += 1
                         errors.append(f"Error processing {cs.station_number}: {e}")
 
         # Update log entry
-        log_status = "success" if failed_stations == 0 else "failed"
-        
+        log_status = classify_pull_status(successful_stations, failed_stations)
+
         log.status = log_status
         log.records_processed = total_records
         log.end_time = datetime.now(timezone.utc)

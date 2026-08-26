@@ -56,6 +56,15 @@
                     
                     <dt class="col-sm-4">Start Date:</dt>
                     <dd class="col-sm-8">{{ configuration.pull_start_date|date:"M d, Y H:i" }}</dd>
+
+                    <dt class="col-sm-4">Inactive Stations:</dt>
+                    <dd class="col-sm-8">
+                        {% if configuration.skip_inactive_stations %}
+                        <span class="badge bg-warning text-dark">Skipped</span>
+                        {% else %}
+                        <span class="badge bg-secondary">Pulled</span>
+                        {% endif %}
+                    </dd>
                     
                     <dt class="col-sm-4">Schedule:</dt>
                     <dd class="col-sm-8">
