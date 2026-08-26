@@ -207,6 +207,16 @@ class PullConfiguration(models.Model):
     data_strategy = models.CharField(max_length=20, choices=STRATEGY_CHOICES)
     pull_start_date = models.DateTimeField()
     is_enabled = models.BooleanField(default=True)
+    skip_inactive_stations = models.BooleanField(
+        default=False,
+        help_text=(
+            "Only pull stations whose Station record is marked active. Skips "
+            "discontinued gauges instead of requesting them every run. Leave "
+            "off unless is_active is actually maintained for this data "
+            "source — NOAA_RFC stations are all flagged inactive despite "
+            "reporting, so enabling this would empty a forecast pull."
+        ),
+    )
 
     # Schedule (cron-like)
     schedule_type = models.CharField(max_length=20, choices=SCHEDULE_TYPE_CHOICES)

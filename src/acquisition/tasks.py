@@ -20,6 +20,7 @@ from django.db import transaction
 from apps.streamflow.models import (
     PullConfiguration,
     PullConfigurationStation,
+    Station,
     StationMapping,
     DataPullLog,
 )
@@ -348,6 +349,42 @@ def execute_pull_configuration(self, config_id: int):
 
         # Get stations in configuration
         config_stations = list(config.configuration_stations.all())
+
+        if config.skip_inactive_stations:
+            active = set(
+                Station.objects.filter(
+                    station_number__in=[cs.station_number for cs in config_stations],
+                    is_active=True,
+                ).values_list("station_number", flat=True)
+            )
+            skipped = len(config_stations) - len(active)
+            config_stations = [
+                cs for cs in config_stations if cs.station_number in active
+            ]
+            logger.info(
+                f"Skipping {skipped} inactive/unknown stations "
+                f"({len(config_stations)} remain)"
+            )
+
+            if not config_stations:
+                # Every station filtered out means the config is misconfigured;
+                # reporting success on an empty run would hide that.
+                log.status = "failed"
+                log.records_processed = 0
+                log.end_time = datetime.now(timezone.utc)
+                log.error_message = (
+                    f"Configuration has no active stations: all {skipped} "
+                    f"configured stations are inactive or missing a Station record."
+                )
+                log.save()
+                logger.error(f"Configuration {config_id} has no active stations")
+                return {
+                    "status": "failed",
+                    "records_processed": 0,
+                    "successful_stations": 0,
+                    "failed_stations": 0,
+                    "errors": [log.error_message],
+                }
 
         # Rate-limited sources get reduced concurrency and spaced-out submissions
         # so we don't trip upstream throttling (see SOURCE_PACING).
