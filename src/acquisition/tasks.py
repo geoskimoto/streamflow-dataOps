@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 import logging
 import time
+from typing import NamedTuple
 from config.celery import app
 from django.db import transaction
 from apps.streamflow.models import (
@@ -247,6 +248,33 @@ def _process_single_station(config_station, config_id, config):
 STATION_WORKERS = 8
 
 
+class PullPacing(NamedTuple):
+    """How hard we are allowed to hit one upstream source."""
+
+    workers: int
+    delay_seconds: float
+
+
+# Per-source pacing. Each upstream tolerates a different request rate:
+#   - nwrfc_web 429s on any parallelism at all (see 54db0bd)
+#   - USGS NWIS silently degrades under bursts rather than returning 429 —
+#     it hands back empty bodies (surfacing as "Expecting value: line 1
+#     column 1") and truncated gzip payloads. 8 unpaced workers over 2890
+#     stations meant ~14 req/s and lost 7-40 stations per run.
+# Anything not listed keeps the historical unpaced behavior.
+SOURCE_PACING = {
+    "nwrfc_web": PullPacing(workers=1, delay_seconds=1.5),
+    "USGS": PullPacing(workers=3, delay_seconds=1.0),
+}
+
+DEFAULT_PACING = PullPacing(workers=STATION_WORKERS, delay_seconds=0)
+
+
+def get_pull_pacing(data_source: str) -> PullPacing:
+    """Return the concurrency and inter-request delay to use for a source."""
+    return SOURCE_PACING.get(data_source, DEFAULT_PACING)
+
+
 @shared_task(bind=True, max_retries=3)
 def execute_pull_configuration(self, config_id: int):
     """
@@ -298,41 +326,47 @@ def execute_pull_configuration(self, config_id: int):
         # Get stations in configuration
         config_stations = list(config.configuration_stations.all())
 
-        # nwrfc_web must run sequentially — the NWRFC website rate-limits parallel requests (429)
-        if config.data_source == 'nwrfc_web':
-            logger.info(f"Processing {len(config_stations)} stations sequentially (nwrfc_web rate-limit mode)")
+        # Rate-limited sources get reduced concurrency and spaced-out submissions
+        # so we don't trip upstream throttling (see SOURCE_PACING).
+        pacing = get_pull_pacing(config.data_source)
+
+        def _record(result):
+            nonlocal total_records, successful_stations, failed_stations
+            total_records += result["records"]
+            if result["success"]:
+                successful_stations += 1
+            else:
+                failed_stations += 1
+                if result["error"]:
+                    errors.append(result["error"])
+
+        if pacing.workers == 1:
+            logger.info(
+                f"Processing {len(config_stations)} stations sequentially "
+                f"({config.data_source} rate-limit mode, {pacing.delay_seconds}s delay)"
+            )
             for cs in config_stations:
                 try:
-                    result = _process_single_station(cs, config_id, config)
-                    total_records += result["records"]
-                    if result["success"]:
-                        successful_stations += 1
-                    else:
-                        failed_stations += 1
-                        if result["error"]:
-                            errors.append(result["error"])
+                    _record(_process_single_station(cs, config_id, config))
                 except Exception as e:
                     failed_stations += 1
                     errors.append(f"Error processing {cs.station_number}: {e}")
-                time.sleep(1.5)
+                time.sleep(pacing.delay_seconds)
         else:
-            logger.info(f"Processing {len(config_stations)} stations with {STATION_WORKERS} workers")
-            with ThreadPoolExecutor(max_workers=STATION_WORKERS) as executor:
-                futures = {
-                    executor.submit(_process_single_station, cs, config_id, config): cs
-                    for cs in config_stations
-                }
+            logger.info(
+                f"Processing {len(config_stations)} stations with {pacing.workers} "
+                f"workers ({pacing.delay_seconds}s between submissions)"
+            )
+            with ThreadPoolExecutor(max_workers=pacing.workers) as executor:
+                futures = {}
+                for cs in config_stations:
+                    futures[executor.submit(_process_single_station, cs, config_id, config)] = cs
+                    if pacing.delay_seconds:
+                        time.sleep(pacing.delay_seconds)
                 for future in as_completed(futures):
                     cs = futures[future]
                     try:
-                        result = future.result()
-                        total_records += result["records"]
-                        if result["success"]:
-                            successful_stations += 1
-                        else:
-                            failed_stations += 1
-                            if result["error"]:
-                                errors.append(result["error"])
+                        _record(future.result())
                     except Exception as e:
                         failed_stations += 1
                         errors.append(f"Error processing {cs.station_number}: {e}")
