@@ -5,7 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
-from django.db.models import Count, Q, Avg
+from django.db.models import Count, Q, Avg, F, Sum, DurationField, ExpressionWrapper
 from django.utils import timezone
 
 from apps.streamflow.models import PullConfiguration, DataPullLog
@@ -90,7 +90,7 @@ class PullConfigurationViewSet(viewsets.ModelViewSet):
         
         Query params:
         - limit: Number of recent executions to return (default: 20)
-        - status: Filter by status (success, failed, running)
+        - status: Filter by status (success, partial, failed, running)
         """
         config = self.get_object()
         limit = int(request.query_params.get('limit', 20))
@@ -109,7 +109,6 @@ class PullConfigurationViewSet(viewsets.ModelViewSet):
             'end_time': log.end_time,
             'status': log.status,
             'records_processed': log.records_processed,
-            'stations_processed': log.stations_processed,
             'error_message': log.error_message,
             'duration_seconds': (log.end_time - log.start_time).total_seconds() if log.end_time else None,
         } for log in logs]
@@ -128,19 +127,28 @@ class PullConfigurationViewSet(viewsets.ModelViewSet):
         # Get execution stats
         logs = DataPullLog.objects.filter(configuration=config)
         
+        # Postgres has no avg(timestamptz), so average the interval between the
+        # two timestamps rather than each timestamp on its own.
+        run_duration = ExpressionWrapper(
+            F('end_time') - F('start_time'), output_field=DurationField()
+        )
+
         stats = logs.aggregate(
             total_executions=Count('id'),
             successful=Count('id', filter=Q(status='success')),
+            partial=Count('id', filter=Q(status='partial')),
             failed=Count('id', filter=Q(status='failed')),
-            total_records=Count('records_processed'),
-            avg_duration=Avg('end_time') - Avg('start_time'),
+            # Sum, not Count — this is reported as total_records_processed.
+            total_records=Sum('records_processed'),
+            avg_duration=Avg(run_duration, filter=Q(end_time__isnull=False)),
         )
-        
-        # Calculate success rate
+
+        # Partial runs delivered their data, so they count as healthy here.
+        healthy = stats['successful'] + stats['partial']
         success_rate = 0
         if stats['total_executions'] > 0:
-            success_rate = (stats['successful'] / stats['total_executions']) * 100
-        
+            success_rate = (healthy / stats['total_executions']) * 100
+
         # Get latest execution
         latest_log = logs.order_by('-start_time').first()
         
@@ -150,11 +158,17 @@ class PullConfigurationViewSet(viewsets.ModelViewSet):
             'execution_stats': {
                 'total_executions': stats['total_executions'],
                 'successful': stats['successful'],
+                'partial': stats['partial'],
                 'failed': stats['failed'],
                 'success_rate': round(success_rate, 1),
+                'avg_duration_seconds': (
+                    stats['avg_duration'].total_seconds()
+                    if stats['avg_duration'] is not None
+                    else None
+                ),
             },
             'data_stats': {
-                'total_records_processed': stats['total_records'],
+                'total_records_processed': stats['total_records'] or 0,
             },
             'latest_execution': {
                 'start_time': latest_log.start_time if latest_log else None,
