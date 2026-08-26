@@ -89,7 +89,7 @@ The `src/` tree is not a Django app — it's imported directly by Celery tasks a
 - **Station** — 309 active monitoring stations (USGS, EC, NOAA_RFC)
 - **DischargeObservation** — Time-series discharge with `type` (`realtime_15min` | `daily_mean`) and `quality_code`; unique on `(station, observed_at, type)`
 - **ForecastRun** — Forecast payload in a `data` JSONField (`[{date, value}]`); `forecast_type` is `short` | `medium` | `long`; unique on `(station, source, run_date, forecast_type)`
-- **PullConfiguration** + **PullConfigurationStation** — Scheduled acquisition jobs linked to stations
+- **PullConfiguration** + **PullConfigurationStation** — Scheduled acquisition jobs linked to stations; `skip_inactive_stations` (default off) limits a pull to `is_active` stations
 - **PullStationProgress** — Tracks last successful pull per station for smart-append (incremental pulls)
 - **MasterStation** / **StationMapping** — 14,319 reference stations; cross-network ID resolution (USGS ↔ HADS ↔ EC)
 - **RasterDataset / RasterVariable / RasterLayer / SpatialExtent** — Gridded raster metadata (PostGIS geometry on SpatialExtent); `RasterDataset.DATA_SOURCE_CHOICES` includes `nwm_s3`
@@ -117,7 +117,44 @@ The NOAA API client (`src/acquisition/noaa_client.py`) passes `forecast_type` di
 3. Each config calls the appropriate client: `USGSClient`, `NOAAClient`, or `CanadaClient`
 4. `DataProcessor` (`src/acquisition/data_processor.py`) handles upsert logic
 5. `PullStationProgress` records the watermark to enable smart-append on next run
-6. `DataPullLog` records success/failure
+6. `DataPullLog` records success/partial/failure
+
+#### Per-source request pacing
+
+`SOURCE_PACING` in `src/acquisition/tasks.py` sets concurrency and inter-request
+delay per data source. Upstreams throttle differently and not all of them say so:
+
+| Source | Workers | Delay | Why |
+|--------|---------|-------|-----|
+| `nwrfc_web` | 1 | 1.5s | Returns 429 on any parallelism |
+| `USGS` | 3 | 1.0s | Degrades silently under bursts — empty bodies (`Expecting value: line 1 column 1`) and truncated gzip, not 429s |
+| everything else | 8 | 0 | Historical default |
+
+When adding a source that starts failing intermittently at scale, add a
+`SOURCE_PACING` entry rather than lowering the global `STATION_WORKERS`.
+
+#### Run status is proportional, not all-or-nothing
+
+`DataPullLog.status` is `running` | `success` | `partial` | `failed`.
+`classify_pull_status()` returns `partial` when failures stay within
+`PARTIAL_FAILURE_THRESHOLD` (5%) of stations attempted. Large configs routinely
+lose a few stations to transient upstream errors that self-heal next run;
+marking those runs `failed` buried the genuinely broken ones.
+
+Use `DataPullLog.HEALTHY_STATUSES` for success-rate math rather than hardcoding
+`'success'` — partial runs delivered their data and count as healthy.
+
+#### Skipping discontinued stations
+
+`PullConfiguration.skip_inactive_stations` (default `False`, GUI-toggleable on
+the configuration form) restricts a pull to stations whose `Station.is_active`
+is true.
+
+**It is opt-in for a reason:** `is_active` is not maintained uniformly. All 366
+`NOAA_RFC` stations are flagged inactive while actively producing forecasts, so
+enabling this on a NWRFC config would silently empty the pull. It is safe for
+USGS and EC, where the flag tracks reality. A run whose stations all filter out
+is logged `failed`, never `success`.
 
 ### API (`apps/api/`)
 
