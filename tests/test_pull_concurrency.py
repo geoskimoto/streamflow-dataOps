@@ -7,14 +7,12 @@ default worker count for every source.
 
 import threading
 import time
-from datetime import timedelta
 from unittest import mock
 
 from django.test import TestCase
-from django.utils import timezone
 
-from apps.streamflow.models import PullConfiguration, PullConfigurationStation
 from src.acquisition import tasks
+from tests.factories import make_pull_config
 
 
 class ConcurrencyRecorder:
@@ -39,24 +37,9 @@ class ConcurrencyRecorder:
                 self.in_flight -= 1
 
 
-def _make_config(data_source, station_count):
-    config = PullConfiguration.objects.create(
-        name=f"{data_source} pacing test",
-        data_source=data_source,
-        data_type="daily_mean",
-        is_enabled=True,
-        pull_start_date=timezone.now() - timedelta(days=2),
-    )
-    for i in range(station_count):
-        PullConfigurationStation.objects.create(
-            configuration=config, station_number=f"1200{i:04d}"
-        )
-    return config
-
-
 class PullPacingIsEnforcedTest(TestCase):
     def test_usgs_pull_never_exceeds_its_paced_worker_count(self):
-        config = _make_config("USGS", station_count=12)
+        config = make_pull_config("USGS", station_count=12)
         recorder = ConcurrencyRecorder()
         expected_workers = tasks.get_pull_pacing("USGS").workers
 
@@ -71,7 +54,7 @@ class PullPacingIsEnforcedTest(TestCase):
         self.assertEqual(recorder.peak, expected_workers)
 
     def test_default_source_still_fans_out_at_the_full_worker_count(self):
-        config = _make_config("EC", station_count=12)
+        config = make_pull_config("EC", station_count=12)
         recorder = ConcurrencyRecorder()
 
         with mock.patch.object(tasks, "_process_single_station", recorder):
@@ -80,7 +63,7 @@ class PullPacingIsEnforcedTest(TestCase):
         self.assertEqual(recorder.peak, tasks.STATION_WORKERS)
 
     def test_pull_spaces_submissions_by_the_configured_delay(self):
-        config = _make_config("USGS", station_count=4)
+        config = make_pull_config("USGS", station_count=4)
         recorder = ConcurrencyRecorder()
 
         with mock.patch.object(tasks, "_process_single_station", recorder):

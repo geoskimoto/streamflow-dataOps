@@ -30,7 +30,15 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-2">
+            <div class="card border-warning">
+                <div class="card-body text-center">
+                    <h3 class="mb-0">{{ partial_count }}</h3>
+                    <small class="text-muted">Partial</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
             <div class="card border-danger">
                 <div class="card-body text-center">
                     <h3 class="mb-0">{{ failed_count }}</h3>
@@ -38,7 +46,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-2">
             <div class="card border-info">
                 <div class="card-body text-center">
                     <h3 class="mb-0">{{ running_count }}</h3>
@@ -78,6 +86,7 @@
                     <select name="status" class="form-select">
                         <option value="">All Statuses</option>
                         <option value="success" {% if request.GET.status == "success" %}selected{% endif %}>Success</option>
+                        <option value="partial" {% if request.GET.status == "partial" %}selected{% endif %}>Partial</option>
                         <option value="failed" {% if request.GET.status == "failed" %}selected{% endif %}>Failed</option>
                         <option value="running" {% if request.GET.status == "running" %}selected{% endif %}>Running</option>
                     </select>
@@ -133,19 +142,7 @@
                                 </a>
                             </td>
                             <td>
-                                {% if log.status == 'success' %}
-                                <span class="badge bg-success">
-                                    <i class="fas fa-check"></i> Success
-                                </span>
-                                {% elif log.status == 'failed' %}
-                                <span class="badge bg-danger">
-                                    <i class="fas fa-times"></i> Failed
-                                </span>
-                                {% else %}
-                                <span class="badge bg-info">
-                                    <i class="fas fa-spinner fa-spin"></i> Running
-                                </span>
-                                {% endif %}
+                                {% include "streamflow/_status_badge.html" with status=log.status show_icon=True %}
                             </td>
                             <td>
                                 {% if log.records_processed %}

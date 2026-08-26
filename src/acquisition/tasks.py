@@ -275,6 +275,29 @@ def get_pull_pacing(data_source: str) -> PullPacing:
     return SOURCE_PACING.get(data_source, DEFAULT_PACING)
 
 
+# Share of stations that may fail before a run stops counting as healthy.
+# Large configs always lose a few stations to transient upstream errors; those
+# self-heal on the next run. Treating that as an outright failure hid the runs
+# that were genuinely broken.
+PARTIAL_FAILURE_THRESHOLD = 0.05
+
+
+def classify_pull_status(successful: int, failed: int) -> str:
+    """Classify a completed run as success, partial, or failed.
+
+    Clean run -> success. Failures within PARTIAL_FAILURE_THRESHOLD of the
+    stations attempted -> partial. Anything worse -> failed.
+    """
+    if failed == 0:
+        return "success"
+
+    attempted = successful + failed
+    if failed <= attempted * PARTIAL_FAILURE_THRESHOLD:
+        return "partial"
+
+    return "failed"
+
+
 @shared_task(bind=True, max_retries=3)
 def execute_pull_configuration(self, config_id: int):
     """
@@ -372,8 +395,8 @@ def execute_pull_configuration(self, config_id: int):
                         errors.append(f"Error processing {cs.station_number}: {e}")
 
         # Update log entry
-        log_status = "success" if failed_stations == 0 else "failed"
-        
+        log_status = classify_pull_status(successful_stations, failed_stations)
+
         log.status = log_status
         log.records_processed = total_records
         log.end_time = datetime.now(timezone.utc)

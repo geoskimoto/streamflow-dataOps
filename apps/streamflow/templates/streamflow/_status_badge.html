@@ -1,0 +1,14 @@
+{% comment %}
+Status badge for a DataPullLog. Usage:
+    {% include "streamflow/_status_badge.html" with status=log.status %}
+Pass show_icon=False for a text-only badge.
+{% endcomment %}
+{% if status == 'success' %}
+<span class="badge bg-success">{% if show_icon %}<i class="fas fa-check"></i> {% endif %}Success</span>
+{% elif status == 'partial' %}
+<span class="badge bg-warning text-dark">{% if show_icon %}<i class="fas fa-exclamation-triangle"></i> {% endif %}Partial</span>
+{% elif status == 'failed' %}
+<span class="badge bg-danger">{% if show_icon %}<i class="fas fa-times"></i> {% endif %}Failed</span>
+{% else %}
+<span class="badge bg-info">{% if show_icon %}<i class="fas fa-spinner"></i> {% endif %}Running</span>
+{% endif %}

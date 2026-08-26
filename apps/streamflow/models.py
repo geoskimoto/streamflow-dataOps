@@ -252,8 +252,16 @@ class DataPullLog(models.Model):
     STATUS_CHOICES = [
         ("running", "Running"),
         ("success", "Success"),
+        # Some stations failed, but few enough that the run is still healthy —
+        # large configs routinely lose a handful to transient upstream errors
+        # that self-heal on the next run. See tasks.classify_pull_status.
+        ("partial", "Partial"),
         ("failed", "Failed"),
     ]
+
+    # Statuses that mean the run did its job. Success-rate math should use
+    # this rather than hardcoding "success" in each view.
+    HEALTHY_STATUSES = ("success", "partial")
 
     configuration = models.ForeignKey(
         PullConfiguration,
