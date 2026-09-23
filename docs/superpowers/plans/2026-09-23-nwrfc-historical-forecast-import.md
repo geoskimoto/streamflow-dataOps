@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Load the complete NWRFC historical forecast archive (3,596,831 runs, WY2006–2026) into `forecast_runs`, after correcting the `run_date` key semantics that currently prevent the archive from superseding live-pull rows.
+**Goal:** Load the complete NWRFC historical forecast archive (3,577,182 runs, WY2006–2026) into `forecast_runs`, after correcting the `run_date` key semantics that currently prevent the archive from superseding live-pull rows.
 
 **Architecture:** Three independent code changes followed by one data operation. First fix `NOAAClient.get_rfc_forecast()` so live pulls key on the NWPS `issuedTime` field rather than falling back to `datetime.now()`. Then make the live pull path upsert on the full unique tuple with an explicit `forecast_type`. Then rewrite `ParquetForecastImporter` to stream row groups instead of loading a 144M-row DataFrame, with a corrected `ON CONFLICT` key that no longer fails silently. Finally back up, delete the superseded window, and load the archive.
 
@@ -36,6 +36,7 @@
 | `tests/test_noaa_rfc_pull_upsert.py` | Live-pull upsert key and forecast_type | Create |
 | `tests/test_parquet_forecast_importer.py` | Upsert key, streaming group assembly, type inference | Create |
 | `scripts/swap_nwrfc_archive.py` | Backup + scoped delete, reversible | Create |
+| `scripts/verify_archive_stream.py` | Pre-import read-only validation of archive counts | Created (Task 3 follow-up) |
 
 Station-resolution helpers in `parquet_forecast_importer.py` (`_fetch_gauge_metadata`, `_create_station_from_metadata`, `_create_station_from_master`) are kept as-is apart from the `is_active` change. Only the ingest path is rewritten.
 
@@ -543,7 +544,7 @@ def test_iter_forecast_runs_returns_utc_aware_issuance(tmp_path):
 
 
 def test_single_point_run_is_emitted_not_dropped(tmp_path):
-    """820 runs in the real archive have exactly one point."""
+    """12 runs in the real archive have exactly one point."""
     rows = [("CHDW1", datetime(2010, 1, 1, 18, 7), datetime(2010, 1, 2, 0, 0), 2380.0)]
     runs = list(iter_forecast_runs(_write_parquet(tmp_path, rows)))
     assert len(runs) == 1
@@ -969,6 +970,22 @@ if __name__ == "__main__":
         ap.error("pick at least one of --backup / --delete / --verify")
 ```
 
+- [ ] **Step 1b: Confirm the archive still matches what this plan assumes**
+
+Run (takes ~20 minutes; read-only, streams, ~230 MB peak RSS):
+
+```bash
+PYTHONPATH=$PWD venv/bin/python scripts/verify_archive_stream.py
+```
+
+Expected: `RESULT: ALL MATCH` — 3,577,182 runs, 441 LIDs, medium 3,559,239 /
+short 2,021 / long 15,922, 12 single-point runs, 27 negative-horizon runs.
+
+**If anything mismatches, stop and investigate before deleting a single row.**
+A changed run count means either the file changed or the carry-forward
+buffering in `iter_forecast_runs` regressed, and every count in Step 9 is
+then wrong.
+
 - [ ] **Step 2: Confirm the delete scope before running it**
 
 Run: `PYTHONPATH=$PWD venv/bin/python scripts/swap_nwrfc_archive.py --verify`
@@ -1010,7 +1027,7 @@ PYTHONPATH=$PWD venv/bin/python manage.py import_parquet_forecasts \
   /home/geoskimoto/projects/resid-cast/all_nwrfc_forecasts_WY2006_2026.parquet --dry-run
 ```
 
-Expected: reports 3,596,831 runs across 441 LIDs and writes nothing.
+Expected: reports 3,577,182 runs across 441 LIDs and writes nothing.
 
 - [ ] **Step 7: Import one station end-to-end**
 
@@ -1064,7 +1081,7 @@ with connection.cursor() as c:
 "
 ```
 
-Expected: total ≈ 3,596,831 + 411 + 708 = **3,597,950**, `pre_window` = 411, and `microsec` = 708 (only the three preserved orphan stations). Any shortfall in the total must be explained against the importer's reported `failed` and `anomalies` counts, not rounded past.
+Expected: total ≈ 3,577,182 + 411 + 708 = **3,578,301**, `pre_window` = 411, and `microsec` = 708 (only the three preserved orphan stations). Any shortfall in the total must be explained against the importer's reported `failed` and `anomalies` counts, not rounded past.
 
 - [ ] **Step 10: Restart Celery Beat and confirm a clean pull cycle**
 
