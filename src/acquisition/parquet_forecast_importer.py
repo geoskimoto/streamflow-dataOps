@@ -14,10 +14,11 @@ Handles:
 """
 
 import logging
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import IO, Dict, List, Optional, Tuple
 
 import pandas as pd
+import pyarrow.parquet as pq
 import requests
 from django.db import transaction
 
@@ -39,6 +40,70 @@ def infer_forecast_type(horizon_hours: float) -> str:
     elif horizon_hours <= 10 * 24:
         return "medium"
     return "long"
+
+
+def iter_forecast_runs(parquet_path: str):
+    """
+    Stream (lid, issuance_time, data_points, forecast_type) tuples.
+
+    Reads one row group at a time so a 144M-row file never lands in memory.
+    A single (lid, issuance_time) group can straddle a row-group boundary,
+    so the last issuance_time seen is held back until a later row group
+    proves it complete. The file is ordered by issuance_time, which is what
+    makes that single-key carry sufficient — verified across all 1,487 row
+    groups of the WY2006-2026 archive, and re-checked here per row group so
+    a future unsorted file fails loudly instead of silently splitting runs.
+    """
+    pf = pq.ParquetFile(parquet_path)
+    carry = {}  # (lid, issuance_time) -> list[(sim_time, value)]
+    prev_max_iss = None
+
+    for rg in range(pf.metadata.num_row_groups):
+        table = pf.read_row_groups([rg])
+        lids = table.column("lid").to_pylist()
+        issuances = table.column("issuance_time").to_pylist()
+        sim_times = table.column("sim_time").to_pylist()
+        values = table.column("simulation (cfs)").to_pylist()
+
+        if prev_max_iss is not None and min(issuances) < prev_max_iss:
+            raise ValueError(
+                f"{parquet_path} is not sorted by issuance_time at row group "
+                f"{rg} (min {min(issuances)} < previous max {prev_max_iss}); "
+                "the streaming buffer would split runs"
+            )
+
+        buckets = dict(carry)
+        carry = {}
+        for lid, iss, st, val in zip(lids, issuances, sim_times, values):
+            buckets.setdefault((lid, iss), []).append((st, val))
+
+        # Hold back every group at the highest issuance_time in this row
+        # group — those may continue into the next one.
+        max_iss = max(issuances)
+        prev_max_iss = max_iss
+        for key in list(buckets):
+            if key[1] == max_iss:
+                carry[key] = buckets.pop(key)
+
+        for key, points in buckets.items():
+            yield _build_run(key, points)
+
+    for key, points in carry.items():
+        yield _build_run(key, points)
+
+
+def _build_run(key, points):
+    """Turn a buffered group into (lid, issuance_utc, data_points, forecast_type)."""
+    lid, issuance = key
+    points.sort(key=lambda p: p[0])
+    horizon_hours = (points[-1][0] - issuance).total_seconds() / 3600
+    data = [
+        {"date": st.strftime("%Y-%m-%dT%H:%M:%SZ"), "value": float(val)}
+        for st, val in points
+    ]
+    if issuance.tzinfo is None:
+        issuance = issuance.replace(tzinfo=timezone.utc)
+    return lid, issuance, data, infer_forecast_type(horizon_hours)
 
 
 def _fetch_gauge_metadata(lid: str) -> Optional[Dict]:
@@ -131,7 +196,10 @@ def _create_station_from_metadata(lid: str, meta: Dict) -> Tuple[Station, bool]:
             "latitude": meta["latitude"],
             "longitude": meta["longitude"],
             "state": meta["state_code"],
-            "is_active": True,
+            # New archive-only gauges are created inactive so they do not join
+            # pull configurations or active-station counts. NWRFC configs must
+            # keep skip_inactive_stations off, or they would filter these out.
+            "is_active": False,
         },
     )
     return station, created
@@ -147,7 +215,10 @@ def _create_station_from_master(lid: str, master: MasterStation) -> Station:
             "latitude": master.latitude,
             "longitude": master.longitude,
             "state": master.state_code,
-            "is_active": True,
+            # New archive-only gauges are created inactive so they do not join
+            # pull configurations or active-station counts. NWRFC configs must
+            # keep skip_inactive_stations off, or they would filter these out.
+            "is_active": False,
         },
     )
     return station
@@ -181,68 +252,59 @@ class ParquetForecastImporter:
 
         Returns a summary dict with counts of created/updated/skipped/failed runs.
         """
-        self._log(f"Loading parquet: {parquet_path}")
-        df = pd.read_parquet(parquet_path)
-        self._validate_schema(df)
-
+        self._log(f"Scanning LIDs in {parquet_path}…")
+        pf = pq.ParquetFile(parquet_path)
+        lids = set()
+        for rg in range(pf.metadata.num_row_groups):
+            lids.update(pf.read_row_groups([rg], columns=["lid"]).column("lid").to_pylist())
+        lids = sorted(lids)
         if filter_lids:
-            df = df[df["lid"].isin(filter_lids)]
-            self._log(f"Filtered to {len(filter_lids)} station(s): {filter_lids}")
+            lids = [l for l in lids if l in set(filter_lids)]
+        self._log(f"Found {len(lids)} unique LID(s)")
 
-        lids = df["lid"].unique().tolist()
-        self._log(f"Found {len(lids)} unique LID(s) in parquet")
-
-        # --- Resolve stations ---
         station_map, skipped_lids = self._resolve_stations(lids, dry_run)
-        if skipped_lids:
-            self._warn(f"Skipping {len(skipped_lids)} unresolvable LID(s): {skipped_lids}")
-            df = df[~df["lid"].isin(skipped_lids)]
+        skipped = set(skipped_lids)
+        wanted = set(filter_lids) if filter_lids else None
 
-        if df.empty:
-            self._warn("No rows to import after station resolution.")
-            return {"created": 0, "updated": 0, "skipped": 0, "failed": 0}
-
-        # --- Make timestamps UTC-aware ---
-        if df["issuance_time"].dt.tz is None:
-            df["issuance_time"] = df["issuance_time"].dt.tz_localize("UTC")
-        if df["sim_time"].dt.tz is None:
-            df["sim_time"] = df["sim_time"].dt.tz_localize("UTC")
-
-        # --- Build ForecastRun objects grouped by (lid, issuance_time) ---
-        totals = {"created": 0, "updated": 0, "failed": 0}
-        batch: List[ForecastRun] = []
-
-        groups = df.groupby(["lid", "issuance_time"], sort=False)
-        total_groups = len(groups)
-        self._log(f"Processing {total_groups:,} forecast run groups…")
-
-        for idx, ((lid, issuance_time), group) in enumerate(groups, 1):
-            station = station_map.get(lid)
-            # In dry-run, station may be None (placeholder); count as would-process
-            if station is None and not dry_run:
+        totals = {"created": 0, "updated": 0, "failed": 0, "anomalies": 0}
+        batch = []
+        for idx, (lid, issuance, data, ftype) in enumerate(
+            iter_forecast_runs(parquet_path), 1
+        ):
+            if wanted is not None and lid not in wanted:
+                continue
+            if lid in skipped:
                 totals["failed"] += 1
                 continue
 
+            last = datetime.strptime(data[-1]["date"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc
+            )
+            if last < issuance:
+                totals["anomalies"] += 1
+                self._warn(
+                    f"  Negative horizon for {lid} @ {issuance.isoformat()} "
+                    f"(last point {data[-1]['date']}) — importing as-is"
+                )
+            elif len(data) == 1:
+                totals["anomalies"] += 1
+
             if dry_run:
-                # Count without building real objects (station may be None placeholder)
                 totals["created"] += 1
             else:
-                run_obj = self._build_forecast_run(station, issuance_time, group)
-                if run_obj is None:
-                    totals["failed"] += 1
-                    continue
-                batch.append(run_obj)
-
+                batch.append(ForecastRun(
+                    station=station_map[lid], source="NOAA_RFC", run_date=issuance,
+                    forecast_type=ftype, is_forecast=True, data=data,
+                ))
                 if len(batch) >= batch_size:
                     c, u = self._flush_batch(batch, dry_run)
                     totals["created"] += c
                     totals["updated"] += u
                     batch = []
 
-            if idx % 5000 == 0:
-                self._log(f"  {idx:,}/{total_groups:,} groups processed…")
+            if idx % 100000 == 0:
+                self._log(f"  {idx:,} runs processed…")
 
-        # Flush remainder
         if batch and not dry_run:
             c, u = self._flush_batch(batch, dry_run)
             totals["created"] += c
@@ -253,6 +315,7 @@ class ParquetForecastImporter:
                 self.style.SUCCESS(
                     f"\nDry run complete — would process {totals['created']:,} forecast run(s) "
                     f"across {len(station_map)} station(s). "
+                    f"Anomalies: {totals['anomalies']:,}. "
                     f"Nothing was written to the database."
                 )
             )
@@ -261,7 +324,8 @@ class ParquetForecastImporter:
                 self.style.SUCCESS(
                     f"\nImport complete — "
                     f"upserted: {totals['created']:,}  "
-                    f"failed: {totals['failed']:,}"
+                    f"failed: {totals['failed']:,}  "
+                    f"anomalies: {totals['anomalies']:,}"
                 )
             )
         return totals
@@ -371,35 +435,27 @@ class ParquetForecastImporter:
             )
             return None
 
-    def _flush_batch(
-        self, batch: List[ForecastRun], dry_run: bool
-    ) -> Tuple[int, int]:
+    def _flush_batch(self, batch, dry_run):
         """
-        Upsert a batch of ForecastRun objects.
+        Upsert a batch of ForecastRun objects. Parquet is source of truth.
 
-        Parquet is source of truth: existing records are overwritten.
-        Returns (created_count, updated_count).
+        Exceptions propagate. A swallowed failure here previously reported
+        "upserted: 0, failed: 0", making a total failure indistinguishable
+        from a successful no-op.
         """
         if dry_run:
             return 0, 0
 
-        try:
-            with transaction.atomic():
-                results = ForecastRun.objects.bulk_create(
-                    batch,
-                    update_conflicts=True,
-                    update_fields=["data"],
-                    unique_fields=["station", "source", "run_date", "forecast_type"],
-                )
-            # Django sets pk on created rows but not on updated rows when using
-            # update_conflicts; count rows without pk as updated.
-            created = sum(1 for r in results if r._state.adding is False and r.pk)
-            # Simpler: use len(results) for total, can't easily split created vs updated
-            # via bulk_create. We'll report total as created+updated combined.
-            return len(results), 0
-        except Exception as exc:
-            logger.error("Batch flush failed: %s", exc)
-            return 0, 0
+        with transaction.atomic():
+            results = ForecastRun.objects.bulk_create(
+                batch,
+                update_conflicts=True,
+                update_fields=["data"],
+                unique_fields=[
+                    "station", "source", "run_date", "forecast_type", "is_forecast"
+                ],
+            )
+        return len(results), 0
 
     # ------------------------------------------------------------------
     # Validation
