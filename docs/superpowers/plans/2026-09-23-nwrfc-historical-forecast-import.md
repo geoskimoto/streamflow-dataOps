@@ -31,8 +31,9 @@
 |---|---|---|
 | `src/acquisition/noaa_client.py` | NWPS API client; derive `run_date` from `issuedTime` | Modify (lines 296–306) |
 | `src/acquisition/tasks.py` | Live pull; upsert `ForecastRun` on full unique tuple | Modify (lines 181–187) |
-| `src/acquisition/parquet_forecast_importer.py` | Streaming archive importer | Rewrite `run()` / `_flush_batch()`; keep station-resolution helpers |
+| `src/acquisition/parquet_forecast_importer.py` | Streaming archive importer | Rename `_infer_forecast_type` → `infer_forecast_type` (Task 2); rewrite `run()` / `_flush_batch()` (Task 3); keep station-resolution helpers |
 | `tests/test_noaa_client_run_date.py` | Issuance-time parsing behaviour | Create |
+| `tests/test_noaa_rfc_pull_upsert.py` | Live-pull upsert key and forecast_type | Create |
 | `tests/test_parquet_forecast_importer.py` | Upsert key, streaming group assembly, type inference | Create |
 | `scripts/swap_nwrfc_archive.py` | Backup + scoped delete, reversible | Create |
 
@@ -243,8 +244,10 @@ The storing logic is currently inline inside a long branch of `_pull_station_dat
 - Test: `tests/test_noaa_rfc_pull_upsert.py`
 
 **Interfaces:**
-- Consumes: `NOAAClient.get_rfc_forecast()` from Task 1, returning `run_date` as a true issuance time; `_infer_forecast_type(horizon_hours: float) -> str` from `src.acquisition.parquet_forecast_importer` (Task 3 keeps this function at that path with that signature).
-- Produces: `store_rfc_forecast(station, forecast_data: dict) -> tuple[ForecastRun, bool]` in `src.acquisition.tasks`, where `forecast_data` has keys `run_date`, `forecast_data`, `rmse`. Returns `(run, created)`.
+- Consumes: `NOAAClient.get_rfc_forecast()` from Task 1, returning `run_date` as a true issuance time.
+- Produces:
+  - `infer_forecast_type(horizon_hours: float) -> str` in `src.acquisition.parquet_forecast_importer`. **This task renames the existing private `_infer_forecast_type` to this public name**, because two modules now share it and the leading underscore would misrepresent it as module-private. The body and signature are unchanged. Update its one existing call site inside that module. Task 3 keeps it at this path under this name.
+  - `store_rfc_forecast(station, forecast_data: dict) -> tuple[ForecastRun, bool]` in `src.acquisition.tasks`, where `forecast_data` has keys `run_date`, `forecast_data`, `rmse`. Returns `(run, created)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -263,7 +266,7 @@ from datetime import datetime, timezone
 import pytest
 
 from apps.streamflow.models import ForecastRun, Station
-from src.acquisition.parquet_forecast_importer import _infer_forecast_type
+from src.acquisition.parquet_forecast_importer import infer_forecast_type
 from src.acquisition.tasks import store_rfc_forecast
 
 
@@ -340,7 +343,7 @@ def test_rmse_is_persisted(station):
     ],
 )
 def test_forecast_type_follows_horizon(horizon_hours, expected):
-    assert _infer_forecast_type(horizon_hours) == expected
+    assert infer_forecast_type(horizon_hours) == expected
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -349,9 +352,11 @@ Run: `venv/bin/python -m pytest tests/test_noaa_rfc_pull_upsert.py -v`
 
 Expected: collection fails with `ImportError: cannot import name 'store_rfc_forecast' from 'src.acquisition.tasks'`. The helper does not exist yet.
 
-- [ ] **Step 3: Extract the helper and implement the upsert**
+- [ ] **Step 3: Rename the shared helper, then extract and implement the upsert**
 
-Add this module-level function to `src/acquisition/tasks.py`, near the other helpers:
+First, in `src/acquisition/parquet_forecast_importer.py`, rename the module-level `_infer_forecast_type` to `infer_forecast_type` (body and signature unchanged) and update its call site inside that module. Two modules share it now, so the private-by-convention underscore no longer fits.
+
+Then add this module-level function to `src/acquisition/tasks.py`, near the other helpers:
 
 ```python
 def store_rfc_forecast(station, forecast_data):
@@ -364,7 +369,7 @@ def store_rfc_forecast(station, forecast_data):
     same as 3-day ones.
     """
     from apps.streamflow.models import ForecastRun
-    from src.acquisition.parquet_forecast_importer import _infer_forecast_type
+    from src.acquisition.parquet_forecast_importer import infer_forecast_type
 
     points = forecast_data['forecast_data']
     last_valid = datetime.fromisoformat(points[-1]['date'].replace('Z', '+00:00'))
@@ -374,7 +379,7 @@ def store_rfc_forecast(station, forecast_data):
         station=station,
         source='NOAA_RFC',
         run_date=forecast_data['run_date'],
-        forecast_type=_infer_forecast_type(horizon_hours),
+        forecast_type=infer_forecast_type(horizon_hours),
         is_forecast=True,
         defaults={
             'data': points,
@@ -423,7 +428,7 @@ Two defects plus a scale problem. `_flush_batch` passes four `unique_fields` aga
 - Test: `tests/test_parquet_forecast_importer.py`
 
 **Interfaces:**
-- Consumes: `_infer_forecast_type(horizon_hours: float) -> str` — keep this module-level function, unchanged in name and signature (Task 2 imports it).
+- Consumes: `infer_forecast_type(horizon_hours: float) -> str` — already renamed from `_infer_forecast_type` to this public name in Task 2. Keep it at this path, unchanged in name and signature; `src/acquisition/tasks.py` imports it.
 - Produces:
   - `ParquetForecastImporter.run(parquet_path: str, dry_run: bool = False, filter_lids: list[str] | None = None, batch_size: int = 500) -> dict` returning keys `created`, `updated`, `failed`, `anomalies`.
   - `iter_forecast_runs(parquet_path: str) -> Iterator[tuple[str, datetime, list[dict], str]]` yielding `(lid, issuance_time_utc, data_points, forecast_type)`, where `data_points` is `[{"date": "%Y-%m-%dT%H:%M:%SZ", "value": float}, ...]` sorted by `sim_time`.
@@ -449,7 +454,7 @@ import pytest
 
 from apps.streamflow.models import ForecastRun, Station
 from src.acquisition.parquet_forecast_importer import (
-    _infer_forecast_type,
+    infer_forecast_type,
     iter_forecast_runs,
 )
 
@@ -478,7 +483,7 @@ def station(db):
      (10 * 24, "medium"), (10 * 24 + 0.1, "long")],
 )
 def test_infer_forecast_type_boundaries(horizon_hours, expected):
-    assert _infer_forecast_type(horizon_hours) == expected
+    assert infer_forecast_type(horizon_hours) == expected
 
 
 # --- streaming --------------------------------------------------------------
@@ -630,7 +635,7 @@ Expected: collection fails with `ImportError: cannot import name 'iter_forecast_
 
 - [ ] **Step 3: Add the streaming iterator**
 
-Add to `src/acquisition/parquet_forecast_importer.py`, after `_infer_forecast_type`:
+Add to `src/acquisition/parquet_forecast_importer.py`, after `infer_forecast_type`:
 
 ```python
 import pyarrow.parquet as pq
@@ -697,7 +702,7 @@ def _build_run(key, points):
     ]
     if issuance.tzinfo is None:
         issuance = issuance.replace(tzinfo=timezone.utc)
-    return lid, issuance, data, _infer_forecast_type(horizon_hours)
+    return lid, issuance, data, infer_forecast_type(horizon_hours)
 ```
 
 - [ ] **Step 4: Fix the upsert key and remove the silent failure**
