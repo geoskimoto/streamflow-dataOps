@@ -88,7 +88,7 @@ The `src/` tree is not a Django app — it's imported directly by Celery tasks a
 
 - **Station** — 309 active monitoring stations (USGS, EC, NOAA_RFC)
 - **DischargeObservation** — Time-series discharge with `type` (`realtime_15min` | `daily_mean`) and `quality_code`; unique on `(station, observed_at, type)`
-- **ForecastRun** — Forecast payload in a `data` JSONField (`[{date, value}]`); `forecast_type` is `short` | `medium` | `long`; unique on `(station, source, run_date, forecast_type)`
+- **ForecastRun** — Forecast payload in a `data` JSONField (`[{date, value}]`); `forecast_type` is `short` | `medium` | `long`; unique on `(station, source, run_date, forecast_type, is_forecast)` — **all five columns**. Any `bulk_create(update_conflicts=True)` must pass all five as `unique_fields`, or PostgreSQL raises `there is no unique or exclusion constraint matching the ON CONFLICT specification`
 - **PullConfiguration** + **PullConfigurationStation** — Scheduled acquisition jobs linked to stations; `skip_inactive_stations` (default off) limits a pull to `is_active` stations
 - **PullStationProgress** — Tracks last successful pull per station for smart-append (incremental pulls)
 - **MasterStation** / **StationMapping** — 14,319 reference stations; cross-network ID resolution (USGS ↔ HADS ↔ EC)
@@ -109,6 +109,19 @@ The `src/` tree is not a Django app — it's imported directly by Celery tasks a
 The NOAA API client (`src/acquisition/noaa_client.py`) passes `forecast_type` directly as the `forecast` query param to `https://api.water.noaa.gov/nwps/v1/gauges/{hads_id}/stageflow`. The parquet importer infers type by horizon: ≤7 days → `short`, ≤10 days → `medium`, >10 days → `long`.
 
 **NOAA station IDs are HADS IDs, not USGS IDs.** Translation happens via `StationMapping` before any NOAA API call.
+
+#### `run_date` is the forecast issuance time, never the fetch time
+
+For `NOAA_RFC`, `run_date` comes from the NWPS `forecast.issuedTime` field —
+note the **`issuedTime`** spelling. Reading `issueTime` yields `None` silently;
+that typo made every live pull fall back to `datetime.now()` and keyed 68,057
+rows on when we fetched rather than when NWRFC issued, which made them
+impossible to reconcile against the NWRFC historical archive (whose key is the
+issuance time). If an issuance time cannot be parsed, `get_rfc_forecast()`
+returns `None` and the run is skipped — never substitute `now()`.
+
+Issuance times are minute-precision. A microsecond-precision `run_date` on a
+`NOAA_RFC` row is the signature of the old bug.
 
 ### Data Acquisition Flow
 
