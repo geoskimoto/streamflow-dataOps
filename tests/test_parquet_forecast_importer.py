@@ -216,3 +216,123 @@ def test_run_validates_schema_before_any_station_writes(tmp_path, db):
         importer.run(str(path))
 
     assert Station.objects.count() == 0
+
+
+# --- summary / anomaly logging (Findings 1, 2, 5) ---------------------------
+
+def test_single_point_run_is_logged_as_anomaly(tmp_path, station, db):
+    """The design doc requires single-point runs to be logged, not just counted."""
+    import io
+
+    from django.core.management.color import no_style
+
+    from src.acquisition.parquet_forecast_importer import ParquetForecastImporter
+
+    rows = [("CHDW1", datetime(2010, 1, 1, 18, 7), datetime(2010, 1, 2, 0, 0), 2380.0)]
+    path = _write_parquet(tmp_path, rows)
+    stderr = io.StringIO()
+    importer = ParquetForecastImporter(io.StringIO(), stderr, no_style())
+
+    totals = importer.run(path, dry_run=True)
+
+    assert totals["anomalies"] == 1
+    assert "Single-point run for CHDW1" in stderr.getvalue()
+
+
+def test_dry_run_summary_reports_skipped_count(tmp_path, db, monkeypatch):
+    """The dry-run pre-flight gate must surface how many runs it would drop."""
+    import io
+
+    from django.core.management.color import no_style
+
+    from src.acquisition.parquet_forecast_importer import ParquetForecastImporter
+
+    monkeypatch.setattr(
+        "src.acquisition.parquet_forecast_importer._fetch_gauge_metadata",
+        lambda lid: None,
+    )
+    rows = [("UNKNOWN1", datetime(2010, 1, 1, 18, 7), datetime(2010, 1, 2, 0, 0), 100.0)]
+    path = _write_parquet(tmp_path, rows)
+    stdout = io.StringIO()
+    importer = ParquetForecastImporter(stdout, io.StringIO(), no_style())
+
+    totals = importer.run(path, dry_run=True)
+
+    assert totals["failed"] == 1
+    assert "Would skip: 1 run(s) on unresolvable LID(s)." in stdout.getvalue()
+
+
+def test_dry_run_summary_omits_skip_line_when_nothing_failed(tmp_path, station, db):
+    """No skips -> no skip line, so a clean dry run stays uncluttered."""
+    import io
+
+    from django.core.management.color import no_style
+
+    from src.acquisition.parquet_forecast_importer import ParquetForecastImporter
+
+    rows = [("CHDW1", datetime(2010, 1, 1, 18, 7), datetime(2010, 1, 2, 0, 0), 2380.0),
+            ("CHDW1", datetime(2010, 1, 2, 18, 7), datetime(2010, 1, 3, 0, 0), 2380.0)]
+    path = _write_parquet(tmp_path, rows)
+    stdout = io.StringIO()
+    importer = ParquetForecastImporter(stdout, io.StringIO(), no_style())
+
+    totals = importer.run(path, dry_run=True)
+
+    assert totals["failed"] == 0
+    assert "Would skip" not in stdout.getvalue()
+
+
+def test_real_run_summary_warns_and_lists_lids_when_failures(tmp_path, db, monkeypatch):
+    """Millions of failed rows must not print green; the failing LIDs must
+    reappear next to the final counts instead of only in earlier log lines."""
+    import io
+
+    from src.acquisition.parquet_forecast_importer import ParquetForecastImporter
+
+    monkeypatch.setattr(
+        "src.acquisition.parquet_forecast_importer._fetch_gauge_metadata",
+        lambda lid: None,
+    )
+    rows = [("UNKNOWN1", datetime(2010, 1, 1, 18, 7), datetime(2010, 1, 2, 0, 0), 100.0)]
+    path = _write_parquet(tmp_path, rows)
+
+    class _StyleSpy:
+        """Records which style call wrapped the final summary."""
+
+        def SUCCESS(self, msg):
+            return f"[SUCCESS]{msg}"
+
+        def WARNING(self, msg):
+            return f"[WARNING]{msg}"
+
+        def ERROR(self, msg):
+            return f"[ERROR]{msg}"
+
+    stdout = io.StringIO()
+    importer = ParquetForecastImporter(stdout, io.StringIO(), _StyleSpy())
+
+    importer.run(path, dry_run=False)
+
+    output = stdout.getvalue()
+    assert "[WARNING]" in output
+    assert "Import complete" in output.split("[WARNING]", 1)[1]
+    assert "UNKNOWN1" in output
+
+
+def test_real_run_summary_stays_success_when_no_failures(tmp_path, station, db):
+    """Guard the unchanged happy path — no failures still prints SUCCESS."""
+    import io
+
+    from django.core.management.color import no_style
+
+    from src.acquisition.parquet_forecast_importer import ParquetForecastImporter
+
+    rows = [("CHDW1", datetime(2010, 1, 1, 18, 7), datetime(2010, 1, 2, 0, 0), 2380.0)]
+    path = _write_parquet(tmp_path, rows)
+    stdout = io.StringIO()
+    importer = ParquetForecastImporter(stdout, io.StringIO(), no_style())
+
+    totals = importer.run(path, dry_run=False)
+
+    assert totals["failed"] == 0
+    assert "Skipped LID(s)" not in stdout.getvalue()

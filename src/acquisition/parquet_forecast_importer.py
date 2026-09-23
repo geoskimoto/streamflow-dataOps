@@ -289,6 +289,10 @@ class ParquetForecastImporter:
                 )
             elif len(data) == 1:
                 totals["anomalies"] += 1
+                self._warn(
+                    f"  Single-point run for {lid} @ {issuance.isoformat()} "
+                    f"— importing as-is"
+                )
 
             if dry_run:
                 totals["created"] += 1
@@ -320,15 +324,22 @@ class ParquetForecastImporter:
                     f"Nothing was written to the database."
                 )
             )
-        else:
-            self._log(
-                self.style.SUCCESS(
-                    f"\nImport complete — "
-                    f"upserted: {totals['created']:,}  "
-                    f"failed: {totals['failed']:,}  "
-                    f"anomalies: {totals['anomalies']:,}"
+            if totals["failed"]:
+                self._log(
+                    f"Would skip: {totals['failed']:,} run(s) on unresolvable LID(s)."
                 )
+        else:
+            summary = (
+                f"\nImport complete — "
+                f"upserted: {totals['created']:,}  "
+                f"failed: {totals['failed']:,}  "
+                f"anomalies: {totals['anomalies']:,}"
             )
+            if totals["failed"]:
+                summary += f"\nSkipped LID(s) (unresolvable): {', '.join(skipped_lids)}"
+                self._log(self.style.WARNING(summary))
+            else:
+                self._log(self.style.SUCCESS(summary))
         return totals
 
     # ------------------------------------------------------------------

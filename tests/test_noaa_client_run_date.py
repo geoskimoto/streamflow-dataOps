@@ -98,6 +98,18 @@ def test_malformed_issuance_time_is_logged(client, caplog):
     assert "not-a-timestamp" in caplog.text
 
 
+def test_naive_issued_time_is_coerced_to_utc(client):
+    """A NWPS 'issuedTime' with no UTC offset must not be interpreted in the
+    project TIME_ZONE by Django. fromisoformat() alone would return a naive
+    datetime here, producing a run_date hours off from the archive.
+    """
+    payload = _payload({"issuedTime": "2026-09-22T15:26:00"})  # no trailing 'Z'/offset
+    with _mock_get(payload):
+        result = client.get_rfc_forecast("WTLO3")
+    assert result["run_date"] == datetime(2026, 9, 22, 15, 26, tzinfo=timezone.utc)
+    assert result["run_date"].tzinfo is not None
+
+
 def test_forecast_data_still_converts_kcfs_to_cfs(client):
     """Guard the surrounding behaviour we are not changing."""
     with _mock_get(_payload()):

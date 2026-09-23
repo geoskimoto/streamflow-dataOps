@@ -84,7 +84,9 @@ def store_rfc_forecast(station, forecast_data):
     from src.acquisition.parquet_forecast_importer import infer_forecast_type
 
     points = forecast_data['forecast_data']
-    last_valid = datetime.fromisoformat(points[-1]['date'].replace('Z', '+00:00'))
+    last_valid = max(
+        datetime.fromisoformat(p['date'].replace('Z', '+00:00')) for p in points
+    )
     horizon_hours = (last_valid - forecast_data['run_date']).total_seconds() / 3600
 
     return ForecastRun.objects.update_or_create(

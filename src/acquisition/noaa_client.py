@@ -311,6 +311,8 @@ class NOAAClient:
                     f"Unparseable issuance time {issue_time!r} for {lid}; skipping run"
                 )
                 return None
+            if run_date.tzinfo is None:
+                run_date = run_date.replace(tzinfo=timezone.utc)
             
             # Extract forecast time series
             forecast_data = []

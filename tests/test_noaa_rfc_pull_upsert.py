@@ -63,6 +63,23 @@ def test_short_horizon_is_labelled_short(station):
     assert run.forecast_type == "short"
 
 
+def test_unordered_points_still_yield_correct_forecast_type(station):
+    """The NWPS `data` array is not guaranteed chronological.
+
+    points[-1] would pick the horizon based on array order rather than the
+    actual last valid time; max() must be used instead so an out-of-order
+    response is still classified correctly and doesn't collide with the
+    correctly-ordered row on the unique key.
+    """
+    run_date = datetime(2026, 9, 22, 15, 26, tzinfo=timezone.utc)
+    # Last element in the array is NOT the chronologically last point.
+    run, _ = store_rfc_forecast(station, _payload(run_date, [
+        {"date": "2026-10-02T00:00:00Z", "value": 1200.0},  # actual last (9.36 days out)
+        {"date": "2026-09-22T18:00:00Z", "value": 1340.0},  # array-last, but earliest in time
+    ]))
+    assert run.forecast_type == "medium"
+
+
 def test_differing_horizons_do_not_collide(station):
     """Same issuance, different horizon -> distinct rows, per the unique key."""
     run_date = datetime(2026, 9, 22, 15, 26, tzinfo=timezone.utc)
