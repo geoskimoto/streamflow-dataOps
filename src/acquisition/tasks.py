@@ -71,6 +71,37 @@ def _save_nwrfc_forecast_run(station_obj, rows: list[dict], run_date) -> int:
     return total
 
 
+def store_rfc_forecast(station, forecast_data):
+    """
+    Upsert one NOAA_RFC forecast run.
+
+    Keyed on the full unique tuple so re-pulling an issuance updates in place.
+    forecast_type is derived from the actual horizon; the previous code let it
+    fall back to the model default of 'short', labelling 10-day forecasts the
+    same as 3-day ones.
+    """
+    from apps.streamflow.models import ForecastRun
+    from src.acquisition.parquet_forecast_importer import infer_forecast_type
+
+    points = forecast_data['forecast_data']
+    last_valid = max(
+        datetime.fromisoformat(p['date'].replace('Z', '+00:00')) for p in points
+    )
+    horizon_hours = (last_valid - forecast_data['run_date']).total_seconds() / 3600
+
+    return ForecastRun.objects.update_or_create(
+        station=station,
+        source='NOAA_RFC',
+        run_date=forecast_data['run_date'],
+        forecast_type=infer_forecast_type(horizon_hours),
+        is_forecast=True,
+        defaults={
+            'data': points,
+            'rmse': forecast_data.get('rmse'),
+        },
+    )
+
+
 def _process_single_station(config_station, config_id, config):
     """Fetch, process, and store data for a single station.
 
@@ -178,13 +209,7 @@ def _process_single_station(config_station, config_id, config):
                             'agency': 'NOAA_RFC',
                         }
                     )
-                    ForecastRun.objects.create(
-                        station=station_obj,
-                        source='NOAA_RFC',
-                        run_date=forecast_data['run_date'],
-                        data=forecast_data['forecast_data'],
-                        rmse=forecast_data.get('rmse')
-                    )
+                    store_rfc_forecast(station_obj, forecast_data)
                     records = len(forecast_data['forecast_data'])
                     logger.info(
                         f"✓ Stored forecast run with {records} data points for {station_number}"

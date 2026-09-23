@@ -294,15 +294,25 @@ class NOAAClient:
                 self.logger.info(f"No current forecast available for {lid}")
                 return None
             
-            # Get the issue time (run_date)
-            issue_time = forecast.get("issueTime")
-            if issue_time:
-                try:
-                    run_date = datetime.fromisoformat(issue_time.replace('Z', '+00:00'))
-                except:
-                    run_date = datetime.now(timezone.utc)
-            else:
-                run_date = datetime.now(timezone.utc)
+            # Get the issue time (run_date).
+            # NWPS spells this "issuedTime"; "issueTime" is accepted as a
+            # legacy fallback. Never substitute now() — a fetch-time key
+            # cannot be reconciled with the NWRFC archive.
+            issue_time = forecast.get("issuedTime") or forecast.get("issueTime")
+            if not issue_time:
+                self.logger.warning(
+                    f"No issuance time in forecast for {lid}; skipping run"
+                )
+                return None
+            try:
+                run_date = datetime.fromisoformat(issue_time.replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                self.logger.warning(
+                    f"Unparseable issuance time {issue_time!r} for {lid}; skipping run"
+                )
+                return None
+            if run_date.tzinfo is None:
+                run_date = run_date.replace(tzinfo=timezone.utc)
             
             # Extract forecast time series
             forecast_data = []

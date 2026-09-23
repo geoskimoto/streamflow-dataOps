@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Load the complete NWRFC historical forecast archive (3,596,831 runs, WY2006–2026) into `forecast_runs`, after correcting the `run_date` key semantics that currently prevent the archive from superseding live-pull rows.
+**Goal:** Load the complete NWRFC historical forecast archive (3,577,182 runs, WY2006–2026) into `forecast_runs`, after correcting the `run_date` key semantics that currently prevent the archive from superseding live-pull rows.
 
 **Architecture:** Three independent code changes followed by one data operation. First fix `NOAAClient.get_rfc_forecast()` so live pulls key on the NWPS `issuedTime` field rather than falling back to `datetime.now()`. Then make the live pull path upsert on the full unique tuple with an explicit `forecast_type`. Then rewrite `ParquetForecastImporter` to stream row groups instead of loading a 144M-row DataFrame, with a corrected `ON CONFLICT` key that no longer fails silently. Finally back up, delete the superseded window, and load the archive.
 
@@ -31,10 +31,12 @@
 |---|---|---|
 | `src/acquisition/noaa_client.py` | NWPS API client; derive `run_date` from `issuedTime` | Modify (lines 296–306) |
 | `src/acquisition/tasks.py` | Live pull; upsert `ForecastRun` on full unique tuple | Modify (lines 181–187) |
-| `src/acquisition/parquet_forecast_importer.py` | Streaming archive importer | Rewrite `run()` / `_flush_batch()`; keep station-resolution helpers |
+| `src/acquisition/parquet_forecast_importer.py` | Streaming archive importer | Rename `_infer_forecast_type` → `infer_forecast_type` (Task 2); rewrite `run()` / `_flush_batch()` (Task 3); keep station-resolution helpers |
 | `tests/test_noaa_client_run_date.py` | Issuance-time parsing behaviour | Create |
+| `tests/test_noaa_rfc_pull_upsert.py` | Live-pull upsert key and forecast_type | Create |
 | `tests/test_parquet_forecast_importer.py` | Upsert key, streaming group assembly, type inference | Create |
 | `scripts/swap_nwrfc_archive.py` | Backup + scoped delete, reversible | Create |
+| `scripts/verify_archive_stream.py` | Pre-import read-only validation of archive counts | Created (Task 3 follow-up) |
 
 Station-resolution helpers in `parquet_forecast_importer.py` (`_fetch_gauge_metadata`, `_create_station_from_metadata`, `_create_station_from_master`) are kept as-is apart from the `is_active` change. Only the ingest path is rewritten.
 
@@ -243,8 +245,10 @@ The storing logic is currently inline inside a long branch of `_pull_station_dat
 - Test: `tests/test_noaa_rfc_pull_upsert.py`
 
 **Interfaces:**
-- Consumes: `NOAAClient.get_rfc_forecast()` from Task 1, returning `run_date` as a true issuance time; `_infer_forecast_type(horizon_hours: float) -> str` from `src.acquisition.parquet_forecast_importer` (Task 3 keeps this function at that path with that signature).
-- Produces: `store_rfc_forecast(station, forecast_data: dict) -> tuple[ForecastRun, bool]` in `src.acquisition.tasks`, where `forecast_data` has keys `run_date`, `forecast_data`, `rmse`. Returns `(run, created)`.
+- Consumes: `NOAAClient.get_rfc_forecast()` from Task 1, returning `run_date` as a true issuance time.
+- Produces:
+  - `infer_forecast_type(horizon_hours: float) -> str` in `src.acquisition.parquet_forecast_importer`. **This task renames the existing private `_infer_forecast_type` to this public name**, because two modules now share it and the leading underscore would misrepresent it as module-private. The body and signature are unchanged. Update its one existing call site inside that module. Task 3 keeps it at this path under this name.
+  - `store_rfc_forecast(station, forecast_data: dict) -> tuple[ForecastRun, bool]` in `src.acquisition.tasks`, where `forecast_data` has keys `run_date`, `forecast_data`, `rmse`. Returns `(run, created)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -263,7 +267,7 @@ from datetime import datetime, timezone
 import pytest
 
 from apps.streamflow.models import ForecastRun, Station
-from src.acquisition.parquet_forecast_importer import _infer_forecast_type
+from src.acquisition.parquet_forecast_importer import infer_forecast_type
 from src.acquisition.tasks import store_rfc_forecast
 
 
@@ -293,11 +297,16 @@ def test_repeat_issuance_updates_instead_of_duplicating(station):
 
 
 def test_ten_day_forecast_is_not_labelled_short(station):
-    """The live path hardcoded 'short' by falling back to the model default."""
+    """The live path hardcoded 'short' by falling back to the model default.
+
+    Horizon here is 224.57 h (9.36 days): past the 7-day 'short' cutoff and
+    within the 10-day 'medium' one. Keep the last point inside 240 h of the
+    issuance or this becomes a 'long' run and stops testing what it names.
+    """
     run_date = datetime(2026, 9, 22, 15, 26, tzinfo=timezone.utc)
     run, _ = store_rfc_forecast(station, _payload(run_date, [
         {"date": "2026-09-22T18:00:00Z", "value": 1340.0},
-        {"date": "2026-10-02T18:00:00Z", "value": 1200.0},
+        {"date": "2026-10-02T00:00:00Z", "value": 1200.0},
     ]))
     assert run.forecast_type == "medium"
 
@@ -340,7 +349,7 @@ def test_rmse_is_persisted(station):
     ],
 )
 def test_forecast_type_follows_horizon(horizon_hours, expected):
-    assert _infer_forecast_type(horizon_hours) == expected
+    assert infer_forecast_type(horizon_hours) == expected
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -349,9 +358,11 @@ Run: `venv/bin/python -m pytest tests/test_noaa_rfc_pull_upsert.py -v`
 
 Expected: collection fails with `ImportError: cannot import name 'store_rfc_forecast' from 'src.acquisition.tasks'`. The helper does not exist yet.
 
-- [ ] **Step 3: Extract the helper and implement the upsert**
+- [ ] **Step 3: Rename the shared helper, then extract and implement the upsert**
 
-Add this module-level function to `src/acquisition/tasks.py`, near the other helpers:
+First, in `src/acquisition/parquet_forecast_importer.py`, rename the module-level `_infer_forecast_type` to `infer_forecast_type` (body and signature unchanged) and update its call site inside that module. Two modules share it now, so the private-by-convention underscore no longer fits.
+
+Then add this module-level function to `src/acquisition/tasks.py`, near the other helpers:
 
 ```python
 def store_rfc_forecast(station, forecast_data):
@@ -364,7 +375,7 @@ def store_rfc_forecast(station, forecast_data):
     same as 3-day ones.
     """
     from apps.streamflow.models import ForecastRun
-    from src.acquisition.parquet_forecast_importer import _infer_forecast_type
+    from src.acquisition.parquet_forecast_importer import infer_forecast_type
 
     points = forecast_data['forecast_data']
     last_valid = datetime.fromisoformat(points[-1]['date'].replace('Z', '+00:00'))
@@ -374,7 +385,7 @@ def store_rfc_forecast(station, forecast_data):
         station=station,
         source='NOAA_RFC',
         run_date=forecast_data['run_date'],
-        forecast_type=_infer_forecast_type(horizon_hours),
+        forecast_type=infer_forecast_type(horizon_hours),
         is_forecast=True,
         defaults={
             'data': points,
@@ -423,7 +434,7 @@ Two defects plus a scale problem. `_flush_batch` passes four `unique_fields` aga
 - Test: `tests/test_parquet_forecast_importer.py`
 
 **Interfaces:**
-- Consumes: `_infer_forecast_type(horizon_hours: float) -> str` — keep this module-level function, unchanged in name and signature (Task 2 imports it).
+- Consumes: `infer_forecast_type(horizon_hours: float) -> str` — already renamed from `_infer_forecast_type` to this public name in Task 2. Keep it at this path, unchanged in name and signature; `src/acquisition/tasks.py` imports it.
 - Produces:
   - `ParquetForecastImporter.run(parquet_path: str, dry_run: bool = False, filter_lids: list[str] | None = None, batch_size: int = 500) -> dict` returning keys `created`, `updated`, `failed`, `anomalies`.
   - `iter_forecast_runs(parquet_path: str) -> Iterator[tuple[str, datetime, list[dict], str]]` yielding `(lid, issuance_time_utc, data_points, forecast_type)`, where `data_points` is `[{"date": "%Y-%m-%dT%H:%M:%SZ", "value": float}, ...]` sorted by `sim_time`.
@@ -449,7 +460,7 @@ import pytest
 
 from apps.streamflow.models import ForecastRun, Station
 from src.acquisition.parquet_forecast_importer import (
-    _infer_forecast_type,
+    infer_forecast_type,
     iter_forecast_runs,
 )
 
@@ -478,7 +489,7 @@ def station(db):
      (10 * 24, "medium"), (10 * 24 + 0.1, "long")],
 )
 def test_infer_forecast_type_boundaries(horizon_hours, expected):
-    assert _infer_forecast_type(horizon_hours) == expected
+    assert infer_forecast_type(horizon_hours) == expected
 
 
 # --- streaming --------------------------------------------------------------
@@ -533,7 +544,7 @@ def test_iter_forecast_runs_returns_utc_aware_issuance(tmp_path):
 
 
 def test_single_point_run_is_emitted_not_dropped(tmp_path):
-    """820 runs in the real archive have exactly one point."""
+    """12 runs in the real archive have exactly one point."""
     rows = [("CHDW1", datetime(2010, 1, 1, 18, 7), datetime(2010, 1, 2, 0, 0), 2380.0)]
     runs = list(iter_forecast_runs(_write_parquet(tmp_path, rows)))
     assert len(runs) == 1
@@ -630,7 +641,7 @@ Expected: collection fails with `ImportError: cannot import name 'iter_forecast_
 
 - [ ] **Step 3: Add the streaming iterator**
 
-Add to `src/acquisition/parquet_forecast_importer.py`, after `_infer_forecast_type`:
+Add to `src/acquisition/parquet_forecast_importer.py`, after `infer_forecast_type`:
 
 ```python
 import pyarrow.parquet as pq
@@ -697,7 +708,7 @@ def _build_run(key, points):
     ]
     if issuance.tzinfo is None:
         issuance = issuance.replace(tzinfo=timezone.utc)
-    return lid, issuance, data, _infer_forecast_type(horizon_hours)
+    return lid, issuance, data, infer_forecast_type(horizon_hours)
 ```
 
 - [ ] **Step 4: Fix the upsert key and remove the silent failure**
@@ -959,6 +970,22 @@ if __name__ == "__main__":
         ap.error("pick at least one of --backup / --delete / --verify")
 ```
 
+- [ ] **Step 1b: Confirm the archive still matches what this plan assumes**
+
+Run (takes ~20 minutes; read-only, streams, ~230 MB peak RSS):
+
+```bash
+PYTHONPATH=$PWD venv/bin/python scripts/verify_archive_stream.py
+```
+
+Expected: `RESULT: ALL MATCH` — 3,577,182 runs, 441 LIDs, medium 3,559,239 /
+short 2,021 / long 15,922, 12 single-point runs, 27 negative-horizon runs.
+
+**If anything mismatches, stop and investigate before deleting a single row.**
+A changed run count means either the file changed or the carry-forward
+buffering in `iter_forecast_runs` regressed, and every count in Step 9 is
+then wrong.
+
 - [ ] **Step 2: Confirm the delete scope before running it**
 
 Run: `PYTHONPATH=$PWD venv/bin/python scripts/swap_nwrfc_archive.py --verify`
@@ -1000,7 +1027,7 @@ PYTHONPATH=$PWD venv/bin/python manage.py import_parquet_forecasts \
   /home/geoskimoto/projects/resid-cast/all_nwrfc_forecasts_WY2006_2026.parquet --dry-run
 ```
 
-Expected: reports 3,596,831 runs across 441 LIDs and writes nothing.
+Expected: reports 3,577,182 runs across 441 LIDs and writes nothing.
 
 - [ ] **Step 7: Import one station end-to-end**
 
@@ -1036,6 +1063,16 @@ nohup env PYTHONPATH=$PWD venv/bin/python manage.py import_parquet_forecasts \
 
 Monitor with `tail -f data/backups/nwrfc_import.log` and watch disk with `df -h /home`. Expected growth is ~6–7 GB against 36 GB free. **If free space drops below 10 GB, stop the import** — the backup is on the same volume.
 
+Timing, measured on the real file: the streaming pass alone is ~19 minutes at
+~230 MB peak RSS, and `run()` makes a second full pass first to collect the LID
+list, so budget well over an hour including the ~7,200 upsert transactions.
+
+**If the import aborts partway, just re-run it from the top.** Each batch
+commits in its own `transaction.atomic()`, so earlier batches survive an abort —
+but the write is an idempotent upsert on the full unique key, so a re-run
+converges rather than duplicating. Do not restore from the backup to "clean up"
+before retrying; that would undo good rows for no reason.
+
 - [ ] **Step 9: Verify the load**
 
 ```bash
@@ -1054,7 +1091,7 @@ with connection.cursor() as c:
 "
 ```
 
-Expected: total ≈ 3,596,831 + 411 + 708 = **3,597,950**, `pre_window` = 411, and `microsec` = 708 (only the three preserved orphan stations). Any shortfall in the total must be explained against the importer's reported `failed` and `anomalies` counts, not rounded past.
+Expected: total ≈ 3,577,182 + 411 + 708 = **3,578,301**, `pre_window` = 411, and `microsec` = 708 (only the three preserved orphan stations). Any shortfall in the total must be explained against the importer's reported `failed` and `anomalies` counts, not rounded past.
 
 - [ ] **Step 10: Restart Celery Beat and confirm a clean pull cycle**
 

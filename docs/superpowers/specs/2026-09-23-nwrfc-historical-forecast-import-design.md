@@ -25,17 +25,43 @@ read-only and streamed all 1,487 row groups.
 | Property | Value |
 |---|---|
 | Value rows | 144,269,656 |
-| Forecast runs (distinct `lid` + `issuance_time`) | **3,596,831** |
+| Forecast runs (distinct `lid` + `issuance_time`) | **3,577,182** |
 | Distinct LIDs | 441 |
 | Issuance window | 2005-10-01 00:13Z → 2026-09-22 16:24Z |
 | Schema | `lid`, `issuance_time`, `sim_time`, `simulation (cfs)` |
 
 The schema matches what `ParquetForecastImporter` already expects. Horizons are
-dominated by 10-day (3,193,151 runs) and 9-day (383,132 runs) forecasts, so the
-documented inference rule labels 99.1% of the archive `medium`.
+dominated by 9- and 10-day forecasts, so the documented inference rule labels
+99.5% of the archive `medium`:
 
-Data anomalies to log rather than silently drop: one run has a **negative
-horizon** (−4 days), and 820 runs contain a **single data point**.
+| `forecast_type` | Runs |
+|---|---|
+| `medium` | 3,559,239 |
+| `long` | 15,922 |
+| `short` | 2,021 |
+
+Data anomalies to log rather than silently drop: **27 runs have a negative
+horizon** (the last forecast point precedes issuance), and **12 runs contain a
+single data point**.
+
+> **Correction (measured after implementation).** The first pass of this
+> reconnaissance reported 3,596,831 runs, 820 single-point runs, 16,380 `short`
+> runs and 1 negative-horizon run. Those figures were wrong. The scan grouped
+> rows *within* each parquet row group and summed the results, so every run
+> straddling a row-group boundary was counted twice, and its truncated
+> fragments were misread as single-point and `short` runs. (The negative-horizon
+> undercount was separate: the scan bucketed horizons by rounded days, so
+> horizons between −12 h and 0 fell into the `0` bucket.)
+>
+> The figures above come from streaming the whole file through the implemented
+> `iter_forecast_runs`, which merges across boundaries. Verified against ground
+> truth on a 60-row-group slice (5,912,700 rows): a single global
+> `pandas.groupby` yields 147,267 runs and 0 single-point runs; the streaming
+> iterator yields exactly the same; the old per-row-group method yields 147,790
+> runs (+523) and 36 spurious single-point runs.
+>
+> Database-derived figures in this document are unaffected — they came from SQL,
+> not the parquet scan.
 
 ### The existing database
 
@@ -46,9 +72,15 @@ horizon** (−4 days), and 820 runs contain a **single data point**.
 
 ### The overlap — why "overwrite" would not have happened
 
-Only **20,162 of 3,596,831** parquet runs (0.6%) collide with an existing DB
-key. **3,576,669 would be new inserts**, and **69,192 existing `NOAA_RFC` rows
-have no parquet counterpart**.
+Roughly **20,000 of 3,577,182** parquet runs (~0.6%) collide with an existing
+DB key. The overwhelming majority would be new inserts, and **69,192 existing
+`NOAA_RFC` rows have no parquet counterpart**.
+
+(The collision count came from the same per-row-group scan corrected above, so
+treat it as approximate — a straddling run matching a DB key was counted twice.
+The 69,192 figure is set-based and exact. None of this changes the decision:
+the superseded window is deleted outright rather than upserted over, so the
+collision count drives nothing.)
 
 The cause is a key-semantics split within `NOAA_RFC`:
 
@@ -156,7 +188,7 @@ configs or those pulls would silently empty.
   group can straddle a row-group boundary, so runs must be buffered across
   boundaries and only emitted once complete.
 - **Create new stations as `is_active=False`.**
-- Log the negative-horizon run and single-point runs rather than dropping them.
+- Log the 27 negative-horizon runs and 12 single-point runs rather than dropping them.
 
 ### 3. Back up, then delete
 
@@ -204,12 +236,12 @@ reversible. Pause Celery Beat during the swap so no pull can write mid-delete.
 
 ### 4. Import
 
-3,596,831 runs across 441 LIDs. Estimated growth ~6-7 GB (database 19 GB →
+3,577,182 runs across 441 LIDs. Estimated growth ~6-7 GB (database 19 GB →
 ~26 GB, against 36 GB free). Run under `nohup`.
 
 ### 5. Verify
 
-- `NOAA_RFC` row count reconciles to 3,596,831 imported + 411 preserved
+- `NOAA_RFC` row count reconciles to 3,577,182 imported + 411 preserved
   pre-window + 708 preserved orphan-station rows, less any runs the importer
   reports as failed. Any shortfall must be explained, not rounded past.
 - The only `NOAA_RFC` rows retaining microsecond-precision `run_date` are the
