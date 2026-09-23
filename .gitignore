@@ -63,3 +63,6 @@ data/nwm_temp/*
 # Claude Code worktrees and subagent-driven-development scratch
 .claude/worktrees/
 .superpowers/
+
+# Database row backups (large, recoverable data dumps — never in git)
+data/backups/
