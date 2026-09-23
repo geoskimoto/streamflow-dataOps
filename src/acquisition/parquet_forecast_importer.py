@@ -32,7 +32,7 @@ NOAA_API_BASE = "https://api.water.noaa.gov/nwps/v1"
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _infer_forecast_type(horizon_hours: float) -> str:
+def infer_forecast_type(horizon_hours: float) -> str:
     """Map a forecast horizon (hours) to a ForecastRun.forecast_type choice."""
     if horizon_hours <= 7 * 24:
         return "short"
@@ -339,7 +339,7 @@ class ParquetForecastImporter:
             horizon_hours = (
                 group_sorted["sim_time"].iloc[-1] - issuance_time
             ).total_seconds() / 3600
-            forecast_type = _infer_forecast_type(horizon_hours)
+            forecast_type = infer_forecast_type(horizon_hours)
 
             # Build data array matching existing format: {date: ISO-Z, value: float}
             data = [
