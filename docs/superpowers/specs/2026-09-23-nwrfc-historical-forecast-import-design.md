@@ -118,6 +118,7 @@ Separately, the importer does `pd.read_parquet()` across all 144M rows and then
 | 150 unmapped LIDs | Create `Station` records with `is_active=False` |
 | `run_date` defect | Fix as part of this work, before the import |
 | `forecast_type` rule | Keep the documented horizon rule unchanged |
+| `COQO3`/`SKMW1`/`WDHN2` (absent from archive) | Exclude from the delete; preserve their 708 runs |
 
 `is_active=False` matches how the existing 366 `NOAA_RFC` stations are already
 flagged and keeps the new stations out of pull configurations and active-station
@@ -164,12 +165,39 @@ Scoped precisely to the archive's coverage window:
 | Band | Rows | Action |
 |---|---|---|
 | `NOAA_RFC` before 2005-10-01 00:13Z | 411 | **keep** (2003-07-18 → 2005-09-30, predates archive) |
-| `NOAA_RFC` inside window | **88,831** | **delete** |
+| `NOAA_RFC` inside window | 88,831 | |
+| — of which `COQO3`/`SKMW1`/`WDHN2` | 708 | **keep** (absent from archive, see below) |
+| — remainder | **88,123** | **delete** |
 | `NOAA_RFC` after window | 0 | — |
 | `nwrfc_web` | 36,550 | **untouched** |
 
+The delete covers the **whole archive window**, not just the 2026 pull-time
+rows. The ~20.5k pre-2026 rows inside the window are deleted too, even though
+they would have upserted correctly, because:
+
+- they are byte-identical to the parquet and are immediately re-imported, so
+  nothing is lost;
+- it makes the load a clean insert with no mixed insert/update path;
+- it resolves the 69 colliding runs whose horizon-inferred `forecast_type`
+  disagrees with the stored label. Under an upsert those 69 would have created
+  *duplicates* rather than overwriting, because `forecast_type` is part of the
+  unique key.
+
 `nwrfc_web` is left alone: different source, different provenance (scraper,
 carries `is_forecast=False` observed rows), and its configuration is disabled.
+
+Three stations with existing `NOAA_RFC` forecasts have no parquet presence —
+`COQO3` (239 runs), `SKMW1` (236), `WDHN2` (233). All 708 are 2026 live pulls
+collected since 2026-02-07, and NWRFC does not carry these gauges in the
+archive, so a window delete would remove them with nothing to replace them.
+The NWPS API only serves the *current* forecast, so they cannot be re-fetched.
+
+**These three LIDs are excluded from the delete.** Their 708 runs retain
+pull-time-keyed `run_date`s — inconsistent with the rest of the table, but the
+data is real and otherwise unrecoverable. Once the `run_date` fix lands, new
+pulls for these stations key on issuance time like everything else.
+
+This makes the delete **88,123 rows** rather than 88,831.
 
 Dump the 88,831 rows to a compressed file before deleting so the operation is
 reversible. Pause Celery Beat during the swap so no pull can write mid-delete.
@@ -181,8 +209,11 @@ reversible. Pause Celery Beat during the swap so no pull can write mid-delete.
 
 ### 5. Verify
 
-- Run count matches 3,596,831 plus the 411 preserved pre-window rows.
-- No `NOAA_RFC` row retains microsecond-precision `run_date`.
+- `NOAA_RFC` row count reconciles to 3,596,831 imported + 411 preserved
+  pre-window + 708 preserved orphan-station rows, less any runs the importer
+  reports as failed. Any shortfall must be explained, not rounded past.
+- The only `NOAA_RFC` rows retaining microsecond-precision `run_date` are the
+  708 belonging to `COQO3`, `SKMW1`, `WDHN2`.
 - Spot-check restored runs against the parquet point-for-point.
 - One live pull cycle produces issuance-keyed rows that upsert cleanly rather
   than inserting duplicates.
