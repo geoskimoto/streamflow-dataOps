@@ -296,11 +296,16 @@ def test_repeat_issuance_updates_instead_of_duplicating(station):
 
 
 def test_ten_day_forecast_is_not_labelled_short(station):
-    """The live path hardcoded 'short' by falling back to the model default."""
+    """The live path hardcoded 'short' by falling back to the model default.
+
+    Horizon here is 224.57 h (9.36 days): past the 7-day 'short' cutoff and
+    within the 10-day 'medium' one. Keep the last point inside 240 h of the
+    issuance or this becomes a 'long' run and stops testing what it names.
+    """
     run_date = datetime(2026, 9, 22, 15, 26, tzinfo=timezone.utc)
     run, _ = store_rfc_forecast(station, _payload(run_date, [
         {"date": "2026-09-22T18:00:00Z", "value": 1340.0},
-        {"date": "2026-10-02T18:00:00Z", "value": 1200.0},
+        {"date": "2026-10-02T00:00:00Z", "value": 1200.0},
     ]))
     assert run.forecast_type == "medium"
 
