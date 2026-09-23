@@ -1063,6 +1063,16 @@ nohup env PYTHONPATH=$PWD venv/bin/python manage.py import_parquet_forecasts \
 
 Monitor with `tail -f data/backups/nwrfc_import.log` and watch disk with `df -h /home`. Expected growth is ~6–7 GB against 36 GB free. **If free space drops below 10 GB, stop the import** — the backup is on the same volume.
 
+Timing, measured on the real file: the streaming pass alone is ~19 minutes at
+~230 MB peak RSS, and `run()` makes a second full pass first to collect the LID
+list, so budget well over an hour including the ~7,200 upsert transactions.
+
+**If the import aborts partway, just re-run it from the top.** Each batch
+commits in its own `transaction.atomic()`, so earlier batches survive an abort —
+but the write is an idempotent upsert on the full unique key, so a re-run
+converges rather than duplicating. Do not restore from the backup to "clean up"
+before retrying; that would undo good rows for no reason.
+
 - [ ] **Step 9: Verify the load**
 
 ```bash
