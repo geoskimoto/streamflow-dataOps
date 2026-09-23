@@ -9,7 +9,7 @@ Handles:
   from MasterStation or the NOAA Water API.
 - forecast_type inference: derived from actual horizon of each run.
 - Upsert semantics: parquet is treated as source of truth; existing DB records are
-  overwritten when (station, source, run_date, forecast_type) matches.
+  overwritten when (station, source, run_date, forecast_type, is_forecast) matches.
 - Bulk inserts in configurable batches to keep memory bounded.
 """
 
@@ -254,6 +254,7 @@ class ParquetForecastImporter:
         """
         self._log(f"Scanning LIDs in {parquet_path}…")
         pf = pq.ParquetFile(parquet_path)
+        self._validate_schema(pf.schema_arrow.names)
         lids = set()
         for rg in range(pf.metadata.num_row_groups):
             lids.update(pf.read_row_groups([rg], columns=["lid"]).column("lid").to_pylist())
@@ -461,9 +462,9 @@ class ParquetForecastImporter:
     # Validation
     # ------------------------------------------------------------------
 
-    def _validate_schema(self, df: pd.DataFrame) -> None:
+    def _validate_schema(self, columns) -> None:
         required = {"lid", "issuance_time", "sim_time", "simulation (cfs)"}
-        missing = required - set(df.columns)
+        missing = required - set(columns)
         if missing:
             raise ValueError(f"Parquet missing required columns: {missing}")
 

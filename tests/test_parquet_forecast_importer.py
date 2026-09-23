@@ -185,3 +185,34 @@ def test_flush_batch_raises_instead_of_returning_zero(station, db, monkeypatch):
                                            run_date=datetime(2010, 1, 1, tzinfo=timezone.utc),
                                            forecast_type="medium", is_forecast=True, data=[])],
                               dry_run=False)
+
+
+# --- schema validation -------------------------------------------------------
+
+def test_run_validates_schema_before_any_station_writes(tmp_path, db):
+    """A parquet missing a required column must fail fast and cleanly.
+
+    Validation must happen before station resolution, which creates Station/
+    MasterStation rows and can make NOAA API calls — a schema error must not
+    leave those side effects behind.
+    """
+    import io
+
+    from django.core.management.color import no_style
+
+    from src.acquisition.parquet_forecast_importer import ParquetForecastImporter
+
+    df = pd.DataFrame(
+        [("CHDW1", datetime(2010, 1, 1, 18, 7), datetime(2010, 1, 2, 0, 0))],
+        columns=["lid", "issuance_time", "sim_time"],  # missing "simulation (cfs)"
+    )
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    path = tmp_path / "bad.parquet"
+    pq.write_table(table, path)
+
+    importer = ParquetForecastImporter(io.StringIO(), io.StringIO(), no_style())
+
+    with pytest.raises(ValueError, match="missing required columns"):
+        importer.run(str(path))
+
+    assert Station.objects.count() == 0
