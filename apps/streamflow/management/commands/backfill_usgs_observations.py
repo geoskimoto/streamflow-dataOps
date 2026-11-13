@@ -21,19 +21,28 @@ exception or Ctrl-C, from whatever rows were collected so far. Feed
 it contains only gages that succeeded, so failed/not-found gages are retried.
 """
 
-import csv
-import time
+import time  # noqa: F401 - unused here; see comment below
 from datetime import datetime, timezone
-from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import connection
-from django.db.models import Max
+from django.db import connection  # noqa: F401 - unused here; see comment below
 
-from apps.streamflow.management.gage_lists import load_skip_file, resolve_gages
-from apps.streamflow.models import DischargeObservation, Station
-from src.acquisition.data_processor import DataProcessor
+from apps.streamflow.management.backfill_runner import run_backfill
+from apps.streamflow.management.gage_lists import resolve_gages
+from src.acquisition.data_processor import DataProcessor  # noqa: F401 - unused here; see comment below
 from src.acquisition.usgs_waterdata_client import USGSWaterDataClient
+
+# time, connection, and DataProcessor above are not called directly in this
+# module anymore - the run loop that uses them moved to backfill_runner.py.
+# They stay imported here, unused, because
+# tests/test_backfill_usgs_observations.py patches them by this module's
+# dotted path (e.g. "...backfill_usgs_observations.connection.close"). That
+# test file is a pinned regression proof and must not be edited, and
+# mock.patch resolves its target via getattr on this module, so removing
+# these imports breaks the patch with AttributeError even though the real
+# call now happens in backfill_runner. All three names are the same
+# singleton object/class/module wherever they're imported, so patching them
+# here still intercepts the call made from backfill_runner.py.
 
 
 class Command(BaseCommand):
@@ -117,10 +126,6 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         gages = resolve_gages(options)
-        skip = load_skip_file(options.get("skip_gages_file"))
-        if skip:
-            gages = [g for g in gages if g not in skip]
-            self.stdout.write(f"Skipping {len(skip)} already-completed gages")
 
         start = self._parse_date(options.get("start"))
         end = self._parse_date(options.get("end"))
@@ -139,124 +144,27 @@ class Command(BaseCommand):
                 f"--start {options['start']} is after --end {options['end']}"
             )
 
-        dry_run = options["dry_run"]
-        sleep_seconds = options["sleep"]
-        report_path = options.get("report")
+        # The runner reads start/end back out of options via .get(), so the
+        # already-validated, already-parsed datetimes replace the raw
+        # strings here rather than being re-parsed downstream.
+        options["start"] = start
+        options["end"] = end
 
         client = USGSWaterDataClient()
-        processor = DataProcessor()
-        rows = []
 
-        self.stdout.write(
-            f"Backfilling {len(gages)} gages "
-            f"({'dry run' if dry_run else 'writing'})"
-        )
+        def fetch(station_number, start_date, end_date):
+            return client.get_daily_mean(station_number, start_date, end_date)
 
-        done_handle = None
-        if report_path and not dry_run:
-            done_path = Path(f"{report_path}.done.txt")
-            done_path.parent.mkdir(parents=True, exist_ok=True)
-            done_handle = done_path.open("a")
-
-        try:
-            for index, gage in enumerate(gages, start=1):
-                try:
-                    station = Station.objects.filter(
-                        station_number=gage, agency="USGS"
-                    ).first()
-                    if station is None:
-                        self.stdout.write(
-                            self.style.WARNING(
-                                f"[{index}/{len(gages)}] {gage}: not in "
-                                f"stations table, skipped"
-                            )
-                        )
-                        rows.append({"usgs_id": gage, "status": "not_in_db"})
-                        continue
-
-                    # Both the "before" and "after" reads, and the upsert
-                    # itself, sit inside this try: a dropped DB connection
-                    # (OperationalError/InterfaceError) mid-run is caught
-                    # below, where the connection is explicitly reset so the
-                    # *next* gage reconnects instead of also failing.
-                    before = self._max_discharge(station)
-                    observations = client.get_daily_mean(gage, start, end)
-
-                    written = 0
-                    if observations and not dry_run:
-                        written = processor.process_observations(
-                            station_number=gage, observations=observations
-                        )
-
-                    after = self._max_discharge(station)
-
-                    if dry_run:
-                        status = "dry_run"
-                    elif not observations:
-                        status = "no_data"
-                    else:
-                        status = "ok"
-
-                    rows.append(
-                        {
-                            "usgs_id": gage,
-                            "status": status,
-                            "fetched": len(observations),
-                            "written": written,
-                            "db_max_before": before,
-                            "db_max_after": after,
-                        }
-                    )
-                    self.stdout.write(
-                        f"[{index}/{len(gages)}] {gage}: fetched "
-                        f"{len(observations)}, wrote {written}, max "
-                        f"{before} -> {after}"
-                    )
-
-                    if status == "ok" and done_handle:
-                        done_handle.write(f"{gage}\n")
-                        done_handle.flush()
-
-                except Exception as exc:  # noqa: BLE001 - one bad gage must never abort the run
-                    # Reset a possibly-dead connection so the next gage can
-                    # reconnect. Django only reconnects when connection is
-                    # None, so without this one dropped connection would
-                    # fail every remaining gage with InterfaceError. Safe
-                    # unconditionally: for a non-DB failure this just costs
-                    # one lazy reconnect, and process_observations' own
-                    # transaction.atomic() has already unwound by the time
-                    # we get here, so no atomic block is active.
-                    connection.close()
-                    self.stdout.write(
-                        self.style.ERROR(
-                            f"[{index}/{len(gages)}] {gage}: failed: {exc}"
-                        )
-                    )
-                    rows.append({"usgs_id": gage, "status": f"failed: {exc}"})
-                finally:
-                    # Pacing applies on every path - success, not-in-db, and
-                    # failure alike - so a run of failures doesn't hammer a
-                    # struggling upstream back-to-back.
-                    if sleep_seconds and index < len(gages):
-                        time.sleep(sleep_seconds)
-        finally:
-            # Always write what we have, even on exception or Ctrl-C, so a
-            # multi-hour run against production never loses its resume state.
-            if report_path:
-                self._write_report(report_path, rows)
-            if done_handle:
-                done_handle.close()
-
-        failed = [r for r in rows if str(r.get("status", "")).startswith("failed")]
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Done. {len(rows)} gages processed, {len(failed)} failed."
-            )
+        run_backfill(
+            command=self, gages=gages, fetch=fetch,
+            agency="USGS", options=options,
         )
 
     # -- helpers ---------------------------------------------------------
     # Gage-list parsing lives in apps/streamflow/management/gage_lists.py,
-    # shared with audit_usgs_observations.
+    # shared with audit_usgs_observations. The run loop, report, and resume
+    # sidecar live in apps/streamflow/management/backfill_runner.py, shared
+    # with the EC backfill command.
 
     @staticmethod
     def _parse_date(value):
@@ -268,27 +176,3 @@ class Command(BaseCommand):
         except ValueError as exc:
             raise CommandError(f"Bad date {value!r}, expected YYYY-MM-DD") from exc
         return parsed.replace(tzinfo=timezone.utc)
-
-    @staticmethod
-    def _max_discharge(station):
-        return DischargeObservation.objects.filter(
-            station=station, type="daily_mean"
-        ).aggregate(m=Max("discharge"))["m"]
-
-    def _write_report(self, path, rows):
-        fields = [
-            "usgs_id",
-            "status",
-            "fetched",
-            "written",
-            "db_max_before",
-            "db_max_after",
-        ]
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("w", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fields)
-            writer.writeheader()
-            for row in rows:
-                writer.writerow({k: row.get(k, "") for k in fields})
-        self.stdout.write(f"Report written to {target}")

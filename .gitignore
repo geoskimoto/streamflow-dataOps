@@ -1,3 +1,6 @@
+# Agent-staged deletions — reviewed by hand, never auto-removed
+delete_me/
+
 # Python cache
 __pycache__/
 *.py[cod]
