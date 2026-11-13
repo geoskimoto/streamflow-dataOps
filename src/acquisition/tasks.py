@@ -25,6 +25,7 @@ from apps.streamflow.models import (
     DataPullLog,
 )
 from src.acquisition.usgs_client import USGSClient
+from src.acquisition.usgs_waterdata_client import USGSWaterDataClient
 from src.acquisition.canada_client import CanadaClient
 from src.acquisition.noaa_client import NOAAClient
 from src.acquisition.nwrfc_web_client import NWRFCWebClient
@@ -135,7 +136,10 @@ def _process_single_station(config_station, config_id, config):
         if agency == "USGS":
             client = USGSClient()
             if config.data_type == "daily_mean":
-                observations = client.get_daily_mean(
+                # Daily means come from the USGS Water Data OGC API; the legacy
+                # WaterServices endpoint is being retired and was returning
+                # undecodable gzip bodies and empty responses at scale.
+                observations = USGSWaterDataClient().get_daily_mean(
                     station_number=station_number,
                     start_date=start_date,
                     end_date=end_date,
