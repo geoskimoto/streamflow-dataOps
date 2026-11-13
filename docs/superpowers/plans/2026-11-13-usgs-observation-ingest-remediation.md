@@ -290,7 +290,7 @@ def test_mixed_batch_keeps_peaks_and_rejects_invalid():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `venv/bin/python -m pytest tests/test_data_processor_validation.py -v`
-Expected: 4 FAIL and 6 PASS. Failing: `test_extreme_flood_peak_is_retained`, `test_skagit_november_2021_crest_survives_validation`, `test_high_z_value_is_logged_not_dropped`, and `test_mixed_batch_keeps_peaks_and_rejects_invalid` — all because peaks are dropped and the counts come back short. Passing already: `test_fixture_is_actually_discriminating` (pure arithmetic on the fixture) and the four rejection tests.
+Expected: 4 FAIL and 5 PASS (9 tests total). Failing: `test_extreme_flood_peak_is_retained`, `test_skagit_november_2021_crest_survives_validation`, `test_high_z_value_is_logged_not_dropped`, and `test_mixed_batch_keeps_peaks_and_rejects_invalid` — all because peaks are dropped and the counts come back short. Passing already: `test_fixture_is_actually_discriminating` (pure arithmetic on the fixture) and the four rejection tests.
 
 If `test_fixture_is_actually_discriminating` fails, stop — the fixture has been altered and the peak tests would then pass against the broken code too, proving nothing.
 
@@ -337,7 +337,7 @@ Leave the trailing `removed_count` logging and `return valid_observations` exact
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `venv/bin/python -m pytest tests/test_data_processor_validation.py -v`
-Expected: 10 passed
+Expected: 9 passed
 
 - [ ] **Step 5: Commit**
 
@@ -1495,14 +1495,17 @@ def test_daily_mean_passes_the_smart_append_start_date(station):
 
 def test_unknown_data_type_still_reports_failure(station):
     config = _config("daily_mean")
-    config.data_type = "something_unsupported"
+    # Keep this literal at most 20 characters: PullConfiguration.data_type is
+    # CharField(max_length=20), and a longer value makes PostgreSQL raise
+    # DataError during test setup, before the function under test is reached.
+    config.data_type = "bogus_type"
     config.save(update_fields=["data_type"])
     cs = _config_station(config, station)
 
     result = _process_single_station(cs, config.id, config)
 
     assert result["success"] is False
-    assert "something_unsupported" in (result["error"] or "")
+    assert "bogus_type" in (result["error"] or "")
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
