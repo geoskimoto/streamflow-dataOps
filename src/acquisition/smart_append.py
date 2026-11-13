@@ -9,9 +9,10 @@ if 'DJANGO_SETTINGS_MODULE' not in os.environ:
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
     django.setup()
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 import logging
+from django.conf import settings
 from apps.streamflow.models import PullStationProgress
 
 logger = logging.getLogger(__name__)
@@ -63,13 +64,23 @@ class SmartAppendLogic:
                 )
                 return config_start_date
             else:
-                # Subsequent pull - use last successful pull date
+                # Rewind before re-fetching: USGS publishes late and revises
+                # provisional values for months. Starting at the watermark meant
+                # those days were never fetched again. Combined with the upsert
+                # in DataProcessor, this re-reads and corrects the window.
                 last_date = progress.last_successful_pull_date
-                self.logger.info(
-                    f"Subsequent pull for station {station_number} in config {config_id} "
-                    f"- using last pull date: {last_date}"
+                window = timedelta(
+                    days=settings.OBSERVATION_REFETCH_WINDOW_DAYS
                 )
-                return last_date
+                rewound = last_date - window
+                if rewound < config_start_date:
+                    rewound = config_start_date
+                self.logger.info(
+                    f"Subsequent pull for station {station_number} in config "
+                    f"{config_id} - last pull {last_date}, re-fetching from "
+                    f"{rewound} ({window.days}d window)"
+                )
+                return rewound
         except PullStationProgress.DoesNotExist:
             # First pull - use configuration start date
             self.logger.info(
