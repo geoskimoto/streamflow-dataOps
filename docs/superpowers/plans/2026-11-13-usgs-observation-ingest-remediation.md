@@ -496,10 +496,17 @@ CONFIG_START = datetime(1900, 1, 1, tzinfo=timezone.utc)
 
 @pytest.fixture
 def config(db):
+    # Field names and values verified against the model and real config 9
+    # ("USGS Daily Mean Pull") on 2026-11-13. The source field is
+    # `data_source`, NOT `agency` — `agency` lives on Station, not on
+    # PullConfiguration. `data_strategy` and `schedule_type` are required.
     return PullConfiguration.objects.create(
         name="Test USGS Daily Mean Pull",
-        agency="USGS",
+        data_source="USGS",
         data_type="daily_mean",
+        data_strategy="append",
+        schedule_type="custom",
+        schedule_value="0 */12 * * *",
         pull_start_date=CONFIG_START,
     )
 
@@ -554,9 +561,9 @@ def test_rewind_never_predates_config_start_date(config):
 Run: `venv/bin/python -m pytest tests/test_smart_append_rolling_window.py -v`
 Expected: `test_subsequent_pull_rewinds_by_the_window` FAILS — the returned start equals `last` with no rewind.
 
-If `PullConfiguration.objects.create(...)` raises for a missing required field, inspect the model with
+The fixture's fields were verified against the live model on 2026-11-13, so it should construct cleanly. If it still raises for a missing required field, inspect the model with
 `venv/bin/python -c "import os,django;os.environ.setdefault('DJANGO_SETTINGS_MODULE','config.settings');django.setup();from apps.streamflow.models import PullConfiguration;print([f.name for f in PullConfiguration._meta.get_fields()])"`
-and add only the fields the model actually requires. Do not change the model.
+and add only the fields the model actually requires. **Do not change the model.**
 
 - [ ] **Step 3: Implement the rewind**
 
@@ -1329,61 +1336,171 @@ Create `tests/test_usgs_daily_mean_routing.py`:
 """Scheduled USGS daily-mean pulls must use the Water Data API client.
 
 The legacy WaterServices path is being retired and was the source of the
-gzip-decode and empty-body failures in config 9.
+gzip-decode and empty-body failures in config 9. These tests pin the routing
+behaviour — which client is actually called for which data_type — not merely
+that the import exists.
+
+Model field names were verified on 2026-11-13: PullConfiguration uses
+`data_source` (not `agency`), and requires `data_strategy` and
+`schedule_type`. Station uses `agency`.
 """
 
+from datetime import datetime, timezone
 from unittest.mock import patch
 
-import src.acquisition.tasks as tasks
+import pytest
+
+from apps.streamflow.models import (
+    PullConfiguration,
+    PullConfigurationStation,
+    Station,
+)
+from src.acquisition.tasks import _process_single_station
+
+NEW_CLIENT = "src.acquisition.tasks.USGSWaterDataClient.get_daily_mean"
+LEGACY_DAILY = "src.acquisition.usgs_client.USGSClient.get_daily_mean"
+LEGACY_INSTANT = "src.acquisition.usgs_client.USGSClient.get_instantaneous"
 
 
-def test_daily_mean_uses_waterdata_client():
-    assert hasattr(tasks, "USGSWaterDataClient"), (
-        "tasks.py must import USGSWaterDataClient so daily-mean pulls use the "
-        "new API"
+@pytest.fixture
+def station(db):
+    return Station.objects.create(
+        station_number="12200500", name="Skagit", agency="USGS", is_active=True
     )
 
 
-def test_legacy_client_still_available_for_instantaneous():
-    # realtime_15min is deliberately still on the legacy client.
-    assert hasattr(tasks, "USGSClient")
+def _config(data_type):
+    return PullConfiguration.objects.create(
+        name=f"Test USGS {data_type} Pull",
+        data_source="USGS",
+        data_type=data_type,
+        data_strategy="append",
+        schedule_type="custom",
+        schedule_value="0 */12 * * *",
+        pull_start_date=datetime(2026, 10, 1, tzinfo=timezone.utc),
+    )
+
+
+def _config_station(config, station):
+    return PullConfigurationStation.objects.create(
+        configuration=config,
+        station_number=station.station_number,
+        station_name=station.name,
+    )
+
+
+def test_daily_mean_routes_to_waterdata_client(station):
+    config = _config("daily_mean")
+    cs = _config_station(config, station)
+
+    # Both clients return no observations, so the write path is not exercised;
+    # this test is only about which client gets called.
+    with patch(NEW_CLIENT, return_value=[]) as new_client, \
+         patch(LEGACY_DAILY, return_value=[]) as legacy_daily:
+        result = _process_single_station(cs, config.id, config)
+
+    assert new_client.called, "daily_mean must go through USGSWaterDataClient"
+    assert not legacy_daily.called, (
+        "daily_mean must no longer use the legacy USGSClient.get_daily_mean"
+    )
+    assert result["success"] is True
+
+
+def test_realtime_still_routes_to_legacy_client(station):
+    # realtime_15min is deliberately left on the legacy client; migrating it
+    # is separate work.
+    config = _config("realtime_15min")
+    cs = _config_station(config, station)
+
+    with patch(NEW_CLIENT, return_value=[]) as new_client, \
+         patch(LEGACY_INSTANT, return_value=[]) as legacy_instant:
+        result = _process_single_station(cs, config.id, config)
+
+    assert legacy_instant.called, "realtime_15min must use the legacy client"
+    assert not new_client.called
+    assert result["success"] is True
+
+
+def test_daily_mean_passes_the_smart_append_start_date(station):
+    # The rolling window from Task 4 must reach the new client, otherwise
+    # late-published values are still never re-fetched.
+    config = _config("daily_mean")
+    cs = _config_station(config, station)
+
+    with patch(NEW_CLIENT, return_value=[]) as new_client:
+        _process_single_station(cs, config.id, config)
+
+    kwargs = new_client.call_args.kwargs
+    assert kwargs["station_number"] == "12200500"
+    assert kwargs["start_date"] is not None
+    assert kwargs["end_date"] is not None
+
+
+def test_unknown_data_type_still_reports_failure(station):
+    config = _config("daily_mean")
+    config.data_type = "something_unsupported"
+    config.save(update_fields=["data_type"])
+    cs = _config_station(config, station)
+
+    result = _process_single_station(cs, config.id, config)
+
+    assert result["success"] is False
+    assert "something_unsupported" in (result["error"] or "")
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
 
 Run: `venv/bin/python -m pytest tests/test_usgs_daily_mean_routing.py -v`
-Expected: `test_daily_mean_uses_waterdata_client` FAILS.
+Expected: `test_daily_mean_routes_to_waterdata_client` and `test_daily_mean_passes_the_smart_append_start_date` FAIL — patching `src.acquisition.tasks.USGSWaterDataClient` raises `AttributeError` because `tasks.py` does not import it yet. The legacy and unknown-type tests pass already.
 
 - [ ] **Step 4: Wire in the new client**
 
-In `src/acquisition/tasks.py`, add to the imports beside the existing `USGSClient` import:
+In `src/acquisition/tasks.py`, add beside the existing `USGSClient` import (line 27):
 
 ```python
 from src.acquisition.usgs_waterdata_client import USGSWaterDataClient
 ```
 
-Then, in the USGS branch, change only the daily-mean call so it reads:
+Then in `_process_single_station` (the USGS branch, around lines 135-148), the code currently reads:
 
 ```python
-            if data_type == "daily_mean":
-                # Daily means come from the USGS Water Data OGC API; the legacy
-                # WaterServices endpoint is being retired and was returning
-                # undecodable gzip bodies at scale.
-                observations = USGSWaterDataClient().get_daily_mean(
-                    station_number, start_date, end_date
+        if agency == "USGS":
+            client = USGSClient()
+            if config.data_type == "daily_mean":
+                observations = client.get_daily_mean(
+                    station_number=station_number,
+                    start_date=start_date,
+                    end_date=end_date,
                 )
-            else:
-                observations = USGSClient().get_instantaneous(
-                    station_number, start_date, end_date
-                )
+            elif config.data_type == "realtime_15min":
 ```
 
-Match the surrounding variable names you recorded in Step 1 (`start_date`/`end_date` may be named differently). Do not restructure the branch.
+Change only the daily-mean call so it uses the new client, leaving the
+`realtime_15min` branch and the trailing `else` error branch untouched:
+
+```python
+        if agency == "USGS":
+            client = USGSClient()
+            if config.data_type == "daily_mean":
+                # Daily means come from the USGS Water Data OGC API; the legacy
+                # WaterServices endpoint is being retired and was returning
+                # undecodable gzip bodies and empty responses at scale.
+                observations = USGSWaterDataClient().get_daily_mean(
+                    station_number=station_number,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            elif config.data_type == "realtime_15min":
+```
+
+Keep the keyword-argument call style — the tests assert on
+`call_args.kwargs`. Do not restructure the branch, and do not remove the
+`client = USGSClient()` line: the `realtime_15min` branch still uses it.
 
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `venv/bin/python -m pytest tests/test_usgs_daily_mean_routing.py -v`
-Expected: 2 passed
+Expected: 4 passed
 
 - [ ] **Step 6: Confirm no regression in the pull machinery**
 
@@ -1402,16 +1519,214 @@ git commit -m "feat: route scheduled USGS daily-mean pulls through the Water Dat
 ### Task 7: Backfill management command
 
 **Files:**
+- Create: `apps/streamflow/management/gage_lists.py`
 - Create: `apps/streamflow/management/commands/backfill_usgs_observations.py`
+- Test: `tests/test_gage_lists.py`
 - Test: `tests/test_backfill_usgs_observations.py`
 
 **Interfaces:**
 - Consumes: `USGSWaterDataClient` (Task 5), `DataProcessor` (Tasks 2–3).
-- Produces: `python manage.py backfill_usgs_observations` with options
-  `--gages`, `--gage-list-csv`, `--all-usgs`, `--start`, `--end`, `--dry-run`,
-  `--sleep`, `--report`, `--skip-gages-file`.
+- Produces:
+  - `apps.streamflow.management.gage_lists.resolve_gages(options: dict) -> List[str]` and
+    `load_skip_file(path: str | None) -> set[str]`. **Task 8's audit command imports
+    both** — do not duplicate this parsing in the command modules.
+  - `python manage.py backfill_usgs_observations` with options
+    `--gages`, `--gage-list-csv`, `--all-usgs`, `--start`, `--end`, `--dry-run`,
+    `--sleep`, `--report`, `--skip-gages-file`.
 
-- [ ] **Step 1: Write the failing test**
+**Why a shared module:** the identical gage-list parsing is needed by both this
+command and Task 8's audit command. Duplicating it would violate the project's
+DRY rule and give the parsing two test surfaces.
+
+- [ ] **Step 1: Write the failing test for the shared gage-list helper**
+
+Create `tests/test_gage_lists.py`:
+
+```python
+"""Tests for shared gage-list resolution used by the backfill and audit commands."""
+
+import pytest
+from django.core.management.base import CommandError
+
+from apps.streamflow.management.gage_lists import load_skip_file, resolve_gages
+from apps.streamflow.models import Station
+
+
+def test_comma_separated_gages():
+    assert resolve_gages({"gages": "12200500,13317000"}) == ["12200500", "13317000"]
+
+
+def test_whitespace_and_blanks_are_stripped():
+    assert resolve_gages({"gages": " 12200500 , ,13317000 "}) == [
+        "12200500",
+        "13317000",
+    ]
+
+
+def test_csv_with_usgs_id_column(tmp_path):
+    csv_path = tmp_path / "gages.csv"
+    csv_path.write_text("usgs_id,nwsli\n12200500,MVEW1\n13317000,WHBI1\n")
+
+    assert resolve_gages({"gage_list_csv": str(csv_path)}) == [
+        "12200500",
+        "13317000",
+    ]
+
+
+def test_csv_duplicates_are_collapsed_preserving_order(tmp_path):
+    csv_path = tmp_path / "gages.csv"
+    csv_path.write_text("usgs_id\n12200500\n13317000\n12200500\n")
+
+    assert resolve_gages({"gage_list_csv": str(csv_path)}) == [
+        "12200500",
+        "13317000",
+    ]
+
+
+def test_csv_missing_usgs_id_column_raises(tmp_path):
+    csv_path = tmp_path / "bad.csv"
+    csv_path.write_text("site_no\n12200500\n")
+
+    with pytest.raises(CommandError, match="usgs_id"):
+        resolve_gages({"gage_list_csv": str(csv_path)})
+
+
+def test_missing_csv_raises():
+    with pytest.raises(CommandError, match="No such CSV"):
+        resolve_gages({"gage_list_csv": "/nonexistent/path.csv"})
+
+
+def test_all_usgs_reads_stations(db):
+    Station.objects.create(station_number="13317000", name="B", agency="USGS")
+    Station.objects.create(station_number="12200500", name="A", agency="USGS")
+    Station.objects.create(station_number="08NL071", name="C", agency="EC")
+
+    assert resolve_gages({"all_usgs": True}) == ["12200500", "13317000"]
+
+
+def test_no_selection_raises():
+    with pytest.raises(CommandError, match="--gages"):
+        resolve_gages({})
+
+
+def test_load_skip_file_returns_set(tmp_path):
+    skip = tmp_path / "done.txt"
+    skip.write_text("12200500\n13317000\n\n")
+
+    assert load_skip_file(str(skip)) == {"12200500", "13317000"}
+
+
+def test_load_skip_file_none_returns_empty_set():
+    assert load_skip_file(None) == set()
+
+
+def test_load_skip_file_missing_raises():
+    with pytest.raises(CommandError, match="No such skip file"):
+        load_skip_file("/nonexistent/skip.txt")
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `venv/bin/python -m pytest tests/test_gage_lists.py -v`
+Expected: collection error — `ModuleNotFoundError: No module named 'apps.streamflow.management.gage_lists'`
+
+- [ ] **Step 3: Implement the shared helper**
+
+Create `apps/streamflow/management/gage_lists.py`:
+
+```python
+"""Shared gage-list resolution for the observation backfill and audit commands.
+
+Both commands accept the same three ways of naming gages, so the parsing lives
+here rather than being duplicated per command.
+"""
+
+import csv
+from pathlib import Path
+from typing import Dict, List, Set
+
+from django.core.management.base import CommandError
+
+from apps.streamflow.models import Station
+
+
+def resolve_gages(options: Dict) -> List[str]:
+    """Return the USGS site ids selected by a command's options.
+
+    Recognises, in priority order, ``gages`` (comma-separated), then
+    ``gage_list_csv`` (a CSV with a ``usgs_id`` column), then ``all_usgs``.
+    Duplicates are collapsed with first-seen order preserved.
+
+    Raises:
+        CommandError: if nothing is selected, or a CSV is missing or lacks
+            a ``usgs_id`` column.
+    """
+    if options.get("gages"):
+        return _dedupe(g.strip() for g in options["gages"].split(","))
+
+    if options.get("gage_list_csv"):
+        path = Path(options["gage_list_csv"])
+        if not path.exists():
+            raise CommandError(f"No such CSV: {path}")
+        with path.open(newline="") as handle:
+            reader = csv.DictReader(handle)
+            if "usgs_id" not in (reader.fieldnames or []):
+                raise CommandError(
+                    f"{path} has no 'usgs_id' column "
+                    f"(found: {reader.fieldnames})"
+                )
+            return _dedupe(
+                (record.get("usgs_id") or "").strip() for record in reader
+            )
+
+    if options.get("all_usgs"):
+        return list(
+            Station.objects.filter(agency="USGS")
+            .order_by("station_number")
+            .values_list("station_number", flat=True)
+        )
+
+    raise CommandError(
+        "Choose gages with --gages, --gage-list-csv or --all-usgs"
+    )
+
+
+def load_skip_file(path) -> Set[str]:
+    """Return the gage ids listed one-per-line in ``path``, or an empty set."""
+    if not path:
+        return set()
+    file_path = Path(path)
+    if not file_path.exists():
+        raise CommandError(f"No such skip file: {file_path}")
+    return {
+        line.strip()
+        for line in file_path.read_text().splitlines()
+        if line.strip()
+    }
+
+
+def _dedupe(values) -> List[str]:
+    seen, out = set(), []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `venv/bin/python -m pytest tests/test_gage_lists.py -v`
+Expected: 11 passed
+
+- [ ] **Step 5: Commit the helper**
+
+```bash
+git add apps/streamflow/management/gage_lists.py tests/test_gage_lists.py
+git commit -m "feat: add shared gage-list resolution for observation commands"
+```
+
+- [ ] **Step 6: Write the failing test for the backfill command**
 
 Create `tests/test_backfill_usgs_observations.py`:
 
@@ -1559,12 +1874,12 @@ def test_requires_a_gage_selection(db):
         call_command("backfill_usgs_observations", stdout=StringIO())
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 7: Run test to verify it fails**
 
 Run: `venv/bin/python -m pytest tests/test_backfill_usgs_observations.py -v`
 Expected: FAIL — `Unknown command: 'backfill_usgs_observations'`
 
-- [ ] **Step 3: Implement the command**
+- [ ] **Step 8: Implement the command**
 
 Create `apps/streamflow/management/commands/backfill_usgs_observations.py`:
 
@@ -1591,6 +1906,7 @@ from pathlib import Path
 from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Max
 
+from apps.streamflow.management.gage_lists import load_skip_file, resolve_gages
 from apps.streamflow.models import DischargeObservation, Station
 from src.acquisition.data_processor import DataProcessor
 from src.acquisition.usgs_waterdata_client import USGSWaterDataClient
@@ -1652,8 +1968,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        gages = self._resolve_gages(options)
-        skip = self._load_skip(options.get("skip_gages_file"))
+        gages = resolve_gages(options)
+        skip = load_skip_file(options.get("skip_gages_file"))
         if skip:
             gages = [g for g in gages if g not in skip]
             self.stdout.write(f"Skipping {len(skip)} already-completed gages")
@@ -1735,53 +2051,8 @@ class Command(BaseCommand):
         )
 
     # -- helpers ---------------------------------------------------------
-
-    def _resolve_gages(self, options):
-        if options.get("gages"):
-            return [g.strip() for g in options["gages"].split(",") if g.strip()]
-
-        if options.get("gage_list_csv"):
-            path = Path(options["gage_list_csv"])
-            if not path.exists():
-                raise CommandError(f"No such CSV: {path}")
-            with path.open(newline="") as handle:
-                reader = csv.DictReader(handle)
-                if "usgs_id" not in (reader.fieldnames or []):
-                    raise CommandError(
-                        f"{path} has no 'usgs_id' column "
-                        f"(found: {reader.fieldnames})"
-                    )
-                seen, out = set(), []
-                for record in reader:
-                    gage = (record.get("usgs_id") or "").strip()
-                    if gage and gage not in seen:
-                        seen.add(gage)
-                        out.append(gage)
-                return out
-
-        if options.get("all_usgs"):
-            return list(
-                Station.objects.filter(agency="USGS")
-                .order_by("station_number")
-                .values_list("station_number", flat=True)
-            )
-
-        raise CommandError(
-            "Choose gages with --gages, --gage-list-csv or --all-usgs"
-        )
-
-    @staticmethod
-    def _load_skip(path):
-        if not path:
-            return set()
-        file_path = Path(path)
-        if not file_path.exists():
-            raise CommandError(f"No such skip file: {file_path}")
-        return {
-            line.strip()
-            for line in file_path.read_text().splitlines()
-            if line.strip()
-        }
+    # Gage-list parsing lives in apps/streamflow/management/gage_lists.py,
+    # shared with audit_usgs_observations.
 
     @staticmethod
     def _parse_date(value):
@@ -1820,12 +2091,16 @@ class Command(BaseCommand):
         self.stdout.write(f"Report written to {target}")
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 9: Run test to verify it passes**
 
-Run: `venv/bin/python -m pytest tests/test_backfill_usgs_observations.py -v`
-Expected: 6 passed
+Run: `venv/bin/python -m pytest tests/test_backfill_usgs_observations.py tests/test_gage_lists.py -v`
+Expected: 6 passed for the command + 11 passed for the helper = 17 passed
 
-- [ ] **Step 5: Smoke-test the real command on one gage, dry run**
+- [ ] **Step 10: Smoke-test the real command on one gage, dry run**
+
+**This is the only live command permitted in this task.** `--dry-run` writes
+nothing; it reads the production database and the USGS API only. Do not run the
+command without `--dry-run` — writing to live data happens in Task 9.
 
 Run:
 ```bash
@@ -1834,7 +2109,7 @@ venv/bin/python manage.py backfill_usgs_observations \
 ```
 Expected: reports `fetched 13, wrote 0` and leaves `db_max_before == db_max_after`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add apps/streamflow/management/commands/backfill_usgs_observations.py tests/test_backfill_usgs_observations.py
@@ -1850,7 +2125,11 @@ git commit -m "feat: add backfill_usgs_observations command to re-fetch and upse
 - Test: `tests/test_audit_usgs_observations.py`
 
 **Interfaces:**
-- Consumes: `USGSWaterDataClient` (Task 5).
+- Consumes: `USGSWaterDataClient` (Task 5); `resolve_gages` from
+  `apps.streamflow.management.gage_lists` (Task 7) — **import it, do not
+  reimplement the CSV/comma-list parsing here.** This command does not accept
+  `--all-usgs`, so `resolve_gages` will raise `CommandError` for a bare
+  invocation, which is the wanted behaviour.
 - Produces: `python manage.py audit_usgs_observations` with `--gages`, `--gage-list-csv`, `--report`, `--sleep`. Compares the DB against the API per gage and reports `n_missing`, `n_value_diff`, `db_max`, `api_max`.
 
 This replaces re-running the external `audit_observation_gaps.py`, which needs `sqlalchemy`/`psycopg2` and a DSN. Same comparison, inside Django.
@@ -1985,8 +2264,9 @@ import csv
 import time
 from pathlib import Path
 
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand
 
+from apps.streamflow.management.gage_lists import resolve_gages
 from apps.streamflow.models import DischargeObservation, Station
 from src.acquisition.usgs_waterdata_client import USGSWaterDataClient
 
@@ -2011,7 +2291,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        gages = self._resolve_gages(options)
+        gages = resolve_gages(options)
         client = USGSWaterDataClient()
         rows = []
         total_missing = total_diff = 0
@@ -2095,25 +2375,8 @@ class Command(BaseCommand):
             )
         )
 
-    def _resolve_gages(self, options):
-        if options.get("gages"):
-            return [g.strip() for g in options["gages"].split(",") if g.strip()]
-        if options.get("gage_list_csv"):
-            path = Path(options["gage_list_csv"])
-            if not path.exists():
-                raise CommandError(f"No such CSV: {path}")
-            with path.open(newline="") as handle:
-                reader = csv.DictReader(handle)
-                if "usgs_id" not in (reader.fieldnames or []):
-                    raise CommandError(f"{path} has no 'usgs_id' column")
-                seen, out = set(), []
-                for record in reader:
-                    gage = (record.get("usgs_id") or "").strip()
-                    if gage and gage not in seen:
-                        seen.add(gage)
-                        out.append(gage)
-                return out
-        raise CommandError("Choose gages with --gages or --gage-list-csv")
+    # Gage-list parsing is shared with backfill_usgs_observations; see
+    # apps/streamflow/management/gage_lists.py.
 
     def _write_report(self, path, rows):
         fields = [
