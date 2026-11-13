@@ -182,3 +182,34 @@ def test_agency_scopes_the_station_lookup(stations):
     # An EC station must not be found when the runner is scoped to USGS.
     rows = _run(["08LE031"], lambda s, a, b: [_obs(1, 1.0)], agency="USGS")
     assert rows[0]["status"] == "not_in_db"
+
+
+def test_raw_string_start_or_end_raises_typeerror(stations):
+    """run_backfill expects options['start']/['end'] to already be parsed
+    datetimes (or None) - never the raw --start/--end strings argparse
+    hands the command. A command that forgets to parse and re-stash them
+    before delegating here must fail loudly, not silently pass a string
+    through to fetch()."""
+    with pytest.raises(TypeError, match="start"):
+        _run(["08LE031"], lambda s, a, b: [_obs(1, 1.0)], start="2020-01-01")
+
+    with pytest.raises(TypeError, match="end"):
+        _run(["08LE031"], lambda s, a, b: [_obs(1, 1.0)], end="2020-01-02")
+
+
+def test_pinned_usgs_imports_are_present():
+    """time, connection, and DataProcessor are imported-but-unused in
+    backfill_usgs_observations.py purely so that three pinned tests in
+    tests/test_backfill_usgs_observations.py can patch them by this
+    module's dotted path (e.g.
+    "...backfill_usgs_observations.connection.close"). mock.patch resolves
+    that path via getattr on the module, so removing these imports - e.g.
+    via an IDE "remove unused imports" action, which won't read the prose
+    comment explaining why they're there - breaks those patches with an
+    AttributeError raised in a different file. This test fails loudly and
+    locally instead, right where the import would be removed."""
+    import apps.streamflow.management.commands.backfill_usgs_observations as cmd_module
+
+    assert hasattr(cmd_module, "time")
+    assert hasattr(cmd_module, "connection")
+    assert hasattr(cmd_module, "DataProcessor")

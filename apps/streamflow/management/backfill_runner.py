@@ -49,8 +49,46 @@ def run_backfill(*, command, gages, fetch, agency, options) -> list:
     ``fetch(station_number, start_date, end_date)`` is the agency-specific
     data source call. ``agency`` scopes the ``Station`` lookup so e.g. an EC
     run cannot accidentally process a USGS station sharing the same id.
-    ``options`` is the command's parsed options dict.
+
+    ``options`` is the command's parsed options dict, read with ``.get()``.
+    The keys this function reads, and the contract each one has:
+
+    - ``start``, ``end``: must already be ``None`` or a timezone-aware
+      ``datetime`` by the time they reach this function - **never** the raw
+      ``--start``/``--end`` strings argparse hands the command. This
+      function does no parsing or validation of its own (that stays in the
+      calling command, which raises ``CommandError`` on a bad format or an
+      invalid range before calling here); it passes ``start``/``end``
+      straight through to ``fetch(gage, start, end)`` unexamined. A command
+      that forgets to parse and re-stash them into ``options`` before
+      calling ``run_backfill`` will silently pass raw strings to ``fetch``
+      instead of failing loudly - see the guard below, which catches this
+      specific mistake.
+    - ``dry_run``: truthy means fetch-and-report only, no database writes,
+      and no ``.done.txt`` sidecar is created.
+    - ``sleep``: seconds to pace between gages. **A missing key or an
+      explicit ``None`` silently disables pacing** rather than raising -
+      acceptable in tests, but a caller's command should always supply a
+      real default (see ``backfill_usgs_observations``'s ``--sleep``
+      default of ``1.0``), since pacing exists specifically because at
+      least one upstream (USGS) degrades silently under bursts instead of
+      returning a 429.
+    - ``report``: path for the per-gage CSV report; also the base path for
+      the ``<report>.done.txt`` resume sidecar. ``None``/falsy means no
+      report and no sidecar are written.
+    - ``skip_gages_file``: path to a file of already-completed gage ids
+      (one per line) to exclude from this run before it starts.
     """
+    if isinstance(options.get("start"), str) or isinstance(options.get("end"), str):
+        raise TypeError(
+            "run_backfill() received a raw string for options['start'] or "
+            "options['end']. Both must be pre-parsed into a timezone-aware "
+            "datetime (or None) by the calling command before it calls "
+            "run_backfill - see backfill_usgs_observations.handle(), which "
+            "parses --start/--end with _parse_date() and stashes the "
+            "parsed datetimes back into options before delegating here."
+        )
+
     skip = load_skip_file(options.get("skip_gages_file"))
     if skip:
         gages = [g for g in gages if g not in skip]
