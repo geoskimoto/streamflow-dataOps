@@ -324,3 +324,20 @@ NWM_S3_BASE = os.getenv(
 # ============================================================================
 RESIDCAST_API_BASE = os.getenv("RESIDCAST_API_BASE", "http://127.0.0.1:8001")
 RESIDCAST_API_TOKEN = os.getenv("RESIDCAST_API_TOKEN", "")
+
+# --- USGS Water Data OGC API ---------------------------------------------
+# Replaces the retiring legacy NWIS WaterServices endpoint for daily means.
+# An api.data.gov key is optional; without one the API returns HTTP 429 under
+# load (honouring Retry-After). Set USGS_API_KEY to raise the rate limit.
+USGS_WATERDATA_BASE = os.environ.get(
+    "USGS_WATERDATA_BASE", "https://api.waterdata.usgs.gov/ogcapi/v1"
+)
+USGS_API_KEY = os.environ.get("USGS_API_KEY", "")
+
+# Each incremental observation pull rewinds this many days before the station's
+# last successful pull date and re-fetches, so that values USGS publishes or
+# revises after the fact are picked up. USGS revises provisional daily values
+# for months; 180 days covers that window.
+OBSERVATION_REFETCH_WINDOW_DAYS = int(
+    os.environ.get("OBSERVATION_REFETCH_WINDOW_DAYS", "180")
+)
