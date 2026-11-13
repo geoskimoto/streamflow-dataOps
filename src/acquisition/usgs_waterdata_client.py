@@ -39,7 +39,9 @@ DAILY_MEAN_STATISTIC_ID = "00003"
 # would blow the API key's 1,000 requests/hour budget.
 PAGE_LIMIT = 50000
 
-# Guard against a malformed `next` chain looping forever.
+# Guard against a malformed `next` chain looping forever. Exceeding this is
+# treated as an error, not a warning — a silently truncated series is
+# indistinguishable from a complete one and would be recorded as a success.
 MAX_PAGES = 200
 
 REQUEST_TIMEOUT_SECONDS = 180
@@ -53,6 +55,11 @@ APPROVAL_CODES = {"Approved": "A", "Provisional": "P"}
 # reproduce the existing 'A, e' / 'A, R' codes. The rest had no legacy
 # single-letter form; these are chosen to stay inside
 # DischargeObservation.quality_code's max_length=10.
+#
+# Declaration order here is also the canonical output order used by
+# build_quality_code, so the emitted code never depends on the order the API
+# returned qualifiers in (a dict-order-dependent code would churn
+# quality_code on every re-pull and produce pointless updates).
 QUALIFIER_CODES = {
     "ESTIMATED": "e",
     "REVISED": "R",
@@ -62,6 +69,8 @@ QUALIFIER_CODES = {
     "BACKWATER": "b",
 }
 
+QUALIFIER_ORDER = tuple(QUALIFIER_CODES.keys())
+
 QUALITY_CODE_MAX_LENGTH = 10
 
 
@@ -70,7 +79,22 @@ class USGSWaterDataError(Exception):
 
 
 class USGSWaterDataTransientError(Exception):
-    """A retryable failure (429, 5xx, network error)."""
+    """A retryable failure (429, 5xx, undecodable body, network error)."""
+
+
+def _join_within_limit(parts: List[str], max_length: int) -> str:
+    """Join ``parts`` with ``", "``, keeping only whole tokens that fit.
+
+    Never returns a trailing separator or a half-written token — truncation
+    always lands on a token boundary.
+    """
+    result = ""
+    for i in range(len(parts)):
+        candidate = ", ".join(parts[: i + 1])
+        if len(candidate) > max_length:
+            break
+        result = candidate
+    return result
 
 
 def build_quality_code(
@@ -78,23 +102,35 @@ def build_quality_code(
 ) -> str:
     """Render approval status and qualifiers as a legacy-style quality code.
 
-    ``("Approved", ["EQUIP", "ESTIMATED"])`` -> ``"A, q, e"``. Unknown
-    qualifiers are ignored rather than raising, so a new USGS vocabulary entry
-    cannot break ingestion. The result is truncated to the model's
-    ``max_length=10``.
+    ``("Approved", ["EQUIP", "ESTIMATED"])`` -> ``"A, e, q"``. Qualifiers are
+    always emitted in ``QUALIFIER_ORDER`` (not input order), so the same
+    semantic state always produces the same code regardless of how the API
+    ordered the list — otherwise re-pulls would churn ``quality_code`` and
+    produce pointless updates. Unknown qualifiers are ignored (logged at
+    DEBUG) rather than raising, so a new USGS vocabulary entry cannot break
+    ingestion. An unmapped non-empty ``approval_status`` is logged at WARNING,
+    since a vocabulary change there would silently erase the A/P distinction.
+    The result is truncated to the model's ``max_length=10`` at a token
+    boundary.
     """
     base = APPROVAL_CODES.get(approval_status or "", "")
-    parts = [base] if base else []
+    if approval_status and not base:
+        logger.warning("Unmapped USGS approval_status %r ignored", approval_status)
 
+    present = set()
     for item in qualifier or []:
-        code = QUALIFIER_CODES.get(str(item).upper())
-        if code is None:
+        name = str(item).upper()
+        if name in QUALIFIER_CODES:
+            present.add(name)
+        else:
             logger.debug("Unmapped USGS qualifier %r ignored", item)
-            continue
-        if code not in parts:
-            parts.append(code)
 
-    return ", ".join(parts)[:QUALITY_CODE_MAX_LENGTH]
+    parts = [base] if base else []
+    for name in QUALIFIER_ORDER:
+        if name in present:
+            parts.append(QUALIFIER_CODES[name])
+
+    return _join_within_limit(parts, QUALITY_CODE_MAX_LENGTH)
 
 
 class USGSWaterDataClient:
@@ -141,6 +177,8 @@ class USGSWaterDataClient:
         Returns:
             Observation dicts with keys ``observed_at`` (midnight UTC),
             ``discharge`` (cfs, float), ``unit``, ``type``, ``quality_code``.
+            Exactly one observation per ``observed_at`` is returned even if
+            the station has multiple time series for this parameter/statistic.
         """
         params = {
             "monitoring_location_id": f"USGS-{station_number}",
@@ -161,7 +199,7 @@ class USGSWaterDataClient:
             params.get("datetime", "full record"),
         )
 
-        features = self._fetch_all_pages(params, _retries)
+        features = self._fetch_all_pages(params, _retries, station_number)
         observations = self._parse(features, station_number)
 
         self.logger.info(
@@ -187,7 +225,9 @@ class USGSWaterDataClient:
             headers["X-Api-Key"] = self.api_key
         return headers
 
-    def _fetch_all_pages(self, params: Dict, retries: int) -> List[Dict]:
+    def _fetch_all_pages(
+        self, params: Dict, retries: int, station_number: str
+    ) -> List[Dict]:
         url = f"{self.base_url}/collections/daily/items"
         features: List[Dict] = []
         pages = 0
@@ -209,9 +249,14 @@ class USGSWaterDataClient:
             params = {}
 
         if pages >= MAX_PAGES and url:
-            self.logger.warning(
-                "Stopped paginating after %d pages; result may be truncated",
-                MAX_PAGES,
+            # A partially-fetched series is indistinguishable from a
+            # complete one once returned, so a backfill would record it as a
+            # success and the verification step would never catch it. Fail
+            # loudly instead of returning silently truncated data.
+            raise USGSWaterDataError(
+                f"Station {station_number} exceeded the {MAX_PAGES}-page "
+                "pagination cap; aborting rather than returning a silently "
+                "truncated series."
             )
 
         return features
@@ -219,6 +264,8 @@ class USGSWaterDataClient:
     def _get(self, url: str, params: Dict, retries: int) -> Dict:
         attempt = 0
         while True:
+            response = None
+            cause: Optional[BaseException] = None
             try:
                 response = requests.get(
                     url,
@@ -228,18 +275,28 @@ class USGSWaterDataClient:
                 )
             except requests.RequestException as exc:
                 error: Exception = USGSWaterDataTransientError(str(exc))
+                cause = exc
             else:
                 error = self._classify(response)
                 if error is None:
                     try:
                         return response.json()
                     except ValueError as exc:
-                        raise USGSWaterDataError(
+                        # A 200 with a truncated/empty body ("Expecting value:
+                        # line 1 column 1 (char 0)") is exactly the failure
+                        # mode this client replaces the legacy endpoint for,
+                        # and it self-heals on retry — classify it as
+                        # transient, not permanent.
+                        error = USGSWaterDataTransientError(
                             f"Malformed JSON from {url}: {exc}"
-                        ) from exc
+                        )
+                        cause = exc
 
             if isinstance(error, USGSWaterDataTransientError) and attempt < retries:
-                delay = self._retry_delay(locals().get("response"), attempt)
+                # `response` reflects only this attempt (reset to None at the
+                # top of the loop each time), so a stale Retry-After from an
+                # earlier attempt can never leak into this delay.
+                delay = self._retry_delay(response, attempt)
                 self.logger.warning(
                     "Transient USGS Water Data failure (%s); retry %d/%d in %.1fs",
                     error,
@@ -251,6 +308,8 @@ class USGSWaterDataClient:
                 attempt += 1
                 continue
 
+            if cause is not None:
+                raise error from cause
             raise error
 
     @staticmethod
@@ -275,12 +334,14 @@ class USGSWaterDataClient:
         return min(2.0 ** (attempt + 1), 60.0)
 
     def _parse(self, features: List[Dict], station_number: str) -> List[Dict]:
-        observations: List[Dict] = []
+        parsed: List[Dict] = []
         series_ids = set()
 
         for feature in features:
             props = feature.get("properties") or {}
-            series_ids.add(props.get("time_series_id"))
+            series_id = props.get("time_series_id")
+            if series_id is not None:
+                series_ids.add(series_id)
 
             raw_value = props.get("value")
             raw_time = props.get("time")
@@ -313,7 +374,7 @@ class USGSWaterDataClient:
                 )
                 continue
 
-            observations.append(
+            parsed.append(
                 {
                     # Midnight UTC: matches all 25.3M existing USGS daily_mean
                     # rows, so upserts update instead of duplicating.
@@ -326,18 +387,73 @@ class USGSWaterDataClient:
                     "quality_code": build_quality_code(
                         props.get("approval_status"), props.get("qualifier")
                     ),
+                    "_series_id": series_id,
                 }
             )
 
         if len(series_ids) > 1:
             self.logger.warning(
-                "Station %s returned multiple time series for %s/%s: %s. All "
-                "values kept; the last one per date wins on upsert.",
+                "Station %s returned multiple time series for %s/%s: %s. "
+                "Each date keeps exactly one deterministic value; see any "
+                "duplicate-date warning above for how ties were resolved.",
                 station_number,
                 DISCHARGE_PARAMETER_CODE,
                 DAILY_MEAN_STATISTIC_ID,
-                sorted(s for s in series_ids if s),
+                sorted(series_ids),
             )
 
+        observations = self._dedupe_by_date(parsed, station_number)
         observations.sort(key=lambda o: o["observed_at"])
         return observations
+
+    def _dedupe_by_date(
+        self, parsed: List[Dict], station_number: str
+    ) -> List[Dict]:
+        """Guarantee exactly one observation per ``observed_at``.
+
+        Two time series covering the same date would otherwise produce two
+        dicts with the same ``observed_at``; ``DataProcessor`` passes the
+        whole batch to one ``bulk_create(update_conflicts=True)``, and
+        PostgreSQL raises "ON CONFLICT DO UPDATE command cannot affect row a
+        second time" — failing that station's entire write inside
+        ``transaction.atomic()``.
+
+        Resolution is deterministic: sort by ``(observed_at, time_series_id)``
+        and keep the first occurrence per date, so repeated calls on the same
+        input always pick the same winner regardless of feature order.
+        """
+        parsed_sorted = sorted(
+            parsed, key=lambda o: (o["observed_at"], o.get("_series_id") or "")
+        )
+
+        kept: Dict[datetime, Dict] = {}
+        duplicate_dates = 0
+        ambiguous_series = set()
+
+        for obs in parsed_sorted:
+            when = obs["observed_at"]
+            if when not in kept:
+                kept[when] = obs
+                continue
+
+            duplicate_dates += 1
+            for candidate in (kept[when], obs):
+                series_id = candidate.get("_series_id")
+                if series_id is not None:
+                    ambiguous_series.add(series_id)
+
+        if duplicate_dates:
+            self.logger.warning(
+                "Station %s has %d duplicate date(s) across time series %s; "
+                "kept the value from the lexicographically first "
+                "time_series_id per date. This needs human review — the "
+                "primary series is ambiguous.",
+                station_number,
+                duplicate_dates,
+                sorted(ambiguous_series),
+            )
+
+        return [
+            {k: v for k, v in obs.items() if k != "_series_id"}
+            for obs in kept.values()
+        ]

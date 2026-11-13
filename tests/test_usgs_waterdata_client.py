@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
+import requests
 
 from src.acquisition.usgs_waterdata_client import (
     USGSWaterDataClient,
@@ -25,6 +26,13 @@ class _FakeResponse:
 
     def json(self):
         return self._payload
+
+
+class _BadJSONResponse(_FakeResponse):
+    """A 200 whose body is truncated/empty — undecodable, not malformed."""
+
+    def json(self):
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
 
 
 def _feature(time, value, approval="Approved", qualifier=None):
@@ -71,7 +79,22 @@ def test_quality_code_revised():
 
 
 def test_quality_code_equip_and_estimated():
-    assert build_quality_code("Approved", ["EQUIP", "ESTIMATED"]) == "A, q, e"
+    # Canonical order (QUALIFIER_CODES declaration order) is ESTIMATED before
+    # EQUIP, regardless of input order.
+    assert build_quality_code("Approved", ["EQUIP", "ESTIMATED"]) == "A, e, q"
+
+
+def test_quality_code_is_independent_of_input_order():
+    forward = build_quality_code("Approved", ["EQUIP", "ESTIMATED"])
+    reverse = build_quality_code("Approved", ["ESTIMATED", "EQUIP"])
+    assert forward == reverse == "A, e, q"
+
+
+def test_quality_code_unmapped_approval_status_logs_warning(caplog):
+    with caplog.at_level("WARNING"):
+        code = build_quality_code("SomethingNew", None)
+    assert code == ""
+    assert any("approval_status" in r.message for r in caplog.records)
 
 
 def test_quality_code_truncated_to_field_length():
@@ -139,7 +162,7 @@ def test_the_skagit_crest_round_trips():
 
     by_date = {o["observed_at"].date().isoformat(): o for o in obs}
     assert by_date["2021-11-16"]["discharge"] == 119000.0
-    assert by_date["2021-11-16"]["quality_code"] == "A, q, e"
+    assert by_date["2021-11-16"]["quality_code"] == "A, e, q"
     assert by_date["2021-11-13"]["quality_code"] == "A"
 
 
@@ -164,6 +187,60 @@ def test_empty_result_returns_empty_list():
         assert USGSWaterDataClient().get_daily_mean("12200500", None) == []
 
 
+# --- multi-series de-duplication (CRITICAL 1) -----------------------------
+
+def _with_series(time, value, series_id, qualifier=None):
+    feat = _feature(time, value, qualifier=qualifier)
+    feat["properties"]["time_series_id"] = series_id
+    return feat
+
+
+def test_two_series_same_date_yields_exactly_one_observation_deterministically():
+    feat_a = _with_series("2021-11-16", "100", "series-a")
+    feat_b = _with_series("2021-11-16", "200", "series-b")
+
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               return_value=_FakeResponse(_page([feat_a, feat_b]))):
+        obs_forward = USGSWaterDataClient().get_daily_mean("12200500", None)
+
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               return_value=_FakeResponse(_page([feat_b, feat_a]))):
+        obs_reverse = USGSWaterDataClient().get_daily_mean("12200500", None)
+
+    assert len(obs_forward) == 1
+    assert len(obs_reverse) == 1
+    # "series-a" sorts before "series-b" lexicographically, so it wins
+    # regardless of the order the API happened to return the features in.
+    assert obs_forward[0]["discharge"] == obs_reverse[0]["discharge"] == 100.0
+
+
+def test_two_series_different_dates_keeps_both():
+    feat_a = _with_series("2021-11-15", "100", "series-a")
+    feat_b = _with_series("2021-11-16", "200", "series-b")
+
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               return_value=_FakeResponse(_page([feat_a, feat_b]))):
+        obs = USGSWaterDataClient().get_daily_mean("12200500", None)
+
+    assert len(obs) == 2
+    by_date = {o["observed_at"].date().isoformat(): o["discharge"] for o in obs}
+    assert by_date["2021-11-15"] == 100.0
+    assert by_date["2021-11-16"] == 200.0
+
+
+def test_duplicate_date_logs_human_review_warning(caplog):
+    feat_a = _with_series("2021-11-16", "100", "series-a")
+    feat_b = _with_series("2021-11-16", "200", "series-b")
+
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               return_value=_FakeResponse(_page([feat_a, feat_b]))):
+        with caplog.at_level("WARNING"):
+            USGSWaterDataClient().get_daily_mean("12200500", None)
+
+    assert any("human review" in r.message.lower() for r in caplog.records)
+    assert any("multiple time series" in r.message.lower() for r in caplog.records)
+
+
 # --- pagination -----------------------------------------------------------
 
 def test_pagination_follows_next_link():
@@ -177,12 +254,35 @@ def test_pagination_follows_next_link():
     assert len(obs) == 2
     assert g.call_count == 2
 
+    first_call, second_call = g.call_args_list
+    # The second request must hit the `next` href, not re-request page one.
+    assert second_call.args[0] == "http://next/page2"
+    # The `next` href already carries the original query string, so the
+    # follow-up request must not resend the original params (an
+    # implementation that re-sent them, or re-requested page one twice,
+    # would still pass a bare call_count == 2 assertion).
+    assert second_call.kwargs["params"] == {}
+    assert first_call.args[0] != second_call.args[0]
+
 
 def test_pagination_stops_when_no_next_link():
     with patch("src.acquisition.usgs_waterdata_client.requests.get",
                side_effect=[_FakeResponse(_page([_feature("2021-11-16", "1")]))]) as g:
         USGSWaterDataClient().get_daily_mean("12200500", None)
     assert g.call_count == 1
+
+
+def test_pagination_cap_exceeded_raises_error():
+    # Every page links to a `next`, so pagination never terminates on its
+    # own; the client must give up at MAX_PAGES rather than return a
+    # silently truncated series.
+    endless_page = _page(
+        [_feature("2021-01-01", "1")], next_url="http://next/page"
+    )
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               return_value=_FakeResponse(endless_page)):
+        with pytest.raises(USGSWaterDataError):
+            USGSWaterDataClient().get_daily_mean("12200500", None)
 
 
 # --- errors ---------------------------------------------------------------
@@ -207,6 +307,77 @@ def test_404_raises_permanent_error():
                return_value=_FakeResponse({}, status_code=404)):
         with pytest.raises(USGSWaterDataError):
             USGSWaterDataClient().get_daily_mean("12200500", None, _retries=0)
+
+
+def test_undecodable_json_body_is_transient_not_permanent():
+    # A 200 with a truncated/empty body ("Expecting value: line 1 column 1
+    # (char 0)") is exactly the failure mode this client exists to fix on
+    # the legacy endpoint, and it self-heals on retry — it must not be
+    # classified as a permanent USGSWaterDataError.
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               return_value=_BadJSONResponse({})):
+        with pytest.raises(USGSWaterDataTransientError):
+            USGSWaterDataClient().get_daily_mean("12200500", None, _retries=0)
+
+
+# --- retry behaviour (IMPORTANT 7) ----------------------------------------
+
+def test_503_then_200_succeeds_after_one_retry():
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               side_effect=[_FakeResponse({}, status_code=503),
+                            _FakeResponse(_page([_feature("2021-11-16", "1")]))]) as g, \
+         patch("src.acquisition.usgs_waterdata_client._time.sleep") as sleep_mock:
+        obs = USGSWaterDataClient().get_daily_mean("12200500", None, _retries=1)
+
+    assert len(obs) == 1
+    assert g.call_count == 2
+    assert sleep_mock.call_count == 1
+
+
+def test_retry_after_header_sets_the_sleep_delay():
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               side_effect=[_FakeResponse({}, status_code=429,
+                                          headers={"Retry-After": "1"}),
+                            _FakeResponse(_page([]))]) as g, \
+         patch("src.acquisition.usgs_waterdata_client._time.sleep") as sleep_mock:
+        USGSWaterDataClient().get_daily_mean("12200500", None, _retries=1)
+
+    assert g.call_count == 2
+    sleep_mock.assert_called_once_with(1.0)
+
+
+def test_retry_budget_exhausted_raises_after_exact_attempt_count():
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               return_value=_FakeResponse({}, status_code=503)) as g, \
+         patch("src.acquisition.usgs_waterdata_client._time.sleep") as sleep_mock:
+        with pytest.raises(USGSWaterDataTransientError):
+            USGSWaterDataClient().get_daily_mean("12200500", None, _retries=2)
+
+    # Initial attempt + 2 retries = 3 requests, 2 sleeps.
+    assert g.call_count == 3
+    assert sleep_mock.call_count == 2
+
+
+def test_network_exception_is_transient_and_retried():
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               side_effect=[requests.ConnectionError("boom"),
+                            _FakeResponse(_page([]))]) as g, \
+         patch("src.acquisition.usgs_waterdata_client._time.sleep") as sleep_mock:
+        USGSWaterDataClient().get_daily_mean("12200500", None, _retries=1)
+
+    assert g.call_count == 2
+    assert sleep_mock.call_count == 1
+
+
+def test_404_is_never_retried():
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               return_value=_FakeResponse({}, status_code=404)) as g, \
+         patch("src.acquisition.usgs_waterdata_client._time.sleep") as sleep_mock:
+        with pytest.raises(USGSWaterDataError):
+            USGSWaterDataClient().get_daily_mean("12200500", None, _retries=3)
+
+    assert g.call_count == 1
+    sleep_mock.assert_not_called()
 
 
 # --- request construction -------------------------------------------------
