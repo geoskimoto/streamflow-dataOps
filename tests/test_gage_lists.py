@@ -78,3 +78,51 @@ def test_load_skip_file_none_returns_empty_set():
 def test_load_skip_file_missing_raises():
     with pytest.raises(CommandError, match="No such skip file"):
         load_skip_file("/nonexistent/skip.txt")
+
+
+def test_csv_with_station_number_column_only(tmp_path):
+    csv_path = tmp_path / "gages.csv"
+    csv_path.write_text("station_number,name\n08LE031,A\n08LD001,B\n")
+
+    assert resolve_gages({"gage_list_csv": str(csv_path)}) == [
+        "08LE031",
+        "08LD001",
+    ]
+
+
+def test_csv_with_usgs_id_column_only(tmp_path):
+    csv_path = tmp_path / "gages.csv"
+    csv_path.write_text("usgs_id,nwsli\n12200500,MVEW1\n13317000,WHBI1\n")
+
+    assert resolve_gages({"gage_list_csv": str(csv_path)}) == [
+        "12200500",
+        "13317000",
+    ]
+
+
+def test_csv_with_both_columns_prefers_station_number(tmp_path):
+    csv_path = tmp_path / "gages.csv"
+    csv_path.write_text(
+        "station_number,usgs_id\n08LE031,12200500\n08LD001,13317000\n"
+    )
+
+    assert resolve_gages({"gage_list_csv": str(csv_path)}) == [
+        "08LE031",
+        "08LD001",
+    ]
+
+
+def test_csv_with_neither_column_raises(tmp_path):
+    csv_path = tmp_path / "bad.csv"
+    csv_path.write_text("site_no\n12200500\n")
+
+    with pytest.raises(CommandError, match="usgs_id.*station_number"):
+        resolve_gages({"gage_list_csv": str(csv_path)})
+
+
+def test_all_stations_respects_agency(db):
+    Station.objects.create(station_number="13317000", name="U", agency="USGS")
+    Station.objects.create(station_number="08LE031", name="E", agency="EC")
+
+    assert resolve_gages({"all_usgs": True}) == ["13317000"]
+    assert resolve_gages({"all_ec": True}) == ["08LE031"]

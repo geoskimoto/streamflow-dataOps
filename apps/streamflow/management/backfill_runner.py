@@ -32,7 +32,7 @@ from apps.streamflow.models import DischargeObservation, Station
 from src.acquisition.data_processor import DataProcessor
 
 _REPORT_FIELDS = [
-    "usgs_id",
+    "station_number",
     "status",
     "fetched",
     "written",
@@ -127,7 +127,7 @@ def run_backfill(*, command, gages, fetch, agency, options) -> list:
                             f"stations table, skipped"
                         )
                     )
-                    rows.append({"usgs_id": gage, "status": "not_in_db"})
+                    rows.append({"station_number": gage, "status": "not_in_db"})
                     continue
 
                 # Both the "before" and "after" reads, and the upsert
@@ -155,7 +155,7 @@ def run_backfill(*, command, gages, fetch, agency, options) -> list:
 
                 rows.append(
                     {
-                        "usgs_id": gage,
+                        "station_number": gage,
                         "status": status,
                         "fetched": len(observations),
                         "written": written,
@@ -188,7 +188,7 @@ def run_backfill(*, command, gages, fetch, agency, options) -> list:
                         f"[{index}/{len(gages)}] {gage}: failed: {exc}"
                     )
                 )
-                rows.append({"usgs_id": gage, "status": f"failed: {exc}"})
+                rows.append({"station_number": gage, "status": f"failed: {exc}"})
             finally:
                 # Pacing applies on every path - success, not-in-db, and
                 # failure alike - so a run of failures doesn't hammer a
