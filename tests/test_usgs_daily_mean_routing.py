@@ -103,11 +103,14 @@ def test_daily_mean_passes_the_smart_append_start_date(station):
 
 def test_unknown_data_type_still_reports_failure(station):
     config = _config("daily_mean")
-    config.data_type = "something_unsupported"
+    # Keep this literal at most 20 characters: PullConfiguration.data_type is
+    # CharField(max_length=20), and a longer value makes PostgreSQL raise
+    # DataError during test setup, before the function under test is reached.
+    config.data_type = "bogus_type"
     config.save(update_fields=["data_type"])
     cs = _config_station(config, station)
 
     result = _process_single_station(cs, config.id, config)
 
     assert result["success"] is False
-    assert "something_unsupported" in (result["error"] or "")
+    assert "bogus_type" in (result["error"] or "")
