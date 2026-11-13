@@ -116,7 +116,11 @@ class Command(BaseCommand):
                 "gages": options.get("stations"),
                 "gage_list_csv": options.get("station_list_csv"),
                 "all_ec": options.get("all_ec"),
-            }
+            },
+            selector_names={
+                "gages": "--stations",
+                "gage_list_csv": "--station-list-csv",
+            },
         )
 
         start = self._parse_date(options.get("start"))

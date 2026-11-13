@@ -1,6 +1,9 @@
 """Tests for shared gage-list resolution used by the backfill and audit commands."""
 
+from io import StringIO
+
 import pytest
+from django.core.management import call_command
 from django.core.management.base import CommandError
 
 from apps.streamflow.management.gage_lists import load_skip_file, resolve_gages
@@ -62,6 +65,35 @@ def test_all_usgs_reads_stations(db):
 def test_no_selection_raises():
     with pytest.raises(CommandError, match="--gages"):
         resolve_gages({})
+
+
+def test_no_selection_default_message_is_unchanged():
+    # No selector_names supplied - must fall back to the USGS-flavored
+    # defaults exactly as before the selector_names parameter existed.
+    with pytest.raises(
+        CommandError, match=r"^Choose gages with --gages or --gage-list-csv$"
+    ):
+        resolve_gages({})
+
+
+def test_ec_command_no_selection_names_its_own_flags(db):
+    with pytest.raises(CommandError) as excinfo:
+        call_command("backfill_ec_observations", stdout=StringIO())
+
+    message = str(excinfo.value)
+    assert "--stations" in message
+    assert "--station-list-csv" in message
+    assert "--gages" not in message
+    assert "--gage-list-csv" not in message
+
+
+def test_usgs_command_no_selection_message_unchanged(db):
+    with pytest.raises(CommandError) as excinfo:
+        call_command("backfill_usgs_observations", stdout=StringIO())
+
+    message = str(excinfo.value)
+    assert "--gages" in message
+    assert "--gage-list-csv" in message
 
 
 def test_load_skip_file_returns_set(tmp_path):

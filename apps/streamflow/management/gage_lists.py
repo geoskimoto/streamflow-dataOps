@@ -6,14 +6,31 @@ here rather than being duplicated per command.
 
 import csv
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 from django.core.management.base import CommandError
 
 from apps.streamflow.models import Station
 
+# Default flag names shown in the no-selection CommandError, keyed by the
+# same internal option keys resolve_gages() reads. These match the USGS
+# command's actual flags, since that was the only caller when this module
+# was written and its pinned tests assert on this exact wording. A caller
+# whose flags are spelled differently (e.g. the EC command's --stations /
+# --station-list-csv) overrides the relevant entries via selector_names
+# rather than this module guessing a command's flag spelling from its
+# option keys.
+_DEFAULT_SELECTOR_NAMES = {
+    "gages": "--gages",
+    "gage_list_csv": "--gage-list-csv",
+    "all_usgs": "--all-usgs",
+    "all_ec": "--all-ec",
+}
 
-def resolve_gages(options: Dict) -> List[str]:
+
+def resolve_gages(
+    options: Dict, selector_names: Optional[Dict[str, str]] = None
+) -> List[str]:
     """Return the station ids selected by a command's options.
 
     Recognises, in priority order, ``gages`` (comma-separated), then
@@ -21,6 +38,14 @@ def resolve_gages(options: Dict) -> List[str]:
     column - ``station_number`` wins if both are present), then
     ``all_usgs`` / ``all_ec`` (every ``Station`` with that agency).
     Duplicates are collapsed with first-seen order preserved.
+
+    ``selector_names`` lets a caller whose CLI flags don't match this
+    module's internal option keys (e.g. the EC command's ``--stations`` /
+    ``--station-list-csv`` instead of ``--gages`` / ``--gage-list-csv``)
+    override the flag strings shown in the no-selection error, keyed by
+    those same internal names (``gages``, ``gage_list_csv``, ``all_usgs``,
+    ``all_ec``). Unset keys fall back to ``_DEFAULT_SELECTOR_NAMES``, which
+    matches the USGS command's actual flags.
 
     Which of ``--all-usgs``/``--all-ec`` a caller mentions in its error
     message is inferred from which of those keys are present in
@@ -61,11 +86,15 @@ def resolve_gages(options: Dict) -> List[str]:
     if options.get("all_ec"):
         return _stations_for_agency("EC")
 
-    selectors = ["--gages", "--gage-list-csv"]
+    names = dict(_DEFAULT_SELECTOR_NAMES)
+    if selector_names:
+        names.update(selector_names)
+
+    selectors = [names["gages"], names["gage_list_csv"]]
     if "all_usgs" in options:
-        selectors.append("--all-usgs")
+        selectors.append(names["all_usgs"])
     if "all_ec" in options:
-        selectors.append("--all-ec")
+        selectors.append(names["all_ec"])
     raise CommandError(
         "Choose gages with " + ", ".join(selectors[:-1])
         + (" or " + selectors[-1] if len(selectors) > 1 else selectors[0])
