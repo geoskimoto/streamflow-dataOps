@@ -23,18 +23,14 @@ below always passes a fixed earliest-possible date, exactly as
 ``backfill_ec_observations`` does.
 """
 
-from datetime import datetime, timezone
-
 from django.core.management.base import BaseCommand
 
 from apps.streamflow.management.audit_runner import ABS_TOLERANCE_CMS, run_audit
+# The full-record sentinel is shared with backfill_ec_observations - the two
+# must always agree on the span, so it is defined once in ec_constants.
+from apps.streamflow.management.ec_constants import EC_EARLIEST_START
 from apps.streamflow.management.gage_lists import resolve_gages
 from src.acquisition.canada_client import CanadaClient
-
-# CanadaClient.get_daily_mean() requires a non-None start_date - unlike the
-# USGS client, it has no "full record" shorthand - so the fetch closure below
-# always passes this instead of None.
-_EARLIEST_START = datetime(1850, 1, 1, tzinfo=timezone.utc)
 
 
 class Command(BaseCommand):
@@ -101,7 +97,7 @@ class Command(BaseCommand):
         client = CanadaClient()
 
         def fetch(station_number):
-            return client.get_daily_mean(station_number, _EARLIEST_START)
+            return client.get_daily_mean(station_number, EC_EARLIEST_START)
 
         run_audit(
             command=self,

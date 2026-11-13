@@ -270,6 +270,73 @@ def test_allow_stale_tail_suppresses_only_the_tail_gate(station, tmp_path):
     assert "1 stale_tail (allowed)" in out.getvalue()
 
 
+def test_source_dates_before_first_stored_row_are_reported_not_counted_missing(
+    station, tmp_path
+):
+    """Fix round 2, Medium 1: the comparison is bounded below by the first
+    stored date, so a backfill that failed to restore the *oldest* days
+    would score zero missing and print green - head staleness, the twin of
+    the tail staleness already gated. n_api_before_db_first makes it
+    visible: the two source days before the first stored row are counted
+    and warned about, while n_missing_in_db_span stays 0 because they are
+    legitimately outside the comparison span."""
+    _row(station, 15, 941.0)
+    _row(station, 16, 1190.0)
+    api_rows = [
+        _api_row(13, 800.0),  # before first stored date
+        _api_row(14, 850.0),  # before first stored date
+        _api_row(15, 941.0),
+        _api_row(16, 1190.0),
+    ]
+    report = tmp_path / "audit.csv"
+    out = StringIO()
+
+    with patch(PATCH_TARGET, return_value=api_rows):
+        call_command(
+            "audit_ec_observations",
+            "--stations", "08MF005",
+            "--report", str(report),
+            stdout=out,
+        )
+
+    rows = list(csv.DictReader(report.read_text().splitlines()))
+    assert rows[0]["n_api_before_db_first"] == "2"
+    assert rows[0]["n_missing_in_db_span"] == "0"
+    assert rows[0]["n_missing"] == "0"
+    # Visible in a nohup log, naming the station and the count.
+    assert "08MF005: 2 EC API date(s) before first stored date" in out.getvalue()
+
+
+def test_source_dates_before_first_stored_row_alone_do_not_raise(
+    station, tmp_path
+):
+    """The companion to the test above, and the property that keeps the
+    pinned USGS audit tests byte-identical: n_api_before_db_first is
+    reported but deliberately not gated. A station we only ever stored
+    recent years for is legitimately short, so gating on it would fail
+    every run forever - the run must stay all-clear and SUCCESS-styled."""
+    _row(station, 15, 941.0)
+    _row(station, 16, 1190.0)
+    api_rows = [_api_row(13, 800.0), _api_row(15, 941.0), _api_row(16, 1190.0)]
+    report = tmp_path / "audit.csv"
+    out = StringIO()
+
+    # No not_all_clear() wrapper: a raise here is the failure this pins.
+    with patch(PATCH_TARGET, return_value=api_rows):
+        call_command(
+            "audit_ec_observations",
+            "--stations", "08MF005",
+            "--report", str(report),
+            stdout=out,
+            force_color=True,
+        )
+
+    assert "\x1b[32;1m" in out.getvalue()  # SUCCESS green summary
+    rows = list(csv.DictReader(report.read_text().splitlines()))
+    assert rows[0]["n_api_before_db_first"] == "1"
+    assert rows[0]["status"] == "ok"
+
+
 def test_cfs_unit_row_is_excluded_by_the_unit_filter(station, tmp_path):
     """The unit="cms" filter is load-bearing - a cfs row compared against a
     cms API value would read as a false value difference and corrupt the

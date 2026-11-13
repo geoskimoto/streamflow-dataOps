@@ -47,8 +47,16 @@ def run_backfill(*, command, gages, fetch, agency, options) -> list:
     ``command`` is used only for ``command.stdout.write(...)`` and
     ``command.style``, so callers keep their existing CLI output.
     ``fetch(station_number, start_date, end_date)`` is the agency-specific
-    data source call. ``agency`` scopes the ``Station`` lookup so e.g. an EC
-    run cannot accidentally process a USGS station sharing the same id.
+    data source call. It must return a ``list`` of dicts, each with
+    ``observed_at`` (timezone-aware ``datetime`` at midnight UTC),
+    ``discharge`` (float), ``unit`` (str - ``"cfs"`` for USGS, ``"cms"``
+    for EC), ``type`` (str, ``"daily_mean"``), and ``quality_code`` (str,
+    at most 10 characters); an empty list means no data, and ``None`` is
+    not acceptable - this function calls ``len()`` on the result, so a
+    ``None`` surfaces as a confusing per-station ``failed: object of type
+    'NoneType' has no len()`` rather than a clean "no data" row.
+    ``agency`` scopes the ``Station`` lookup so e.g. an EC run cannot
+    accidentally process a USGS station sharing the same id.
 
     ``options`` is the command's parsed options dict, read with ``.get()``.
     The keys this function reads, and the contract each one has:

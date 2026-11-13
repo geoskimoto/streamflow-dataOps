@@ -30,6 +30,13 @@ OUTLIER_LOG_Z_SCORE = 5.0
 # mainstem peaks — the same failure the z-score filter caused, and contrary
 # to this project's "log data quality issues rather than silently dropping
 # records" convention.
+#
+# Note the unit: this is cfs-denominated but applied to every source's
+# discharge regardless of unit, so for cms sources (Environment Canada) it is
+# effectively inert — 1,000,000 cms is ~35x the largest river on Earth, so an
+# EC row never trips the review warning. No data impact: the check is log-only
+# and never drops a record. Make it unit-aware only if cms values ever need
+# the same review signal.
 IMPLAUSIBLE_DISCHARGE_CFS = 1_000_000
 
 

@@ -24,6 +24,15 @@ regardless of which agency calls in:
   ``n_missing_after_db_last`` (tail staleness after the last stored date) so
   the two are never silently summed into a misleadingly large or small
   total; ``n_missing`` is their sum by construction.
+- Because of that lower bound, a repair that failed to restore days
+  *earlier* than the first stored row would score zero missing and print
+  green - the head-side twin of the tail staleness the split above exposes.
+  ``n_api_before_db_first`` counts the source dates strictly before the
+  first stored date and is reported (per-station WARNING line plus a CSV
+  column) but **deliberately not gated**: a station we only ever stored
+  recent years for is legitimately short, and gating on this would fail
+  every run forever. It is a lead to chase by hand, not a verdict, so it
+  never touches ``all_ok``, the success styling, or the ``CommandError``.
 - Five statuses, each with its own per-station stdout line so an operator
   can triage from the log alone: ``ok``, ``failed``, ``no_db_data``,
   ``no_api_data``, ``not_in_db``.
@@ -100,6 +109,7 @@ _REPORT_FIELDS_TAIL = [
     "n_db",
     "n_db_rows",
     "n_api_in_span",
+    "n_api_before_db_first",
     "n_missing",
     "n_missing_in_db_span",
     "n_missing_after_db_last",
@@ -236,6 +246,27 @@ def run_audit(
                 lo, hi = min(db_by_date), max(db_by_date)
                 in_span = {d: v for d, v in api_by_date.items() if d >= lo}
 
+                # The lower bound is what keeps a station from being blamed
+                # for data predating its first stored row - but it also
+                # means a backfill that failed to restore the *oldest* days
+                # scores zero missing and prints green. Count the source
+                # dates below `lo` and report them so head staleness is at
+                # least visible; this is deliberately NOT part of the
+                # all-clear gate, because a legitimately short record (a
+                # station we only ever stored recent years for) would
+                # otherwise fail every run forever. It is a lead to chase
+                # by hand, not a verdict.
+                n_api_before_db_first = sum(1 for d in api_by_date if d < lo)
+                if n_api_before_db_first:
+                    command.stdout.write(
+                        command.style.WARNING(
+                            f"[{index}/{len(gages)}] {gage}: "
+                            f"{n_api_before_db_first} {api_label} date(s) "
+                            f"before first stored date {lo.isoformat()} - "
+                            f"not counted as missing (reported only)"
+                        )
+                    )
+
                 missing_in_db_span = sorted(
                     d for d in in_span if d <= hi and d not in db_by_date
                 )
@@ -275,6 +306,7 @@ def run_audit(
                     "n_db": len(db_by_date),
                     "n_db_rows": n_db_rows,
                     "n_api_in_span": len(in_span),
+                    "n_api_before_db_first": n_api_before_db_first,
                     "n_missing": len(missing),
                     "n_missing_in_db_span": len(missing_in_db_span),
                     "n_missing_after_db_last": len(missing_after_db_last),

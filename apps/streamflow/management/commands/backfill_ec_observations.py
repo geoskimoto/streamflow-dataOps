@@ -18,13 +18,11 @@ from datetime import datetime, timezone
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.streamflow.management.backfill_runner import run_backfill
+# The full-record sentinel is shared with audit_ec_observations - the two
+# must always agree on the span, so it is defined once in ec_constants.
+from apps.streamflow.management.ec_constants import EC_EARLIEST_START
 from apps.streamflow.management.gage_lists import resolve_gages
 from src.acquisition.canada_client import CanadaClient
-
-# CanadaClient.get_daily_mean() requires a non-None start_date - unlike the
-# USGS client, it has no "full record" shorthand - so an omitted --start is
-# translated to this instead of None before the fetch ever happens.
-_EARLIEST_START = datetime(1850, 1, 1, tzinfo=timezone.utc)
 
 
 class Command(BaseCommand):
@@ -56,7 +54,7 @@ class Command(BaseCommand):
             help=(
                 "Inclusive start date YYYY-MM-DD. Omit for the full record "
                 f"- CanadaClient.get_daily_mean requires a start date, so "
-                f"omitting this passes {_EARLIEST_START.date()} instead "
+                f"omitting this passes {EC_EARLIEST_START.date()} instead "
                 "of None."
             ),
         )
@@ -143,8 +141,8 @@ class Command(BaseCommand):
 
         # CanadaClient.get_daily_mean() requires a non-None start_date,
         # unlike the USGS client - an omitted --start means "the full
-        # record", so it becomes _EARLIEST_START rather than None.
-        options["start"] = start or _EARLIEST_START
+        # record", so it becomes EC_EARLIEST_START rather than None.
+        options["start"] = start or EC_EARLIEST_START
         options["end"] = end
 
         client = CanadaClient()

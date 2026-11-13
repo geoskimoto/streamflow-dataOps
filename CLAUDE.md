@@ -56,6 +56,13 @@ python manage.py backfill_usgs_observations --gage-list-csv streamflow-dataops-o
 
 # Verify stored observations against the USGS Water Data API
 python manage.py audit_usgs_observations --gage-list-csv streamflow-dataops-observation-issues/gage_gaps.csv --report data/audit_after_stage_a.csv
+
+# Same repair for Environment Canada (--all-ec = every Station with agency='EC')
+python manage.py backfill_ec_observations --all-ec --report data/backfill_stage_c.csv
+python manage.py backfill_ec_observations --stations 08MF005,08NM116 --report data/backfill_ec_spot.csv
+
+# Verify stored EC observations against the MSC GeoMet API (read-only)
+python manage.py audit_ec_observations --all-ec --report data/audit_ec_after_backfill.csv
 ```
 
 ---
@@ -188,6 +195,14 @@ gages — the whole November 2021 Skagit crest, including 119,000 cfs on
 ("High-z discharge retained") and kept. Never reintroduce a batch z-score drop
 on streamflow.
 
+Environment Canada went through the same `DataProcessor` and was truncated the
+same way: sampled 2026-11-13, 5 of 8 EC stations with long records held a
+maximum between 0.48 and 0.82 of the true EC maximum.
+
+`IMPLAUSIBLE_DISCHARGE_CFS` (the log-only review threshold) is cfs-denominated
+but applied to every source regardless of unit, so it is effectively inert for
+cms sources. No data impact — it never drops a record.
+
 #### Observation writes are upserts, and pulls rewind
 
 `process_observations` upserts on `unique_observation_idx`
@@ -234,6 +249,46 @@ bounded the comparison at both ends of the stored date range) and
 `n_missing_after_db_last` (days after a gage's last stored row, i.e. tail
 staleness). The command's total `n_missing` is their sum and is therefore a
 **larger** quantity than 46,701 — do not compare it to that baseline directly.
+
+#### Observation repair commands share one runner per phase
+
+`backfill_usgs_observations` / `backfill_ec_observations` are thin wrappers over
+`apps/streamflow/management/backfill_runner.py`, and
+`audit_usgs_observations` / `audit_ec_observations` over
+`apps/streamflow/management/audit_runner.py`. The per-agency differences are
+exactly three: **the client**, **the unit**, and **the absolute tolerance
+floor**. Add shared behaviour to the runner, not to one command.
+
+USGS is stored in `cfs`, EC in `cms`, and **the unit is never updated on
+conflict** — `process_observations` upserts with
+`update_fields=["discharge", "quality_code"]`, so a row's unit is whatever
+first wrote it. The audit therefore scopes its DB read to the agency's native
+unit; a differently-unit'd row would otherwise read as a value difference.
+
+The audit's absolute tolerance floor is per-agency — `ABS_TOLERANCE_CFS = 0.5`
+and `ABS_TOLERANCE_CMS = 0.0142` — because those are the **same physical
+sensitivity** (0.5 / 35.3147). Reusing a flat `0.5` on cms values would be ~35x
+more permissive. Change one and re-derive the other; they must stay equivalent.
+`REL_TOLERANCE` (0.005) is a ratio and is genuinely shared.
+
+The backfill report's station column is `station_number` (renamed from
+`usgs_id`). Input CSVs accept **either** `usgs_id` or `station_number`,
+preferring `station_number` when both are present.
+
+Audit gating: in-span missing days, value differences, and tail staleness
+beyond `--max-tail-staleness-days` (default 7) each block the all-clear and
+raise `CommandError` — **after** the report is written, so a wrapper script can
+gate on the exit code and still read the CSV. `--allow-stale-tail` suppresses
+only the tail portion, never the other two. `n_api_before_db_first` (source
+dates earlier than the station's first stored row) is reported as a column and
+a per-station WARNING but is deliberately **not** gated: a station we only ever
+stored recent years for is legitimately short, so gating it would fail every
+run forever. Treat a nonzero value as a lead to chase by hand.
+
+Resuming an interrupted backfill uses the `<report>.done.txt` sidecar — appended
+and flushed per gage, successfully-completed gages only — passed as
+`--skip-gages-file`. Never the report CSV, which is overwritten each run and
+also lists failed and not-found gages.
 
 ### API (`apps/api/`)
 
