@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-StreamFlow DataOps is a Django 4.2 platform for managing streamflow observations and forecasts from USGS, NOAA River Forecast Centers, and Environment Canada. It includes automated data acquisition via Celery, a REST API (DRF + drf-spectacular), a Bootstrap 5 web dashboard, PostGIS spatial data, and satellite raster ingestion (NOAA RTMA, NASA SMAP/MODIS/GPM).
+StreamFlow DataOps is a Django 6.0.2 platform for managing streamflow observations and forecasts from USGS, NOAA River Forecast Centers, and Environment Canada. It includes automated data acquisition via Celery, a REST API (DRF + drf-spectacular), a Bootstrap 5 web dashboard, PostGIS spatial data, and satellite raster ingestion (NOAA RTMA, NASA SMAP/MODIS/GPM).
 
 Production domain: `streamflowops.3rdplaces.io` — deployed as a systemd service behind nginx on a Hostinger VPS.
 
@@ -48,6 +48,14 @@ python manage.py collectstatic --noinput
 # Safe to re-run — uses get_or_create, skips existing records
 # If /gridded-configurations/new/ shows "No datasets with variables found", run this
 python manage.py init_raster_datasets
+
+# Re-fetch and upsert USGS daily means (restores peaks dropped by the old 5-sigma filter)
+python manage.py backfill_usgs_observations --gage-list-csv streamflow-dataops-observation-issues/gage_gaps.csv --report data/backfill_stage_a.csv
+# Resuming an interrupted run: pass the '<report>.done.txt' sidecar (successfully-completed
+# gages only, written incrementally), never the report CSV itself, as --skip-gages-file.
+
+# Verify stored observations against the USGS Water Data API
+python manage.py audit_usgs_observations --gage-list-csv streamflow-dataops-observation-issues/gage_gaps.csv --report data/audit_after_stage_a.csv
 ```
 
 ---
@@ -169,6 +177,64 @@ enabling this on a NWRFC config would silently empty the pull. It is safe for
 USGS and EC, where the flag tracks reality. A run whose stations all filter out
 is logged `failed`, never `success`.
 
+#### Observation validation never drops records
+
+`DataProcessor.validate_observations` rejects only impossible values (missing,
+negative, > 1,000,000 cfs, unparseable timestamps). It does **not** drop
+statistical outliers. A batch z-score filter (|z| > 5) used to, and because
+streamflow is heavy-tailed that removed real flood peaks at 271 of 285 audited
+gages — the whole November 2021 Skagit crest, including 119,000 cfs on
+2021-11-16, was missing. High-z values are now logged
+("High-z discharge retained") and kept. Never reintroduce a batch z-score drop
+on streamflow.
+
+#### Observation writes are upserts, and pulls rewind
+
+`process_observations` upserts on `unique_observation_idx`
+(`station`, `observed_at`, `type`), updating `discharge` and `quality_code`.
+USGS revises provisional daily values for months, so a re-pulled day must
+overwrite the stored value. To make that reachable, `SmartAppendLogic`
+rewinds each incremental pull by `OBSERVATION_REFETCH_WINDOW_DAYS` (180)
+before the station watermark, bounded below by the configuration's
+`pull_start_date`.
+
+`observed_at` for daily means is always midnight UTC. Emitting any other
+time-of-day would insert duplicate rows instead of updating existing ones.
+
+#### USGS daily means come from the Water Data OGC API
+
+`src/acquisition/usgs_waterdata_client.py` reads
+`api.waterdata.usgs.gov/ogcapi/v1/collections/daily/items`, filtering on
+`parameter_code=00060` **and** `statistic_id=00003` — which replaces the legacy
+`discharge_cols[0]` guess that silently dropped any second series. The legacy
+`dataretrieval.nwis.get_dv` path is being retired by USGS and was the source of
+the "Expecting value: line 1 column 1" and gzip-decode failures. Instantaneous
+(`realtime_15min`) acquisition is **still on the legacy client** — migrating it
+is separate work.
+
+A station that returns more than one time series for `00060`/`00003` is
+deduplicated to one observation per date, deterministically, logging a WARNING
+naming the series ids — two rows sharing an `observed_at` would otherwise make
+the upsert fail with PostgreSQL's "ON CONFLICT DO UPDATE command cannot affect
+row a second time". An undecodable or empty response body is treated as
+**transient** and retried — that is the `Expecting value: line 1 column 1
+(char 0)` symptom the legacy endpoint produced.
+
+`PAGE_LIMIT` is 50,000, the API's hard maximum — above it the API returns
+HTTP 400 "Limit of 50000 exceeded". That is used in full on purpose: the
+longest record among the 285 NWRFC-mapped gages is 49,486 days, so a
+full-record backfill is one request per gage (285 total) against the API key's
+1,000 requests/hour. Dropping the page size to 10,000 would cost 939 requests
+and, with the audit's 285 on top, exceed the hourly budget.
+
+`audit_usgs_observations` reports missing days as two separate figures:
+`n_missing_in_db_span` (gaps strictly between a gage's first and last stored
+date — comparable to the original audit's published 46,701 baseline, which
+bounded the comparison at both ends of the stored date range) and
+`n_missing_after_db_last` (days after a gage's last stored row, i.e. tail
+staleness). The command's total `n_missing` is their sum and is therefore a
+**larger** quantity than 46,701 — do not compare it to that baseline directly.
+
 ### API (`apps/api/`)
 
 Base path: `/api/v1/` — Full OpenAPI docs at `/api/v1/docs/`
@@ -261,6 +327,9 @@ NWM_WEIGHTS_DIR              # Path to basin weight .npz files (default: data/nw
 NWM_TEMP_DIR                 # Scratch dir for hourly NetCDF downloads (default: data/nwm_temp/)
 NWM_NOMADS_BASE              # NOMADS base URL (default: https://nomads.ncep.noaa.gov/pub/data/nccf/com/nwm/prod)
 NWM_S3_BASE                  # AWS S3 base URL for historical data (default: https://noaa-nwm-pds.s3.amazonaws.com)
+USGS_WATERDATA_BASE           # USGS Water Data OGC API base (default https://api.waterdata.usgs.gov/ogcapi/v1)
+USGS_API_KEY                  # api.data.gov key; raises the rate limit to 1000 req/hr (anonymous gets 429s under load)
+OBSERVATION_REFETCH_WINDOW_DAYS  # Days each incremental observation pull rewinds before re-fetching (default 180)
 ```
 
 `DEBUG=False` is hardcoded; set it via env if needed locally.
