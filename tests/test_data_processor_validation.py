@@ -100,9 +100,28 @@ def test_negative_discharge_still_rejected():
     assert valid == []
 
 
-def test_absurdly_high_discharge_still_rejected():
-    valid = DataProcessor().validate_observations([_obs(2_000_000.0, 0)])
-    assert valid == []
+def test_absurdly_high_discharge_is_retained_and_logged(caplog):
+    """N4: this previously asserted the opposite — anything above 1,000,000
+    cfs was silently dropped. That is the same bug class as the z-score
+    filter: the Columbia at The Dalles peaks near 1,240,000 cfs, so a future
+    --all-usgs run would discard real mainstem peaks. The threshold is now a
+    review threshold: log at WARNING, retain the value.
+    """
+    with caplog.at_level("WARNING"):
+        valid = DataProcessor().validate_observations([_obs(2_000_000.0, 0)])
+
+    assert len(valid) == 1
+    assert float(valid[0]["discharge"]) == 2_000_000.0
+    assert any(
+        "Implausibly high discharge retained" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_columbia_at_the_dalles_scale_peak_is_retained():
+    # The specific real-world value that motivated N4.
+    valid = DataProcessor().validate_observations([_obs(1_240_000.0, 0)])
+    assert [float(o["discharge"]) for o in valid] == [1_240_000.0]
 
 
 def test_none_discharge_still_rejected():
@@ -116,7 +135,9 @@ def test_missing_required_field_still_rejected():
 
 
 def test_mixed_batch_keeps_peaks_and_rejects_invalid():
-    # A realistic pull: valid baseflow, a real crest, and two bad records.
+    # A realistic pull: valid baseflow, a real crest, one genuinely invalid
+    # record (negative), and one implausibly large value. Only the negative
+    # is rejected — magnitude is a review signal, not a rejection rule (N4).
     observations = _batch(BASEFLOW + SKAGIT_CREST)
     observations.append(_obs(-1.0, 999))
     observations.append(_obs(5_000_000.0, 1000))
@@ -124,7 +145,7 @@ def test_mixed_batch_keeps_peaks_and_rejects_invalid():
     valid = DataProcessor().validate_observations(observations)
 
     kept = [float(o["discharge"]) for o in valid]
-    assert len(valid) == len(BASEFLOW) + len(SKAGIT_CREST)
+    assert len(valid) == len(BASEFLOW) + len(SKAGIT_CREST) + 1
     assert 119000.0 in kept
     assert -1.0 not in kept
-    assert 5_000_000.0 not in kept
+    assert 5_000_000.0 in kept

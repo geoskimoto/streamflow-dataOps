@@ -126,6 +126,7 @@ def _process_single_station(config_station, config_id, config):
             config_id=config_id,
             station_number=station_number,
             config_start_date=config.pull_start_date,
+            data_type=config.data_type,
         )
         end_date = datetime.now(timezone.utc)
         logger.info(f"Pulling data from {start_date} to {end_date}")

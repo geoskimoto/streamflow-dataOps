@@ -17,6 +17,12 @@ from apps.streamflow.models import PullStationProgress
 
 logger = logging.getLogger(__name__)
 
+# The rolling re-fetch window exists because USGS publishes and revises
+# *daily mean* values for months after the fact. It must never be applied to
+# instantaneous data: a 180-day rewind on a realtime_15min config would pull
+# ~17,280 points per station on every 5-minute dispatch cycle, permanently.
+REFETCH_WINDOW_DATA_TYPES = frozenset({"daily_mean", "ec_realtime_daily"})
+
 
 class SmartAppendLogic:
     """
@@ -37,7 +43,11 @@ class SmartAppendLogic:
         self.logger = logging.getLogger(__name__)
 
     def get_pull_start_date(
-        self, config_id: int, station_number: str, config_start_date: datetime
+        self,
+        config_id: int,
+        station_number: str,
+        config_start_date: datetime,
+        data_type: Optional[str] = None,
     ) -> datetime:
         """
         Determine the start date for data pull based on Smart Append Logic.
@@ -46,6 +56,10 @@ class SmartAppendLogic:
             config_id: Pull configuration ID
             station_number: Station identifier
             config_start_date: The pull_start_date from configuration
+            data_type: PullConfiguration.data_type. The rolling re-fetch
+                window only applies to daily-mean data types (see
+                REFETCH_WINDOW_DATA_TYPES); anything else — including
+                ``None`` — resumes at the watermark exactly as before.
 
         Returns:
             Start date to use for data pull request
@@ -64,11 +78,25 @@ class SmartAppendLogic:
                 )
                 return config_start_date
             else:
+                last_date = progress.last_successful_pull_date
+                if data_type not in REFETCH_WINDOW_DATA_TYPES:
+                    # Instantaneous (and forecast) pulls must resume at the
+                    # watermark. A 180-day rewind on a realtime_15min config
+                    # would request ~17,280 points per station on every
+                    # 5-minute dispatch, forever, because the watermark is
+                    # re-rewound each run — it would throttle USGS and
+                    # saturate the database.
+                    self.logger.info(
+                        f"Subsequent pull for station {station_number} in "
+                        f"config {config_id} - no re-fetch window for "
+                        f"data_type {data_type!r}, resuming at {last_date}"
+                    )
+                    return last_date
+
                 # Rewind before re-fetching: USGS publishes late and revises
                 # provisional values for months. Starting at the watermark meant
                 # those days were never fetched again. Combined with the upsert
                 # in DataProcessor, this re-reads and corrects the window.
-                last_date = progress.last_successful_pull_date
                 window = timedelta(
                     days=settings.OBSERVATION_REFETCH_WINDOW_DAYS
                 )

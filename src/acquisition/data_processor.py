@@ -24,6 +24,14 @@ logger = logging.getLogger(__name__)
 # docs/superpowers/plans/2026-11-13-usgs-observation-ingest-remediation.md
 OUTLIER_LOG_Z_SCORE = 5.0
 
+# A *review* threshold, not a rejection threshold. Discharge above this is
+# logged at WARNING and retained. The Columbia at The Dalles peaks near
+# 1,240,000 cfs, so dropping on magnitude would silently discard real
+# mainstem peaks — the same failure the z-score filter caused, and contrary
+# to this project's "log data quality issues rather than silently dropping
+# records" convention.
+IMPLAUSIBLE_DISCHARGE_CFS = 1_000_000
+
 
 class DataProcessor:
     """Process, validate, and store raw data before database insertion."""
@@ -76,7 +84,15 @@ class DataProcessor:
         if validate:
             observations = self.validate_observations(observations)
 
-        # Add station to each observation
+        # Add station to each observation, dropping any whose timestamp
+        # cannot be parsed. Substituting datetime.utcnow() here (as an
+        # earlier version did) fabricates a naive datetime at the current
+        # time-of-day, which can never match an existing
+        # (station, observed_at, type) key: a malformed date would create an
+        # orphan row instead of correcting one, and would violate the
+        # midnight-UTC invariant the upsert depends on. Same mistake the
+        # project already warns about for forecast run_date.
+        dated_observations = []
         for obs in observations:
             obs["station"] = station
 
@@ -86,9 +102,15 @@ class DataProcessor:
                     obs["observed_at"] = datetime.fromisoformat(str(obs["observed_at"]))
                 except (ValueError, TypeError) as e:
                     self.logger.warning(
-                        f"Invalid date format: {obs['observed_at']}, error: {e}"
+                        f"Skipping observation for station {station_number} "
+                        f"with unparseable observed_at "
+                        f"{obs['observed_at']!r}: {e}"
                     )
-                    obs["observed_at"] = datetime.utcnow()
+                    continue
+
+            dated_observations.append(obs)
+
+        observations = self._dedupe_by_key(station_number, dated_observations)
 
         # Bulk insert with duplicate handling using Django
         observation_objects = []
@@ -100,10 +122,13 @@ class DataProcessor:
                     discharge=obs["discharge"],
                     unit=obs["unit"],
                     type=obs["type"],
-                    quality_code=obs.get("quality_code", "")
+                    # `or ""` not a get() default: the legacy clients emit
+                    # the key with an explicit None, and quality_code is a
+                    # non-nullable CharField(blank=True).
+                    quality_code=obs.get("quality_code") or "",
                 )
             )
-        
+
         # Upsert on unique_observation_idx (station, observed_at, type). USGS
         # revises provisional daily values for months, so a re-pulled day must
         # overwrite the stored value rather than be ignored.
@@ -123,16 +148,55 @@ class DataProcessor:
         )
         return inserted_count
 
+    def _dedupe_by_key(
+        self, station_number: str, observations: List[Dict]
+    ) -> List[Dict]:
+        """Collapse observations sharing an ``(observed_at, type)`` key.
+
+        The whole batch goes to one ``bulk_create(update_conflicts=True)``.
+        PostgreSQL raises "ON CONFLICT DO UPDATE command cannot affect row a
+        second time" on an intra-batch duplicate key, which fails inside
+        ``transaction.atomic()`` and loses the *entire* station's batch.
+        Under the old ``ignore_conflicts`` a duplicate was simply absorbed,
+        so this is the choke point that has to guarantee uniqueness: the
+        Water Data client dedupes its own output, but EC's paginated fetch
+        and ``USGSClient.get_instantaneous`` do not.
+
+        The last occurrence per key wins (sources list pages oldest-first,
+        so a later page carries the fresher value), and any collapse is
+        logged at WARNING — a duplicate key from an upstream is a data
+        quality issue, not routine.
+        """
+        deduped: Dict = {}
+        for obs in observations:
+            deduped[(obs["observed_at"], obs["type"])] = obs
+
+        collapsed = len(observations) - len(deduped)
+        if collapsed:
+            self.logger.warning(
+                "Collapsed %d duplicate (observed_at, type) observation(s) "
+                "for station %s; kept the last occurrence of each. An "
+                "intra-batch duplicate key would otherwise abort this "
+                "station's entire upsert.",
+                collapsed,
+                station_number,
+            )
+
+        return list(deduped.values())
+
     def validate_observations(self, observations: List[Dict]) -> List[Dict]:
         """
         Validate observation data quality.
 
-        Checks:
+        Checks (rejection):
         - Required fields present
-        - Non-negative discharge values
-        - Reasonable ranges (< 1,000,000 cfs for safety)
+        - Non-negative, parseable discharge values
         - Valid timestamps
-        - Statistical outliers (>5 std deviations)
+
+        Logged and RETAINED, never dropped:
+        - Statistical outliers (>5 std deviations of the batch mean) — real
+          flood peaks routinely exceed any fixed z-score
+        - Implausibly high magnitudes (> IMPLAUSIBLE_DISCHARGE_CFS)
 
         Args:
             observations: List of observation dictionaries
@@ -164,10 +228,18 @@ class DataProcessor:
                 self.logger.warning(f"Negative discharge value: {discharge}")
                 continue
 
-            # Check for unreasonably high values (likely data errors)
-            if discharge > 1_000_000:  # 1 million cfs
-                self.logger.warning(f"Unreasonably high discharge value: {discharge}")
-                continue
+            # Flag implausibly high values for review, but keep them. Real
+            # mainstem peaks exceed 1,000,000 cfs (Columbia at The Dalles
+            # ~1,240,000); dropping them here would re-create the bug the
+            # z-score fix just removed.
+            if discharge > IMPLAUSIBLE_DISCHARGE_CFS:
+                self.logger.warning(
+                    "Implausibly high discharge retained for review: "
+                    "discharge=%s observed_at=%s (review threshold %s cfs)",
+                    discharge,
+                    obs.get("observed_at"),
+                    IMPLAUSIBLE_DISCHARGE_CFS,
+                )
 
             # Validate timestamp
             try:

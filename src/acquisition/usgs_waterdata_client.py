@@ -32,6 +32,12 @@ logger = logging.getLogger(__name__)
 DISCHARGE_PARAMETER_CODE = "00060"
 DAILY_MEAN_STATISTIC_ID = "00003"
 
+# The API echoes unit_of_measure on every feature. Checked per feature along
+# with the three filter fields: a stage (ft) or temperature (degC) value that
+# slipped past a dropped server-side filter would pass validate_observations
+# unchallenged and be written in as discharge.
+DISCHARGE_UNIT_OF_MEASURE = "ft^3/s"
+
 # 50,000 is the API's hard maximum ("Limit of 50000 exceeded" above it) and is
 # deliberately used in full: the longest record among the 285 NWRFC-mapped
 # gages is 49,486 days, so one request covers one gage. At limit=10000 the
@@ -108,14 +114,28 @@ def build_quality_code(
     ordered the list — otherwise re-pulls would churn ``quality_code`` and
     produce pointless updates. Unknown qualifiers are ignored (logged at
     DEBUG) rather than raising, so a new USGS vocabulary entry cannot break
-    ingestion. An unmapped non-empty ``approval_status`` is logged at WARNING,
-    since a vocabulary change there would silently erase the A/P distinction.
+    ingestion.
+
+    An unmapped *non-empty* ``approval_status`` raises
+    ``USGSWaterDataError``. ``DataProcessor`` has ``quality_code`` in its
+    upsert ``update_fields`` and the backfill defaults to the whole record,
+    so a single USGS vocabulary change (``"Approved"`` -> ``"approved"``)
+    would otherwise overwrite ~10M stored ``A`` / ``A, e`` codes with an
+    empty string behind one warning in a multi-hour log. Failing the gage
+    loudly — it is then recorded as ``failed`` and retried — is the only safe
+    behaviour. An empty or ``None`` status stays lenient: it simply yields no
+    base letter.
+
     The result is truncated to the model's ``max_length=10`` at a token
     boundary.
     """
+    if approval_status and approval_status not in APPROVAL_CODES:
+        raise USGSWaterDataError(
+            f"Unmapped USGS approval_status {approval_status!r}; refusing to "
+            f"write an empty quality_code over existing values. Known "
+            f"statuses: {sorted(APPROVAL_CODES)}."
+        )
     base = APPROVAL_CODES.get(approval_status or "", "")
-    if approval_status and not base:
-        logger.warning("Unmapped USGS approval_status %r ignored", approval_status)
 
     present = set()
     for item in qualifier or []:
@@ -336,12 +356,46 @@ class USGSWaterDataClient:
     def _parse(self, features: List[Dict], station_number: str) -> List[Dict]:
         parsed: List[Dict] = []
         series_ids = set()
+        mismatches: Dict[str, set] = {}
+        skipped = 0
+
+        expected = {
+            "monitoring_location_id": f"USGS-{station_number}",
+            "parameter_code": DISCHARGE_PARAMETER_CODE,
+            "statistic_id": DAILY_MEAN_STATISTIC_ID,
+            "unit_of_measure": DISCHARGE_UNIT_OF_MEASURE,
+        }
 
         for feature in features:
             props = feature.get("properties") or {}
             series_id = props.get("time_series_id")
             if series_id is not None:
                 series_ids.add(series_id)
+
+            # Provenance check. OGC implementations commonly ignore query
+            # parameters they don't recognise, so if USGS renames a filter
+            # param the `limit=50000` request would return an unfiltered
+            # slice of the `daily` collection — another station's values, or
+            # stage/temperature — and validate_observations would pass them
+            # straight through as discharge. The API echoes all four fields
+            # on every feature, so this is cheap. Any mismatch at all means
+            # the server is not honouring our filters, so the whole response
+            # is untrustworthy and we raise after the loop rather than
+            # quietly keeping the subset that happened to match.
+            bad_field = next(
+                (
+                    field
+                    for field, want in expected.items()
+                    if props.get(field) != want
+                ),
+                None,
+            )
+            if bad_field is not None:
+                skipped += 1
+                mismatches.setdefault(bad_field, set()).add(
+                    repr(props.get(bad_field))
+                )
+                continue
 
             raw_value = props.get("value")
             raw_time = props.get("time")
@@ -389,6 +443,20 @@ class USGSWaterDataClient:
                     ),
                     "_series_id": series_id,
                 }
+            )
+
+        if skipped:
+            detail = "; ".join(
+                f"{field}: expected {expected[field]!r}, saw "
+                f"{', '.join(sorted(values))}"
+                for field, values in sorted(mismatches.items())
+            )
+            raise USGSWaterDataError(
+                f"Station {station_number}: the USGS Water Data API returned "
+                f"{skipped} feature(s) that do not match the requested "
+                f"filters — {detail}. "
+                "The server is not honouring our query parameters, so the "
+                "whole response is untrustworthy; aborting this station."
             )
 
         if len(series_ids) > 1:

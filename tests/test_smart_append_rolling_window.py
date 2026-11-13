@@ -60,6 +60,7 @@ def test_subsequent_pull_rewinds_by_the_window(config):
         config_id=config.id,
         station_number="12200500",
         config_start_date=CONFIG_START,
+        data_type="daily_mean",
     )
 
     expected = last - timedelta(days=settings.OBSERVATION_REFETCH_WINDOW_DAYS)
@@ -79,6 +80,124 @@ def test_rewind_never_predates_config_start_date(config):
         config_id=config.id,
         station_number="12200500",
         config_start_date=config_start,
+        data_type="daily_mean",
     )
 
     assert start == config_start
+
+
+# -- B1: the rewind is for daily means only ---------------------------------
+#
+# get_pull_start_date is the single code path for every pull. A 180-day
+# rewind on a realtime_15min config would request ~17,280 instantaneous
+# points per station on every 5-minute dispatch cycle, permanently, because
+# the watermark is re-rewound each run.
+
+LAST_PULL = datetime(2026, 11, 10, tzinfo=timezone.utc)
+
+
+def _config_for(data_type):
+    return PullConfiguration.objects.create(
+        name=f"Test {data_type} Pull",
+        data_source="USGS",
+        data_type=data_type,
+        data_strategy="append",
+        schedule_type="custom",
+        schedule_value="*/5 * * * *",
+        pull_start_date=CONFIG_START,
+    )
+
+
+def _progress(config):
+    PullStationProgress.objects.create(
+        configuration=config,
+        station_number="12200500",
+        last_successful_pull_date=LAST_PULL,
+    )
+
+
+def test_realtime_15min_is_not_rewound(db):
+    config = _config_for("realtime_15min")
+    _progress(config)
+
+    start = SmartAppendLogic().get_pull_start_date(
+        config_id=config.id,
+        station_number="12200500",
+        config_start_date=CONFIG_START,
+        data_type="realtime_15min",
+    )
+
+    assert start == LAST_PULL
+
+
+def test_ec_realtime_daily_is_rewound(db):
+    config = _config_for("ec_realtime_daily")
+    _progress(config)
+
+    start = SmartAppendLogic().get_pull_start_date(
+        config_id=config.id,
+        station_number="12200500",
+        config_start_date=CONFIG_START,
+        data_type="ec_realtime_daily",
+    )
+
+    assert start == LAST_PULL - timedelta(
+        days=settings.OBSERVATION_REFETCH_WINDOW_DAYS
+    )
+
+
+def test_omitting_data_type_does_not_rewind(config):
+    # A caller that does not say what it is pulling gets the conservative
+    # pre-rewind behaviour, not a 180-day window.
+    _progress(config)
+
+    start = SmartAppendLogic().get_pull_start_date(
+        config_id=config.id,
+        station_number="12200500",
+        config_start_date=CONFIG_START,
+    )
+
+    assert start == LAST_PULL
+
+
+def test_forecast_data_type_is_not_rewound(db):
+    config = _config_for("forecast")
+    _progress(config)
+
+    start = SmartAppendLogic().get_pull_start_date(
+        config_id=config.id,
+        station_number="12200500",
+        config_start_date=CONFIG_START,
+        data_type="forecast",
+    )
+
+    assert start == LAST_PULL
+
+
+def test_scheduled_pull_passes_the_config_data_type(db):
+    """The rewind gate is only effective if the sole caller actually passes
+    data_type — tasks._process_single_station must forward config.data_type."""
+    from unittest.mock import patch
+
+    from apps.streamflow.models import PullConfigurationStation, Station
+    from src.acquisition import tasks
+
+    Station.objects.create(
+        station_number="12200500", name="Skagit", agency="USGS", is_active=True
+    )
+    config = _config_for("realtime_15min")
+    config_station = PullConfigurationStation.objects.create(
+        configuration=config,
+        station_number="12200500",
+        station_name="Skagit",
+    )
+
+    with patch.object(
+        tasks.SmartAppendLogic, "get_pull_start_date", return_value=CONFIG_START
+    ) as mock_start, patch(
+        "src.acquisition.usgs_client.USGSClient.get_instantaneous",
+        return_value=[],
+    ):
+        tasks._process_single_station(config_station, config.id, config)
+
+    assert mock_start.call_args.kwargs["data_type"] == "realtime_15min"

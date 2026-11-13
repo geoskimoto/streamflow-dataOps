@@ -90,11 +90,33 @@ def test_quality_code_is_independent_of_input_order():
     assert forward == reverse == "A, e, q"
 
 
-def test_quality_code_unmapped_approval_status_logs_warning(caplog):
-    with caplog.at_level("WARNING"):
-        code = build_quality_code("SomethingNew", None)
-    assert code == ""
-    assert any("approval_status" in r.message for r in caplog.records)
+def test_quality_code_unmapped_approval_status_raises(caplog):
+    """B2: this used to log a warning and return a code with no base letter.
+    Because DataProcessor upserts quality_code and the backfill defaults to
+    the whole record, a USGS vocabulary change ("Approved" -> "approved")
+    would have overwritten ~10M stored 'A'/'A, e' codes with an empty string
+    behind one warning in a multi-hour log. It must fail the gage instead.
+    """
+    with pytest.raises(USGSWaterDataError, match="approval_status"):
+        build_quality_code("SomethingNew", None)
+
+
+def test_quality_code_none_approval_status_is_lenient():
+    # Only a *present but unrecognised* status is an error; a missing one
+    # simply contributes no base letter, as before.
+    assert build_quality_code(None, ["ESTIMATED"]) == "e"
+
+
+def test_quality_code_empty_approval_status_is_lenient():
+    assert build_quality_code("", None) == ""
+
+
+def test_unmapped_approval_status_fails_the_whole_station_fetch():
+    page = _page([_feature("2021-11-16", "119000", approval="approved")])
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               return_value=_FakeResponse(page)):
+        with pytest.raises(USGSWaterDataError, match="approval_status"):
+            USGSWaterDataClient().get_daily_mean("12200500", None)
 
 
 def test_quality_code_truncated_to_field_length():
@@ -446,6 +468,66 @@ def test_multiple_time_series_are_logged(caplog):
 
     assert any("multiple time series" in r.message.lower()
                for r in caplog.records)
+
+
+# --- provenance of returned features (B3) ---------------------------------
+#
+# OGC implementations commonly ignore query parameters they don't recognise.
+# If USGS renamed a filter param, `limit=50000` would return an unfiltered
+# slice of the `daily` collection and the backfill would write another
+# station's — or another parameter's — values in as discharge.
+# validate_observations only guards negatives, so stage or temperature values
+# would pass straight through. The API echoes all four fields on every
+# feature, so the check is cheap.
+
+
+def _feature_with(prop, value):
+    feat = _feature("2021-11-16", "119000")
+    feat["properties"][prop] = value
+    return feat
+
+
+@pytest.mark.parametrize(
+    "prop,value",
+    [
+        ("monitoring_location_id", "USGS-14306500"),
+        ("parameter_code", "00065"),          # gage height, not discharge
+        ("statistic_id", "00001"),            # daily maximum, not mean
+        ("unit_of_measure", "ft"),            # stage units, not cfs
+    ],
+)
+def test_feature_not_matching_our_filters_raises(prop, value):
+    page = _page([_feature_with(prop, value)])
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               return_value=_FakeResponse(page)):
+        with pytest.raises(USGSWaterDataError, match=prop):
+            USGSWaterDataClient().get_daily_mean("12200500", None)
+
+
+def test_one_foreign_feature_among_good_ones_still_raises():
+    # A nonzero skip count means the server is not honouring our filters, so
+    # the whole response is untrustworthy — we must not keep the subset that
+    # happened to match.
+    page = _page([
+        _feature("2021-11-15", "94100"),
+        _feature_with("monitoring_location_id", "USGS-14306500"),
+    ])
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               return_value=_FakeResponse(page)):
+        with pytest.raises(USGSWaterDataError, match="12200500"):
+            USGSWaterDataClient().get_daily_mean("12200500", None)
+
+
+def test_all_correct_provenance_parses_normally():
+    page = _page([
+        _feature("2021-11-15", "94100"),
+        _feature("2021-11-16", "119000"),
+    ])
+    with patch("src.acquisition.usgs_waterdata_client.requests.get",
+               return_value=_FakeResponse(page)):
+        obs = USGSWaterDataClient().get_daily_mean("12200500", None)
+
+    assert [o["discharge"] for o in obs] == [94100.0, 119000.0]
 
 
 @pytest.mark.integration
