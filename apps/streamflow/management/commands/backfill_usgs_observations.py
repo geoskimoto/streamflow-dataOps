@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
+from django.db import connection
 from django.db.models import Max
 
 from apps.streamflow.management.gage_lists import load_skip_file, resolve_gages
@@ -87,7 +88,12 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--report",
-            help="Write a per-gage CSV report to this path.",
+            help=(
+                "Write a per-gage CSV report to this path. The file is "
+                "overwritten on every run (the '.done.txt' sidecar next to "
+                "it is appended, not overwritten) - use a new path for a "
+                "resumed run if the earlier report needs keeping."
+            ),
         )
         parser.add_argument(
             "--skip-gages-file",
@@ -154,9 +160,9 @@ class Command(BaseCommand):
 
                     # Both the "before" and "after" reads, and the upsert
                     # itself, sit inside this try: a dropped DB connection
-                    # (OperationalError/InterfaceError) mid-run must be
-                    # recorded as a failed gage, not abort the remaining
-                    # gages.
+                    # (OperationalError/InterfaceError) mid-run is caught
+                    # below, where the connection is explicitly reset so the
+                    # *next* gage reconnects instead of also failing.
                     before = self._max_discharge(station)
                     observations = client.get_daily_mean(gage, start, end)
 
@@ -196,6 +202,15 @@ class Command(BaseCommand):
                         done_handle.flush()
 
                 except Exception as exc:  # noqa: BLE001 - one bad gage must never abort the run
+                    # Reset a possibly-dead connection so the next gage can
+                    # reconnect. Django only reconnects when connection is
+                    # None, so without this one dropped connection would
+                    # fail every remaining gage with InterfaceError. Safe
+                    # unconditionally: for a non-DB failure this just costs
+                    # one lazy reconnect, and process_observations' own
+                    # transaction.atomic() has already unwound by the time
+                    # we get here, so no atomic block is active.
+                    connection.close()
                     self.stdout.write(
                         self.style.ERROR(
                             f"[{index}/{len(gages)}] {gage}: failed: {exc}"

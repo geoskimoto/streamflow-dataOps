@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db.utils import OperationalError
 
 from apps.streamflow.management.commands.backfill_usgs_observations import Command
 from apps.streamflow.models import DischargeObservation, Station
@@ -135,12 +136,26 @@ def test_unknown_gage_is_reported_and_does_not_abort_the_run(station):
 def test_fetch_failure_does_not_abort_remaining_gages(station, other_station):
     """A fetch failure on one gage must not prevent a later gage's rows
     from landing — a single-gage run can't distinguish "continued" from
-    "there was nothing after it to abort"."""
+    "there was nothing after it to abort".
+
+    connection.close() (added for Important 9) is mocked out here: under
+    pytest-django's atomic-wrapped `db` fixture, a real close() mid-test
+    marks the connection closed_in_transaction rather than resetting it
+    (Django only nulls `self.connection` outside an atomic block), so the
+    next real query in the *same test* raises InterfaceError. That is a
+    test-isolation artifact, not a production bug — see
+    test_dropped_connection_is_reset_so_the_next_gage_reconnects, which
+    exercises the real close() call directly. This test's own focus is
+    failure isolation, not the reconnect mechanism.
+    """
     out = StringIO()
     with patch(
         "apps.streamflow.management.commands.backfill_usgs_observations."
         "USGSWaterDataClient.get_daily_mean",
         side_effect=[RuntimeError("boom"), CREST],
+    ), patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations."
+        "connection.close",
     ):
         call_command(
             "backfill_usgs_observations",
@@ -157,7 +172,13 @@ def test_process_observations_failure_does_not_abort_remaining_gages(
     station, other_station
 ):
     """A DB error raised from process_observations (e.g. a dropped
-    connection) on one gage must not abort the remaining gages."""
+    connection) on one gage must not abort the remaining gages.
+
+    connection.close() is mocked out for the same reason documented in
+    test_fetch_failure_does_not_abort_remaining_gages above: a real close()
+    mid-test breaks pytest-django's atomic-wrapped `db` fixture, not the
+    command. The reconnect mechanism itself has its own dedicated test.
+    """
     out = StringIO()
     with patch(
         "apps.streamflow.management.commands.backfill_usgs_observations."
@@ -167,6 +188,9 @@ def test_process_observations_failure_does_not_abort_remaining_gages(
         "apps.streamflow.management.commands.backfill_usgs_observations."
         "DataProcessor.process_observations",
         side_effect=[RuntimeError("db boom"), 2],
+    ), patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations."
+        "connection.close",
     ):
         call_command(
             "backfill_usgs_observations",
@@ -178,6 +202,79 @@ def test_process_observations_failure_does_not_abort_remaining_gages(
     assert "db boom" in out.getvalue()
     assert f"{other_station.station_number}: fetched 2, wrote 2" in out.getvalue()
     assert "Done. 2 gages processed, 1 failed." in out.getvalue()
+
+
+def test_dropped_connection_is_reset_so_the_next_gage_reconnects(
+    station, other_station
+):
+    """A real OperationalError (dropped connection) on one gage must not
+    poison every remaining gage with InterfaceError: connection.close()
+    has to run so Django reconnects lazily on the next query.
+
+    process_observations is only faked for the failing first call; the
+    second call runs the real method (via a throwaway DataProcessor
+    instance, since the patch target isn't bound to `self`) so the test can
+    assert the second gage's rows actually land in the database rather than
+    asserting against a mocked return value.
+    """
+    from src.acquisition.data_processor import DataProcessor as RealDataProcessor
+
+    real_process_observations = RealDataProcessor.process_observations
+    call_count = {"n": 0}
+
+    def flaky(*, station_number, observations, validate=True):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise OperationalError("server closed the connection unexpectedly")
+        return real_process_observations(
+            RealDataProcessor(),
+            station_number=station_number,
+            observations=observations,
+            validate=validate,
+        )
+
+    out = StringIO()
+    with patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations."
+        "USGSWaterDataClient.get_daily_mean",
+        return_value=CREST,
+    ), patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations."
+        "DataProcessor.process_observations",
+        side_effect=flaky,
+    ), patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations."
+        "connection.close",
+    ) as mock_close:
+        call_command(
+            "backfill_usgs_observations",
+            "--gages", f"{station.station_number},{other_station.station_number}",
+            "--sleep", "0",
+            stdout=out,
+        )
+
+    assert mock_close.called
+    assert "server closed the connection unexpectedly" in out.getvalue()
+    assert DischargeObservation.objects.filter(station=other_station).count() == 2
+
+
+def test_sleep_fires_on_the_failure_path_too(station, other_station):
+    """Pins Important 4's fix: a failed gage must still pace before moving
+    on, not just a successful one."""
+    with patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations."
+        "USGSWaterDataClient.get_daily_mean",
+        side_effect=[RuntimeError("boom"), CREST],
+    ), patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations.time.sleep"
+    ) as mock_sleep:
+        call_command(
+            "backfill_usgs_observations",
+            "--gages", f"{station.station_number},{other_station.station_number}",
+            stdout=StringIO(),
+        )
+
+    mock_sleep.assert_called_once_with(1.0)
 
 
 def test_requires_a_gage_selection(db):
@@ -218,11 +315,17 @@ def test_report_written_even_on_crash_or_interrupt(station, other_station, tmp_p
 def test_done_sidecar_contains_only_successfully_completed_gages(
     station, other_station, tmp_path
 ):
+    """connection.close() is mocked out for the same pytest-django
+    atomic-block reason documented above; this test's focus is the
+    .done.txt sidecar contents, not the reconnect mechanism."""
     report_path = tmp_path / "report.csv"
     with patch(
         "apps.streamflow.management.commands.backfill_usgs_observations."
         "USGSWaterDataClient.get_daily_mean",
         side_effect=[RuntimeError("boom"), CREST],
+    ), patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations."
+        "connection.close",
     ):
         call_command(
             "backfill_usgs_observations",
