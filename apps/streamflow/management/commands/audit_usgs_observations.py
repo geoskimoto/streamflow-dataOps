@@ -28,7 +28,7 @@ import time  # noqa: F401 - unused here; see comment below
 from django.core.management.base import BaseCommand
 from django.db import connection  # noqa: F401 - unused here; see comment below
 
-from apps.streamflow.management.audit_runner import run_audit
+from apps.streamflow.management.audit_runner import ABS_TOLERANCE_CFS, run_audit
 from apps.streamflow.management.gage_lists import resolve_gages
 from src.acquisition.usgs_waterdata_client import USGSWaterDataClient
 
@@ -54,6 +54,23 @@ class Command(BaseCommand):
             "--sleep", type=float, default=1.0,
             help="Seconds between gages. Default 1.0.",
         )
+        parser.add_argument(
+            "--max-tail-staleness-days", type=int, default=7,
+            help=(
+                "A gage whose latest API date is more than this many days "
+                "past its last stored date fails the all-clear gate (tail "
+                "staleness - the source is publishing data we don't have). "
+                "Default 7, which absorbs normal publication lag."
+            ),
+        )
+        parser.add_argument(
+            "--allow-stale-tail", action="store_true",
+            help=(
+                "Suppress only the tail-staleness part of the all-clear "
+                "gate. In-span missing days and value differences still "
+                "raise regardless of this flag."
+            ),
+        )
 
     def handle(self, *args, **options):
         gages = resolve_gages(options)
@@ -70,6 +87,7 @@ class Command(BaseCommand):
             unit="cfs",
             id_field="usgs_id",
             api_label="USGS API",
+            abs_tolerance=ABS_TOLERANCE_CFS,
             options=options,
         )
 

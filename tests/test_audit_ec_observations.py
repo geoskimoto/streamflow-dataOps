@@ -158,6 +158,118 @@ def test_value_difference_inside_tolerance_is_not_counted(station):
     assert "diff=0" in out.getvalue()
 
 
+def test_low_flow_abs_tolerance_floor_is_the_cms_equivalent_of_cfs(station):
+    """Fix round 1, Important 1: ABS_TOLERANCE_CMS (0.0142) is the 0.5 cfs
+    floor converted to cms, not the raw 0.5 cfs figure reused unchanged - a
+    flat 0.5 cms floor would be ~35x more permissive on a small EC stream.
+    At a source value of 2.0 cms, the relative threshold (0.5% = 0.01) is
+    smaller than the 0.0142 floor, so the floor governs: a 0.01 cms
+    difference must not count, but a 0.5 cms difference must."""
+    _row(station, 15, 2.01)
+    with patch(PATCH_TARGET, return_value=[_api_row(15, 2.0)]):
+        out = StringIO()
+        call_command("audit_ec_observations", "--stations", "08MF005", stdout=out)
+
+    assert "diff=0" in out.getvalue()
+
+
+def test_low_flow_abs_tolerance_floor_catches_a_real_difference(station):
+    """Companion to the test above: at the same low flow, a 0.5 cms
+    difference exceeds the 0.0142 cms floor and must count - proving the
+    floor is tight enough to catch real corruption, not just loose enough
+    to avoid false positives."""
+    _row(station, 15, 2.5)
+    with patch(PATCH_TARGET, return_value=[_api_row(15, 2.0)]), not_all_clear():
+        out = StringIO()
+        call_command("audit_ec_observations", "--stations", "08MF005", stdout=out)
+
+    assert "diff=1" in out.getvalue()
+
+
+def test_tail_staleness_beyond_threshold_is_counted_excluded_and_raises(
+    station, tmp_path
+):
+    """Fix round 1, Important 2: a station whose tail (latest source date
+    minus last stored date) exceeds --max-tail-staleness-days (default 7)
+    must be counted as stale_tail, excluded from SUCCESS styling, and must
+    raise - even though n_missing_in_db_span and n_value_diff are both
+    zero, mirroring the exact "ok-but-not-clean" shape of the earlier
+    all_ok bug this is modelled on."""
+    _row(station, 1, 900.0)
+    api_rows = [_api_row(1, 900.0), _api_row(20, 950.0)]  # 19 days later
+    report = tmp_path / "audit.csv"
+    out = StringIO()
+
+    with patch(PATCH_TARGET, return_value=api_rows), not_all_clear():
+        call_command(
+            "audit_ec_observations",
+            "--stations", "08MF005",
+            "--report", str(report),
+            stdout=out,
+            force_color=True,
+        )
+
+    assert "\x1b[32;1m" not in out.getvalue()  # SUCCESS green must not appear
+    rows = list(csv.DictReader(report.read_text().splitlines()))
+    assert rows[0]["n_missing_in_db_span"] == "0"
+    assert rows[0]["n_value_diff"] == "0"
+    assert int(rows[0]["tail_staleness_days"]) == 19
+    assert "1 stale_tail" in out.getvalue()
+
+
+def test_tail_staleness_within_threshold_does_not_raise(station, tmp_path):
+    """A 4-day tail is ordinary publication lag, well inside the 7-day
+    default, and must not be flagged or raise."""
+    _row(station, 1, 900.0)
+    api_rows = [_api_row(1, 900.0), _api_row(5, 905.0)]  # 4 days later
+    report = tmp_path / "audit.csv"
+    out = StringIO()
+
+    with patch(PATCH_TARGET, return_value=api_rows):
+        call_command(
+            "audit_ec_observations",
+            "--stations", "08MF005",
+            "--report", str(report),
+            stdout=out,
+        )
+
+    rows = list(csv.DictReader(report.read_text().splitlines()))
+    assert int(rows[0]["tail_staleness_days"]) == 4
+    assert "0 stale_tail" in out.getvalue()
+
+
+def test_allow_stale_tail_suppresses_only_the_tail_gate(station, tmp_path):
+    """--allow-stale-tail must suppress the tail-staleness gate but must
+    not suppress the in-span-missing gate: a run with both a 13-day stale
+    tail and an in-span gap must still raise, on the in-span gap alone."""
+    _row(station, 10, 900.0)
+    _row(station, 12, 905.0)
+    api_rows = [
+        _api_row(10, 900.0),
+        _api_row(11, 902.0),  # in-span gap
+        _api_row(12, 905.0),
+        _api_row(25, 950.0),  # 13-day stale tail past day 12
+    ]
+    report = tmp_path / "audit.csv"
+    out = StringIO()
+
+    with patch(PATCH_TARGET, return_value=api_rows), not_all_clear():
+        call_command(
+            "audit_ec_observations",
+            "--stations", "08MF005",
+            "--allow-stale-tail",
+            "--report", str(report),
+            stdout=out,
+        )
+
+    rows = list(csv.DictReader(report.read_text().splitlines()))
+    assert rows[0]["n_missing_in_db_span"] == "1"
+    assert int(rows[0]["tail_staleness_days"]) == 13
+    # The tail is real (13 > 7) and reported, but --allow-stale-tail means
+    # it must not be what's gating the run - the in-span gap already does.
+    assert "1 stale_tail (allowed)" in out.getvalue()
+
+
 def test_cfs_unit_row_is_excluded_by_the_unit_filter(station, tmp_path):
     """The unit="cms" filter is load-bearing - a cfs row compared against a
     cms API value would read as a false value difference and corrupt the

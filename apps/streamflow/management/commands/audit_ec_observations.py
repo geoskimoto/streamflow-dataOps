@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 
 from django.core.management.base import BaseCommand
 
-from apps.streamflow.management.audit_runner import run_audit
+from apps.streamflow.management.audit_runner import ABS_TOLERANCE_CMS, run_audit
 from apps.streamflow.management.gage_lists import resolve_gages
 from src.acquisition.canada_client import CanadaClient
 
@@ -62,6 +62,23 @@ class Command(BaseCommand):
             "--sleep", type=float, default=1.0,
             help="Seconds between stations. Default 1.0.",
         )
+        parser.add_argument(
+            "--max-tail-staleness-days", type=int, default=7,
+            help=(
+                "A station whose latest API date is more than this many "
+                "days past its last stored date fails the all-clear gate "
+                "(tail staleness - the source is publishing data we don't "
+                "have). Default 7, which absorbs normal publication lag."
+            ),
+        )
+        parser.add_argument(
+            "--allow-stale-tail", action="store_true",
+            help=(
+                "Suppress only the tail-staleness part of the all-clear "
+                "gate. In-span missing days and value differences still "
+                "raise regardless of this flag."
+            ),
+        )
 
     def handle(self, *args, **options):
         # resolve_gages() reads 'gages'/'gage_list_csv'/'all_ec' - map this
@@ -94,6 +111,7 @@ class Command(BaseCommand):
             unit="cms",
             id_field="station_number",
             api_label="EC API",
+            abs_tolerance=ABS_TOLERANCE_CMS,
             options=options,
         )
 
