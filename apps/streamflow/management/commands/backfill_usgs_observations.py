@@ -64,7 +64,13 @@ class Command(BaseCommand):
             "--start",
             help="Inclusive start date YYYY-MM-DD. Omit for the full record.",
         )
-        parser.add_argument("--end", help="Inclusive end date YYYY-MM-DD.")
+        parser.add_argument(
+            "--end",
+            help=(
+                "Inclusive end date YYYY-MM-DD. Requires --start: the client "
+                "ignores an end date on its own."
+            ),
+        )
         parser.add_argument(
             "--dry-run",
             action="store_true",
@@ -118,6 +124,16 @@ class Command(BaseCommand):
 
         start = self._parse_date(options.get("start"))
         end = self._parse_date(options.get("end"))
+        if end and not start:
+            # The client ignores end_date unless start_date is set, so an
+            # operator scoping a run to old dates with --end alone would
+            # instead get a full-record overwrite up to today.
+            raise CommandError(
+                "--end requires --start; the USGS Water Data client ignores "
+                "an end date on its own, so this would silently re-fetch and "
+                "overwrite the entire record instead of the range you asked "
+                "for."
+            )
         if start and end and start > end:
             raise CommandError(
                 f"--start {options['start']} is after --end {options['end']}"

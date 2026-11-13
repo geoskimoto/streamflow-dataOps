@@ -36,13 +36,26 @@ A per-gage "no data" condition has two distinct causes, reported separately:
 returned nothing for this station). Only `type="daily_mean", unit="cfs"` rows
 are read from the DB - the API returns ft^3/s, so a non-cfs row is not a
 valid comparison and would otherwise show up as a spurious value difference.
+
+Exit status: the command raises CommandError (nonzero exit) unless the run is
+all-clear - at least one gage, every gage status "ok", zero in-span missing
+days, and zero value differences. Status "ok" only means the comparison ran,
+so a status-only check printed a green SUCCESS summary over a restoration
+that left thousands of missing days behind. The --report file is always
+written before the raise, so a wrapper script can gate on the exit code and
+still read the report.
+
+`n_db` is a distinct-date count. `n_db_rows` is the raw row count; when it
+exceeds `n_db` the gage has duplicate daily_mean rows (non-midnight
+timestamps) and a WARNING line names the excess. That does not fail the gage
+- it is a different class of problem from missing or stale days.
 """
 
 import csv
 import time
 from pathlib import Path
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 
 from apps.streamflow.management.gage_lists import resolve_gages
@@ -99,14 +112,32 @@ class Command(BaseCommand):
                     # Only cfs rows are comparable to the API, which returns
                     # ft^3/s; a non-cfs daily_mean row would otherwise be
                     # flagged as a spurious value difference.
+                    db_rows = list(
+                        DischargeObservation.objects.filter(
+                            station=station, type="daily_mean", unit="cfs"
+                        ).values_list("observed_at", "discharge")
+                    )
                     db_by_date = {
                         observed_at.date(): float(discharge)
-                        for observed_at, discharge in (
-                            DischargeObservation.objects.filter(
-                                station=station, type="daily_mean", unit="cfs"
-                            ).values_list("observed_at", "discharge")
-                        )
+                        for observed_at, discharge in db_rows
                     }
+                    # Keying on date collapses duplicates, so the distinct-
+                    # date count alone is blind to duplicate rows stored at a
+                    # non-midnight time - exactly the corruption the
+                    # midnight-UTC invariant exists to prevent. Report the raw
+                    # row count alongside it. This does not fail the gage; it
+                    # is a separate class of problem from missing/stale days.
+                    n_db_rows = len(db_rows)
+                    if n_db_rows > len(db_by_date):
+                        self.stdout.write(
+                            self.style.WARNING(
+                                f"[{index}/{len(gages)}] {gage}: "
+                                f"{n_db_rows - len(db_by_date)} duplicate "
+                                f"daily_mean row(s) beyond "
+                                f"{len(db_by_date)} distinct dates - "
+                                f"non-midnight timestamps suspected"
+                            )
+                        )
 
                     if not db_by_date:
                         self.stdout.write(
@@ -161,6 +192,7 @@ class Command(BaseCommand):
                         "usgs_id": gage,
                         "status": "ok",
                         "n_db": len(db_by_date),
+                        "n_db_rows": n_db_rows,
                         "n_api_in_span": len(in_span),
                         "n_missing": len(missing),
                         "n_missing_in_db_span": len(missing_in_db_span),
@@ -200,7 +232,17 @@ class Command(BaseCommand):
                 self._write_report(options["report"], rows)
 
         counts = self._status_counts(rows)
-        all_ok = len(rows) > 0 and counts["ok"] == len(rows)
+        # "All clear" means every gage compared cleanly AND nothing was
+        # actually wrong. Status "ok" only means the comparison ran: a gage
+        # with 5,000 missing days and 3,000 value differences is still "ok",
+        # so counting statuses alone printed a green SUCCESS summary over a
+        # completely failed restoration.
+        all_ok = (
+            len(rows) > 0
+            and counts["ok"] == len(rows)
+            and total_missing_in_span == 0
+            and total_diff == 0
+        )
         summary = (
             f"Audited {len(rows)} gages: {counts['ok']} ok, "
             f"{counts['failed']} failed, {counts['no_db_data']} no_db_data, "
@@ -212,6 +254,12 @@ class Command(BaseCommand):
         )
         style = self.style.SUCCESS if all_ok else self.style.WARNING
         self.stdout.write(style(summary))
+
+        if not all_ok:
+            # Exit nonzero so a wrapper script can gate on the audit instead
+            # of grepping stdout. The report (written in the finally above)
+            # is already on disk by the time this raises.
+            raise CommandError(f"Audit not all-clear. {summary}")
 
     # Gage-list parsing is shared with backfill_usgs_observations; see
     # apps/streamflow/management/gage_lists.py.
@@ -239,7 +287,7 @@ class Command(BaseCommand):
 
     def _write_report(self, path, rows):
         fields = [
-            "usgs_id", "status", "n_db", "n_api_in_span", "n_missing",
+            "usgs_id", "status", "n_db", "n_db_rows", "n_api_in_span", "n_missing",
             "n_missing_in_db_span", "n_missing_after_db_last", "n_value_diff",
             "db_max", "api_max", "first_missing",
         ]

@@ -8,8 +8,19 @@ from unittest.mock import patch
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 
 from apps.streamflow.models import DischargeObservation, Station
+
+
+def not_all_clear():
+    """B4: the command exits nonzero unless the run is genuinely clean.
+
+    Every test below whose scenario has a failure, a skip, a missing in-span
+    day, or a value difference wraps its call in this, so the nonzero exit is
+    asserted everywhere it is expected rather than only in one place.
+    """
+    return pytest.raises(CommandError, match="not all-clear")
 
 API_ROWS = [
     {
@@ -75,7 +86,7 @@ def test_reports_value_differences(station):
     _row(station, 15, 94100.0)
     _row(station, 16, 95000.0)
     out = StringIO()
-    with patch(PATCH_TARGET, return_value=API_ROWS):
+    with patch(PATCH_TARGET, return_value=API_ROWS), not_all_clear():
         call_command("audit_usgs_observations", "--gages", "12200500", stdout=out)
 
     assert "missing=0" in out.getvalue()
@@ -139,7 +150,7 @@ def test_fetch_failure_does_not_abort_remaining_gages(station):
         PATCH_TARGET, side_effect=[RuntimeError("boom"), API_ROWS]
     ), patch(
         "apps.streamflow.management.commands.audit_usgs_observations.connection.close"
-    ):
+    ), not_all_clear():
         call_command(
             "audit_usgs_observations",
             "--gages", "12200500,99999999",
@@ -168,7 +179,7 @@ def test_sleep_fires_on_failure_and_skip_paths(station):
         "apps.streamflow.management.commands.audit_usgs_observations.connection.close"
     ), patch(
         "apps.streamflow.management.commands.audit_usgs_observations.time.sleep"
-    ) as mock_sleep:
+    ) as mock_sleep, not_all_clear():
         call_command(
             "audit_usgs_observations",
             "--gages", f"12200500,{unknown_gage}",
@@ -215,7 +226,7 @@ def test_all_gages_failed_summary_is_not_success_styled(station):
     out = StringIO()
     with patch(PATCH_TARGET, side_effect=RuntimeError("boom")), patch(
         "apps.streamflow.management.commands.audit_usgs_observations.connection.close"
-    ):
+    ), not_all_clear():
         call_command(
             "audit_usgs_observations",
             "--gages", "12200500",
@@ -251,7 +262,7 @@ def test_mixed_outcome_summary_counts(station):
     out = StringIO()
     with patch(PATCH_TARGET, side_effect=side_effect), patch(
         "apps.streamflow.management.commands.audit_usgs_observations.connection.close"
-    ):
+    ), not_all_clear():
         call_command(
             "audit_usgs_observations",
             "--gages", "12200500,11111111,22222222,33333333",
@@ -272,7 +283,7 @@ def test_no_db_data_is_reported_per_gage(station, tmp_path):
     the report must label the cause distinctly as no_db_data."""
     report = tmp_path / "audit.csv"
     out = StringIO()
-    with patch(PATCH_TARGET, return_value=API_ROWS):
+    with patch(PATCH_TARGET, return_value=API_ROWS), not_all_clear():
         call_command(
             "audit_usgs_observations",
             "--gages", "12200500",
@@ -291,7 +302,7 @@ def test_no_api_data_is_reported_per_gage(station, tmp_path):
     _row(station, 15, 94100.0)
     report = tmp_path / "audit.csv"
     out = StringIO()
-    with patch(PATCH_TARGET, return_value=[]):
+    with patch(PATCH_TARGET, return_value=[]), not_all_clear():
         call_command(
             "audit_usgs_observations",
             "--gages", "12200500",
@@ -308,12 +319,13 @@ def test_not_in_db_gage_csv_contents(db, tmp_path):
     """Untested branch (c): a not_in_db gage's CSV row carries only usgs_id
     and status - no stale numeric fields from a comparison that never ran."""
     report = tmp_path / "audit.csv"
-    call_command(
-        "audit_usgs_observations",
-        "--gages", "00000000",
-        "--report", str(report),
-        stdout=StringIO(),
-    )
+    with not_all_clear():
+        call_command(
+            "audit_usgs_observations",
+            "--gages", "00000000",
+            "--report", str(report),
+            stdout=StringIO(),
+        )
 
     rows = list(csv.DictReader(report.read_text().splitlines()))
     assert len(rows) == 1
@@ -335,7 +347,7 @@ def test_missing_days_split_into_in_span_and_after_last(station, tmp_path):
         _api_row(14, 100.0),  # gap after the db's last row (12)
     ]
     report = tmp_path / "audit.csv"
-    with patch(PATCH_TARGET, return_value=api_rows):
+    with patch(PATCH_TARGET, return_value=api_rows), not_all_clear():
         call_command(
             "audit_usgs_observations",
             "--gages", "12200500",
@@ -393,7 +405,7 @@ def test_tolerance_abs_floor_low_flow_counted(station):
     """Untested branch (b): a 0.6 cfs difference at the same low flow must
     count, since it exceeds the 0.5 cfs absolute floor."""
     _row(station, 15, 2.6)
-    with patch(PATCH_TARGET, return_value=[_api_row(15, 2.0)]):
+    with patch(PATCH_TARGET, return_value=[_api_row(15, 2.0)]), not_all_clear():
         out = StringIO()
         call_command("audit_usgs_observations", "--gages", "12200500", stdout=out)
 
@@ -415,7 +427,7 @@ def test_tolerance_relative_threshold_high_flow_just_over_counted(station):
     """Untested branch (b): a 501 cfs difference at the same high flow must
     count, since it exceeds the 500 cfs relative threshold."""
     _row(station, 15, 100000.0 - 501.0)
-    with patch(PATCH_TARGET, return_value=[_api_row(15, 100000.0)]):
+    with patch(PATCH_TARGET, return_value=[_api_row(15, 100000.0)]), not_all_clear():
         out = StringIO()
         call_command("audit_usgs_observations", "--gages", "12200500", stdout=out)
 
@@ -442,3 +454,154 @@ def test_report_written_when_loop_raises(station, tmp_path):
 
     text = report.read_text()
     assert "usgs_id" in text
+
+
+# -- Fix round 2 (final whole-branch review) ---------------------------------
+
+
+def test_zero_discrepancy_run_is_success_styled_and_does_not_raise(station):
+    """B4: `all_ok` was `counts["ok"] == len(rows)`, so a gage with 5,000
+    missing days and 3,000 value differences still printed a green SUCCESS
+    summary. Only a genuinely clean run may be SUCCESS-styled - and it must
+    not raise."""
+    _row(station, 15, 94100.0)
+    _row(station, 16, 119000.0)
+    out = StringIO()
+    with patch(PATCH_TARGET, return_value=API_ROWS):
+        call_command(
+            "audit_usgs_observations",
+            "--gages", "12200500",
+            stdout=out,
+            force_color=True,
+        )
+
+    output = out.getvalue()
+    assert "\x1b[32;1m" in output  # SUCCESS green
+    assert "\x1b[33;1m" not in output
+
+
+def test_in_span_missing_days_are_not_success_styled_and_raise(station, tmp_path):
+    """B4: an in-span gap is a failed restoration, not a clean audit."""
+    _row(station, 14, 90000.0)
+    _row(station, 16, 119000.0)
+    report = tmp_path / "audit.csv"
+    out = StringIO()
+    api_rows = [_api_row(14, 90000.0), _api_row(15, 94100.0), _api_row(16, 119000.0)]
+
+    with patch(PATCH_TARGET, return_value=api_rows), not_all_clear():
+        call_command(
+            "audit_usgs_observations",
+            "--gages", "12200500",
+            "--report", str(report),
+            stdout=out,
+            force_color=True,
+        )
+
+    output = out.getvalue()
+    assert "\x1b[32;1m" not in output  # never SUCCESS green
+    # The report is written inside the finally, before the raise, so a
+    # wrapper script can gate on the exit code and still read the report.
+    rows = list(csv.DictReader(report.read_text().splitlines()))
+    assert rows[0]["n_missing_in_db_span"] == "1"
+
+
+def test_value_differences_alone_raise(station, tmp_path):
+    """B4: zero missing days but stale values is still a failed
+    restoration."""
+    _row(station, 15, 94100.0)
+    _row(station, 16, 95000.0)  # stale: API says 119000
+    report = tmp_path / "audit.csv"
+
+    with patch(PATCH_TARGET, return_value=API_ROWS), not_all_clear():
+        call_command(
+            "audit_usgs_observations",
+            "--gages", "12200500",
+            "--report", str(report),
+            stdout=StringIO(),
+        )
+
+    rows = list(csv.DictReader(report.read_text().splitlines()))
+    assert rows[0]["n_missing_in_db_span"] == "0"
+    assert rows[0]["n_value_diff"] == "1"
+
+
+def test_duplicate_non_midnight_rows_are_reported(station, tmp_path):
+    """N3: db_by_date is keyed on date, so duplicate rows at a non-midnight
+    time collapse and the audit would report clean - blind to the exact
+    corruption the midnight-UTC invariant exists to prevent. n_db_rows must
+    exceed n_db and a WARNING must name the excess. It does not fail the
+    gage, so the raise here comes from the extra API day, not the
+    duplicate."""
+    _row(station, 15, 94100.0)
+    DischargeObservation.objects.create(
+        station=station,
+        observed_at=datetime(2021, 11, 15, 12, 30, tzinfo=timezone.utc),
+        discharge=Decimal("94100.0"),
+        unit="cfs",
+        type="daily_mean",
+        quality_code="A",
+    )
+    report = tmp_path / "audit.csv"
+    out = StringIO()
+    with patch(PATCH_TARGET, return_value=[_api_row(15, 94100.0)]):
+        call_command(
+            "audit_usgs_observations",
+            "--gages", "12200500",
+            "--report", str(report),
+            stdout=out,
+        )
+
+    rows = list(csv.DictReader(report.read_text().splitlines()))
+    assert rows[0]["n_db"] == "1"
+    assert rows[0]["n_db_rows"] == "2"
+    assert int(rows[0]["n_db_rows"]) > int(rows[0]["n_db"])
+    assert "duplicate" in out.getvalue()
+    assert "12200500" in out.getvalue()
+
+
+def test_non_cfs_row_is_not_counted_as_a_value_difference(station, tmp_path):
+    """T8: the unit="cfs" filter is load-bearing - a cms row compared against
+    a cfs API value reads as a false value difference and corrupts the
+    verdict. Every other fixture in this file hardcodes unit="cfs", so
+    deleting the filter would otherwise go undetected.
+
+    The cms row sits on day 15, between two cfs rows, so it is inside the
+    comparison span. unique_observation_idx is (station, observed_at, type),
+    so a cfs and a cms row cannot share a date - day 15 has only the cms
+    row. With the filter, day 15 is simply absent from the DB side and shows
+    up as one in-span missing day; without it, day 15 would compare 2,665
+    (cms) against 94,100 (cfs) and read as a value difference instead.
+    """
+    _row(station, 14, 90000.0)
+    _row(station, 16, 119000.0)
+    DischargeObservation.objects.create(
+        station=station,
+        observed_at=datetime(2021, 11, 15, tzinfo=timezone.utc),
+        discharge=Decimal("2665.0"),  # 94,100 cfs expressed in cms
+        unit="cms",
+        type="daily_mean",
+        quality_code="A",
+    )
+
+    report = tmp_path / "audit.csv"
+    out = StringIO()
+    api_rows = [
+        _api_row(14, 90000.0),
+        _api_row(15, 94100.0),
+        _api_row(16, 119000.0),
+    ]
+    with patch(PATCH_TARGET, return_value=api_rows), not_all_clear():
+        call_command(
+            "audit_usgs_observations",
+            "--gages", "12200500",
+            "--report", str(report),
+            stdout=out,
+        )
+
+    rows = list(csv.DictReader(report.read_text().splitlines()))
+    assert rows[0]["n_value_diff"] == "0", "a cms row must never be compared"
+    assert rows[0]["n_missing_in_db_span"] == "1"
+    # The cms row must also not inflate the raw row count or trip the N3
+    # duplicate warning - it is filtered out before either is computed.
+    assert rows[0]["n_db_rows"] == "2"
+    assert "duplicate" not in out.getvalue()

@@ -388,6 +388,35 @@ def test_parse_date_malformed_raises():
         Command._parse_date("11/16/2021")
 
 
+def test_end_without_start_raises(station):
+    """N2: --end alone was accepted but ignored by the client, so an
+    operator scoping a run to old dates would get a full-record overwrite up
+    to today instead."""
+    with pytest.raises(CommandError, match="--end requires --start"):
+        call_command(
+            "backfill_usgs_observations",
+            "--gages", "12200500",
+            "--end", "2021-11-20",
+            stdout=StringIO(),
+        )
+
+
+def test_start_without_end_is_allowed(station):
+    with patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations."
+        "USGSWaterDataClient.get_daily_mean",
+        return_value=CREST,
+    ):
+        call_command(
+            "backfill_usgs_observations",
+            "--gages", "12200500",
+            "--start", "2021-11-01",
+            stdout=StringIO(),
+        )
+
+    assert DischargeObservation.objects.filter(station=station).count() == 2
+
+
 def test_start_after_end_raises(station):
     with pytest.raises(CommandError, match="--start"):
         call_command(
