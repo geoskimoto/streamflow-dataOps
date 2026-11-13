@@ -17,6 +17,13 @@ from apps.streamflow.models import Station, DischargeObservation, ForecastRun, M
 
 logger = logging.getLogger(__name__)
 
+# Discharge values beyond this many standard deviations of the batch mean are
+# logged for review but never dropped. Streamflow is heavy-tailed, so real
+# flood peaks exceed any fixed z-score. A previous version dropped them, which
+# removed flood peaks at 271 of 285 audited gages — see
+# docs/superpowers/plans/2026-11-13-usgs-observation-ingest-remediation.md
+OUTLIER_LOG_Z_SCORE = 5.0
+
 
 class DataProcessor:
     """Process, validate, and store raw data before database insertion."""
@@ -167,29 +174,26 @@ class DataProcessor:
 
             basic_valid.append(obs)
         
-        # Second pass: statistical outlier detection
-        if len(basic_valid) > 3:  # Need at least 4 points for meaningful stats
-            discharges = [float(obs["discharge"]) for obs in basic_valid]
+        # Second pass: flag statistical outliers for review. Never drop them.
+        valid_observations = basic_valid
+
+        if len(valid_observations) > 3:
+            discharges = [float(obs["discharge"]) for obs in valid_observations]
             mean = sum(discharges) / len(discharges)
             variance = sum((x - mean) ** 2 for x in discharges) / len(discharges)
             std_dev = variance ** 0.5
-            
-            if std_dev > 0:  # Avoid division by zero
-                for obs in basic_valid:
+
+            if std_dev > 0:
+                for obs in valid_observations:
                     z_score = abs((float(obs["discharge"]) - mean) / std_dev)
-                    if z_score > 5:  # More than 5 standard deviations
-                        self.logger.warning(
-                            f"Statistical outlier detected: discharge={obs['discharge']}, "
-                            f"z_score={z_score:.2f}"
+                    if z_score > OUTLIER_LOG_Z_SCORE:
+                        self.logger.info(
+                            "High-z discharge retained: discharge=%s z_score=%.2f "
+                            "observed_at=%s",
+                            obs["discharge"],
+                            z_score,
+                            obs["observed_at"],
                         )
-                        continue
-                    valid_observations.append(obs)
-            else:
-                # All values are the same, accept them
-                valid_observations = basic_valid
-        else:
-            # Not enough data for outlier detection
-            valid_observations = basic_valid
 
         removed_count = len(observations) - len(valid_observations)
         if removed_count > 0:
