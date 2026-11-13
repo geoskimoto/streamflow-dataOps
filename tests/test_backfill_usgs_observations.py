@@ -3,11 +3,14 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 
+from apps.streamflow.management.commands.backfill_usgs_observations import Command
 from apps.streamflow.models import DischargeObservation, Station
 
 
@@ -16,6 +19,16 @@ def station(db):
     return Station.objects.create(
         station_number="12200500",
         name="SKAGIT RIVER NEAR MOUNT VERNON, WA",
+        agency="USGS",
+        is_active=True,
+    )
+
+
+@pytest.fixture
+def other_station(db):
+    return Station.objects.create(
+        station_number="13317000",
+        name="WHITE RIVER NEAR BUCKLEY, WA",
         agency="USGS",
         is_active=True,
     )
@@ -111,6 +124,7 @@ def test_unknown_gage_is_reported_and_does_not_abort_the_run(station):
         call_command(
             "backfill_usgs_observations",
             "--gages", "99999999,12200500",
+            "--sleep", "0",
             stdout=out,
         )
 
@@ -118,24 +132,165 @@ def test_unknown_gage_is_reported_and_does_not_abort_the_run(station):
     assert DischargeObservation.objects.filter(station=station).count() == 2
 
 
-def test_fetch_failure_does_not_abort_remaining_gages(station):
+def test_fetch_failure_does_not_abort_remaining_gages(station, other_station):
+    """A fetch failure on one gage must not prevent a later gage's rows
+    from landing — a single-gage run can't distinguish "continued" from
+    "there was nothing after it to abort"."""
     out = StringIO()
     with patch(
         "apps.streamflow.management.commands.backfill_usgs_observations."
         "USGSWaterDataClient.get_daily_mean",
-        side_effect=RuntimeError("boom"),
+        side_effect=[RuntimeError("boom"), CREST],
+    ):
+        call_command(
+            "backfill_usgs_observations",
+            "--gages", f"{station.station_number},{other_station.station_number}",
+            "--sleep", "0",
+            stdout=out,
+        )
+
+    assert "boom" in out.getvalue()
+    assert DischargeObservation.objects.filter(station=other_station).count() == 2
+
+
+def test_process_observations_failure_does_not_abort_remaining_gages(
+    station, other_station
+):
+    """A DB error raised from process_observations (e.g. a dropped
+    connection) on one gage must not abort the remaining gages."""
+    out = StringIO()
+    with patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations."
+        "USGSWaterDataClient.get_daily_mean",
+        return_value=CREST,
+    ), patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations."
+        "DataProcessor.process_observations",
+        side_effect=[RuntimeError("db boom"), 2],
+    ):
+        call_command(
+            "backfill_usgs_observations",
+            "--gages", f"{station.station_number},{other_station.station_number}",
+            "--sleep", "0",
+            stdout=out,
+        )
+
+    assert "db boom" in out.getvalue()
+    assert f"{other_station.station_number}: fetched 2, wrote 2" in out.getvalue()
+    assert "Done. 2 gages processed, 1 failed." in out.getvalue()
+
+
+def test_requires_a_gage_selection(db):
+    with pytest.raises(CommandError):
+        call_command("backfill_usgs_observations", stdout=StringIO())
+
+
+def test_report_written_even_on_crash_or_interrupt(station, other_station, tmp_path):
+    """The report must reflect whatever completed before an interrupt, not
+    just a clean end-of-loop exit — it's the only resume state a multi-hour
+    unattended run has."""
+    report_path = tmp_path / "report.csv"
+    with patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations."
+        "USGSWaterDataClient.get_daily_mean",
+        return_value=CREST,
+    ), patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations.time.sleep",
+        side_effect=KeyboardInterrupt,
+    ):
+        with pytest.raises(KeyboardInterrupt):
+            call_command(
+                "backfill_usgs_observations",
+                "--gages",
+                f"{station.station_number},{other_station.station_number}",
+                "--report", str(report_path),
+                stdout=StringIO(),
+            )
+
+    assert report_path.exists()
+    content = report_path.read_text()
+    assert station.station_number in content
+    # The interrupt fired in the pacing sleep after gage 1 completed and
+    # before gage 2 was attempted.
+    assert other_station.station_number not in content
+
+
+def test_done_sidecar_contains_only_successfully_completed_gages(
+    station, other_station, tmp_path
+):
+    report_path = tmp_path / "report.csv"
+    with patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations."
+        "USGSWaterDataClient.get_daily_mean",
+        side_effect=[RuntimeError("boom"), CREST],
+    ):
+        call_command(
+            "backfill_usgs_observations",
+            "--gages", f"{station.station_number},{other_station.station_number}",
+            "--report", str(report_path),
+            "--sleep", "0",
+            stdout=StringIO(),
+        )
+
+    done_path = Path(f"{report_path}.done.txt")
+    assert done_path.exists()
+    assert done_path.read_text().splitlines() == [other_station.station_number]
+
+
+def test_dry_run_does_not_create_done_sidecar(station, tmp_path):
+    report_path = tmp_path / "report.csv"
+    with patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations."
+        "USGSWaterDataClient.get_daily_mean",
+        return_value=CREST,
+    ):
+        call_command(
+            "backfill_usgs_observations",
+            "--gages", station.station_number,
+            "--report", str(report_path),
+            "--dry-run",
+            stdout=StringIO(),
+        )
+
+    assert not Path(f"{report_path}.done.txt").exists()
+
+
+def test_fetch_with_no_observations_is_reported_as_no_data(station, tmp_path):
+    report_path = tmp_path / "report.csv"
+    with patch(
+        "apps.streamflow.management.commands.backfill_usgs_observations."
+        "USGSWaterDataClient.get_daily_mean",
+        return_value=[],
     ):
         call_command(
             "backfill_usgs_observations",
             "--gages", "12200500",
-            stdout=out,
+            "--report", str(report_path),
+            stdout=StringIO(),
         )
 
-    assert "boom" in out.getvalue() or "failed" in out.getvalue().lower()
+    content = report_path.read_text()
+    assert "no_data" in content
+    assert DischargeObservation.objects.filter(station=station).count() == 0
 
 
-def test_requires_a_gage_selection(db):
-    from django.core.management.base import CommandError
+def test_parse_date_valid():
+    assert Command._parse_date("2021-11-16") == datetime(
+        2021, 11, 16, tzinfo=timezone.utc
+    )
 
-    with pytest.raises(CommandError):
-        call_command("backfill_usgs_observations", stdout=StringIO())
+
+def test_parse_date_malformed_raises():
+    with pytest.raises(CommandError, match="Bad date"):
+        Command._parse_date("11/16/2021")
+
+
+def test_start_after_end_raises(station):
+    with pytest.raises(CommandError, match="--start"):
+        call_command(
+            "backfill_usgs_observations",
+            "--gages", "12200500",
+            "--start", "2021-11-20",
+            "--end", "2021-11-10",
+            stdout=StringIO(),
+        )
