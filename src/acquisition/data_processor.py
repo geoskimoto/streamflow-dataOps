@@ -104,16 +104,21 @@ class DataProcessor:
                 )
             )
         
-        # Use bulk_create with ignore_conflicts to handle duplicates
+        # Upsert on unique_observation_idx (station, observed_at, type). USGS
+        # revises provisional daily values for months, so a re-pulled day must
+        # overwrite the stored value rather than be ignored.
         with transaction.atomic():
-            created = DischargeObservation.objects.bulk_create(
+            written = DischargeObservation.objects.bulk_create(
                 observation_objects,
-                ignore_conflicts=True
+                batch_size=5000,
+                update_conflicts=True,
+                update_fields=["discharge", "quality_code"],
+                unique_fields=["station", "observed_at", "type"],
             )
-            inserted_count = len(created)
+            inserted_count = len(written)
 
         self.logger.info(
-            f"Inserted {inserted_count} of {len(observations)} observations "
+            f"Wrote {inserted_count} of {len(observations)} observations "
             f"for station {station_number}"
         )
         return inserted_count
