@@ -17,6 +17,25 @@ inter-gage pacing sleep fires on every path (success, skip, and failure
 alike), and when --report is given the report is always written on exit -
 including on an exception or Ctrl-C - via try/finally, so a long run's
 progress is not lost.
+
+The comparison deliberately bounds the "missing" count on the lower end only
+(from the earliest stored date) and not on the upper end. A two-sided bound
+would define "complete" as "everything up to whatever we already have",
+which scores a backfill that wrote nothing recent as missing=0 - exactly the
+failure mode this command exists to catch. Because of that, the total
+`n_missing` this command reports is NOT directly comparable to the
+46,701-gage-day pre-backfill baseline, which was produced with two-sided
+bounding. `n_missing_in_db_span` (gaps strictly between the first and last
+stored date) is the figure comparable to that baseline; `n_missing_after_db_last`
+(API dates after the last stored date - tail staleness, e.g. a gage that
+stopped updating) is reported separately so the two are never silently
+summed into a misleadingly large or small total.
+
+A per-gage "no data" condition has two distinct causes, reported separately:
+`no_db_data` (nothing stored for this station) and `no_api_data` (the API
+returned nothing for this station). Only `type="daily_mean", unit="cfs"` rows
+are read from the DB - the API returns ft^3/s, so a non-cfs row is not a
+valid comparison and would otherwise show up as a spurious value difference.
 """
 
 import csv
@@ -54,7 +73,7 @@ class Command(BaseCommand):
         gages = resolve_gages(options)
         client = USGSWaterDataClient()
         rows = []
-        total_missing = total_diff = 0
+        total_missing_in_span = total_missing_after_last = total_diff = 0
 
         try:
             for index, gage in enumerate(gages, start=1):
@@ -64,7 +83,9 @@ class Command(BaseCommand):
                     ).first()
                     if station is None:
                         self.stdout.write(
-                            self.style.WARNING(f"{gage}: not in stations table")
+                            self.style.WARNING(
+                                f"[{index}/{len(gages)}] {gage}: not in stations table"
+                            )
                         )
                         rows.append({"usgs_id": gage, "status": "not_in_db"})
                         continue
@@ -75,30 +96,55 @@ class Command(BaseCommand):
                         o["observed_at"].date(): float(o["discharge"])
                         for o in api_rows
                     }
+                    # Only cfs rows are comparable to the API, which returns
+                    # ft^3/s; a non-cfs daily_mean row would otherwise be
+                    # flagged as a spurious value difference.
                     db_by_date = {
                         observed_at.date(): float(discharge)
                         for observed_at, discharge in (
                             DischargeObservation.objects.filter(
-                                station=station, type="daily_mean"
+                                station=station, type="daily_mean", unit="cfs"
                             ).values_list("observed_at", "discharge")
                         )
                     }
 
-                    if not db_by_date or not api_by_date:
-                        rows.append({"usgs_id": gage, "status": "no_data"})
+                    if not db_by_date:
+                        self.stdout.write(
+                            self.style.WARNING(
+                                f"[{index}/{len(gages)}] {gage}: no stored "
+                                f"cfs daily-mean observations"
+                            )
+                        )
+                        rows.append({"usgs_id": gage, "status": "no_db_data"})
+                        continue
+                    if not api_by_date:
+                        self.stdout.write(
+                            self.style.WARNING(
+                                f"[{index}/{len(gages)}] {gage}: USGS API "
+                                f"returned no data"
+                            )
+                        )
+                        rows.append({"usgs_id": gage, "status": "no_api_data"})
                         continue
 
                     # Only judge from the earliest date the DB actually
                     # covers, as the original audit did - otherwise every
                     # day before the first stored row is reported as
-                    # "missing". Deliberately unbounded on the upper end:
-                    # the whole point of the audit is to catch the DB
-                    # falling behind the API's latest days, which a
-                    # max(db_by_date) ceiling would hide.
-                    lo = min(db_by_date)
+                    # "missing". Deliberately unbounded on the upper end for
+                    # the total: a two-sided bound would define "complete"
+                    # as "everything up to whatever we already have", hiding
+                    # a backfill that wrote nothing recent. The split below
+                    # keeps that tail staleness visible without conflating
+                    # it with the in-span gaps the original audit measured.
+                    lo, hi = min(db_by_date), max(db_by_date)
                     in_span = {d: v for d, v in api_by_date.items() if d >= lo}
 
-                    missing = sorted(d for d in in_span if d not in db_by_date)
+                    missing_in_db_span = sorted(
+                        d for d in in_span if d <= hi and d not in db_by_date
+                    )
+                    missing_after_db_last = sorted(d for d in in_span if d > hi)
+                    missing = missing_in_db_span + missing_after_db_last
+
                     diffs = [
                         d
                         for d, api_value in in_span.items()
@@ -107,7 +153,8 @@ class Command(BaseCommand):
                         > max(ABS_TOLERANCE_CFS, REL_TOLERANCE * api_value)
                     ]
 
-                    total_missing += len(missing)
+                    total_missing_in_span += len(missing_in_db_span)
+                    total_missing_after_last += len(missing_after_db_last)
                     total_diff += len(diffs)
 
                     record = {
@@ -116,6 +163,8 @@ class Command(BaseCommand):
                         "n_db": len(db_by_date),
                         "n_api_in_span": len(in_span),
                         "n_missing": len(missing),
+                        "n_missing_in_db_span": len(missing_in_db_span),
+                        "n_missing_after_db_last": len(missing_after_db_last),
                         "n_value_diff": len(diffs),
                         "db_max": max(db_by_date.values()),
                         "api_max": max(api_by_date.values()),
@@ -124,6 +173,8 @@ class Command(BaseCommand):
                     rows.append(record)
                     self.stdout.write(
                         f"[{index}/{len(gages)}] {gage}: missing={len(missing)} "
+                        f"(in_span={len(missing_in_db_span)} "
+                        f"after_last={len(missing_after_db_last)}) "
                         f"diff={len(diffs)} db_max={record['db_max']:.0f} "
                         f"api_max={record['api_max']:.0f}"
                     )
@@ -148,20 +199,49 @@ class Command(BaseCommand):
             if options.get("report"):
                 self._write_report(options["report"], rows)
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Audited {len(rows)} gages: {total_missing} missing days, "
-                f"{total_diff} value differences."
-            )
+        counts = self._status_counts(rows)
+        all_ok = len(rows) > 0 and counts["ok"] == len(rows)
+        summary = (
+            f"Audited {len(rows)} gages: {counts['ok']} ok, "
+            f"{counts['failed']} failed, {counts['no_db_data']} no_db_data, "
+            f"{counts['no_api_data']} no_api_data, "
+            f"{counts['not_in_db']} not_in_db ("
+            f"{total_missing_in_span} missing_in_db_span, "
+            f"{total_missing_after_last} missing_after_db_last, "
+            f"{total_diff} value differences — totals cover 'ok' gages only)."
         )
+        style = self.style.SUCCESS if all_ok else self.style.WARNING
+        self.stdout.write(style(summary))
 
     # Gage-list parsing is shared with backfill_usgs_observations; see
     # apps/streamflow/management/gage_lists.py.
 
+    @staticmethod
+    def _status_counts(rows):
+        """Tally outcomes so the summary can never read as clean success
+        when some gages failed, were skipped, or had no data - a dynamic
+        "failed: {exc}" status string is matched by prefix, mirroring
+        backfill_usgs_observations' own failed-count logic."""
+        counts = {
+            "ok": 0,
+            "failed": 0,
+            "no_db_data": 0,
+            "no_api_data": 0,
+            "not_in_db": 0,
+        }
+        for row in rows:
+            status = str(row.get("status", ""))
+            if status.startswith("failed"):
+                counts["failed"] += 1
+            elif status in counts:
+                counts[status] += 1
+        return counts
+
     def _write_report(self, path, rows):
         fields = [
             "usgs_id", "status", "n_db", "n_api_in_span", "n_missing",
-            "n_value_diff", "db_max", "api_max", "first_missing",
+            "n_missing_in_db_span", "n_missing_after_db_last", "n_value_diff",
+            "db_max", "api_max", "first_missing",
         ]
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)

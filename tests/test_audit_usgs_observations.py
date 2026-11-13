@@ -1,5 +1,6 @@
 """Tests for the observation audit command."""
 
+import csv
 from datetime import datetime, timezone
 from decimal import Decimal
 from io import StringIO
@@ -49,6 +50,16 @@ def _row(station, day, value, quality_code="A"):
         type="daily_mean",
         quality_code=quality_code,
     )
+
+
+def _api_row(day, value):
+    return {
+        "observed_at": datetime(2021, 11, day, tzinfo=timezone.utc),
+        "discharge": value,
+        "unit": "cfs",
+        "type": "daily_mean",
+        "quality_code": "A",
+    }
 
 
 def test_reports_missing_days(station):
@@ -168,6 +179,247 @@ def test_sleep_fires_on_failure_and_skip_paths(station):
     # Two gages, sleep fires between them regardless of outcome.
     assert mock_sleep.call_count == 1
     mock_sleep.assert_called_with(2.5)
+
+
+# -- Fix round 1 -------------------------------------------------------------
+#
+# Review findings on the first pass:
+#   Important 1 - the summary line could print in style.SUCCESS even when
+#       every gage failed, since `rows` includes failed/skipped entries.
+#   Important 2 - the "no data" branch was silent per gage and conflated two
+#       distinct causes (nothing stored vs. API returned nothing).
+#   Design improvement - split "missing" into n_missing_in_db_span (the
+#       figure comparable to the 46,701 pre-backfill baseline, which used a
+#       two-sided bound) and n_missing_after_db_last (tail staleness, which
+#       the lower-bound-only design intentionally surfaces).
+#   Minor 3 - the DB query didn't filter unit="cfs", so a non-cfs daily_mean
+#       row could be compared against a cfs API value.
+#   Untested branches - the bounding rule itself, the tolerance boundaries,
+#       mixed-outcome summaries, and not_in_db CSV contents.
+
+
+def test_all_gages_failed_summary_is_not_success_styled(station):
+    """Important 1: a run where the only gage fails must not print a
+    success-styled clean summary, and must surface the failure count.
+
+    force_color=True is passed so style.SUCCESS/WARNING/ERROR render real
+    ANSI codes we can assert on directly - Django's color_style(force_color
+    =True) renders SUCCESS as '\\x1b[32;1m...\\x1b[0m' (green) and WARNING as
+    '\\x1b[33;1m...\\x1b[0m' (yellow); without force_color, style methods are
+    no-ops under a non-tty stdout and the distinction would be invisible to
+    this test.
+
+    connection.close() is mocked for the same pytest-django atomic-block
+    reason documented on the other failure-path tests in this file.
+    """
+    out = StringIO()
+    with patch(PATCH_TARGET, side_effect=RuntimeError("boom")), patch(
+        "apps.streamflow.management.commands.audit_usgs_observations.connection.close"
+    ):
+        call_command(
+            "audit_usgs_observations",
+            "--gages", "12200500",
+            "--sleep", "0",
+            stdout=out,
+            force_color=True,
+        )
+
+    output = out.getvalue()
+    assert "1 failed" in output
+    assert "\x1b[32;1m" not in output  # SUCCESS green must not wrap this summary
+    assert "\x1b[33;1m" in output  # WARNING yellow wraps it instead
+
+
+def test_mixed_outcome_summary_counts(station):
+    """Important 1 (continued): the summary tallies every outcome, not just
+    ok/failed - a realistic multi-gage run mixes ok, failed, no_db_data, and
+    not_in_db."""
+    no_db_station = Station.objects.create(
+        station_number="11111111", name="NoDbData", agency="USGS", is_active=True
+    )
+    failing_station = Station.objects.create(
+        station_number="33333333", name="Failing", agency="USGS", is_active=True
+    )
+    _row(station, 15, 94100.0)
+    _row(failing_station, 15, 1.0)
+
+    def side_effect(station_number, start_date, *args, **kwargs):
+        if station_number == "33333333":
+            raise RuntimeError("boom")
+        return API_ROWS
+
+    out = StringIO()
+    with patch(PATCH_TARGET, side_effect=side_effect), patch(
+        "apps.streamflow.management.commands.audit_usgs_observations.connection.close"
+    ):
+        call_command(
+            "audit_usgs_observations",
+            "--gages", "12200500,11111111,22222222,33333333",
+            "--sleep", "0",
+            stdout=out,
+        )
+
+    output = out.getvalue()
+    assert "1 ok" in output
+    assert "1 failed" in output
+    assert "1 no_db_data" in output
+    assert "1 not_in_db" in output
+
+
+def test_no_db_data_is_reported_per_gage(station, tmp_path):
+    """Important 2: a station with nothing stored must print a per-gage
+    line (not stay silent like the old combined "no_data" branch did), and
+    the report must label the cause distinctly as no_db_data."""
+    report = tmp_path / "audit.csv"
+    out = StringIO()
+    with patch(PATCH_TARGET, return_value=API_ROWS):
+        call_command(
+            "audit_usgs_observations",
+            "--gages", "12200500",
+            "--report", str(report),
+            stdout=out,
+        )
+
+    assert "no stored" in out.getvalue()
+    rows = list(csv.DictReader(report.read_text().splitlines()))
+    assert rows[0]["status"] == "no_db_data"
+
+
+def test_no_api_data_is_reported_per_gage(station, tmp_path):
+    """Important 2 (continued): the API returning nothing is a distinct
+    cause from no_db_data and must be labelled no_api_data."""
+    _row(station, 15, 94100.0)
+    report = tmp_path / "audit.csv"
+    out = StringIO()
+    with patch(PATCH_TARGET, return_value=[]):
+        call_command(
+            "audit_usgs_observations",
+            "--gages", "12200500",
+            "--report", str(report),
+            stdout=out,
+        )
+
+    assert "USGS API returned no data" in out.getvalue()
+    rows = list(csv.DictReader(report.read_text().splitlines()))
+    assert rows[0]["status"] == "no_api_data"
+
+
+def test_not_in_db_gage_csv_contents(db, tmp_path):
+    """Untested branch (c): a not_in_db gage's CSV row carries only usgs_id
+    and status - no stale numeric fields from a comparison that never ran."""
+    report = tmp_path / "audit.csv"
+    call_command(
+        "audit_usgs_observations",
+        "--gages", "00000000",
+        "--report", str(report),
+        stdout=StringIO(),
+    )
+
+    rows = list(csv.DictReader(report.read_text().splitlines()))
+    assert len(rows) == 1
+    assert rows[0]["usgs_id"] == "00000000"
+    assert rows[0]["status"] == "not_in_db"
+    assert rows[0]["n_missing"] == ""
+
+
+def test_missing_days_split_into_in_span_and_after_last(station, tmp_path):
+    """Design improvement: an in-span gap (between the first and last stored
+    date) and a post-last-row gap (tail staleness) must land in different
+    columns, with n_missing equal to their sum."""
+    _row(station, 10, 100.0)
+    _row(station, 12, 100.0)
+    api_rows = [
+        _api_row(10, 100.0),
+        _api_row(11, 100.0),  # gap inside the db span [10, 12]
+        _api_row(12, 100.0),
+        _api_row(14, 100.0),  # gap after the db's last row (12)
+    ]
+    report = tmp_path / "audit.csv"
+    with patch(PATCH_TARGET, return_value=api_rows):
+        call_command(
+            "audit_usgs_observations",
+            "--gages", "12200500",
+            "--report", str(report),
+            stdout=StringIO(),
+        )
+
+    rows = list(csv.DictReader(report.read_text().splitlines()))
+    row = rows[0]
+    assert row["n_missing_in_db_span"] == "1"
+    assert row["n_missing_after_db_last"] == "1"
+    assert row["n_missing"] == "2"
+
+
+def test_bounding_excludes_dates_before_db_min_includes_after_db_max(
+    station, tmp_path
+):
+    """Untested branch (a): deleting the lower-bound condition leaves the
+    other tests green, so this pins both halves directly - a date earlier
+    than the DB's only stored date must not be counted at all, while a date
+    later must be counted in n_missing_after_db_last."""
+    _row(station, 15, 94100.0)
+    api_rows = [_api_row(14, 90000.0), _api_row(16, 95000.0)]
+    report = tmp_path / "audit.csv"
+    with patch(PATCH_TARGET, return_value=api_rows):
+        call_command(
+            "audit_usgs_observations",
+            "--gages", "12200500",
+            "--report", str(report),
+            stdout=StringIO(),
+        )
+
+    rows = list(csv.DictReader(report.read_text().splitlines()))
+    row = rows[0]
+    # Day 14 (before db min) contributes nothing; only day 16 (after db max)
+    # is counted, and only in the after-last-row column.
+    assert row["n_missing"] == "1"
+    assert row["n_missing_in_db_span"] == "0"
+    assert row["n_missing_after_db_last"] == "1"
+    assert row["first_missing"] == "2021-11-16"
+
+
+def test_tolerance_abs_floor_low_flow_not_counted(station):
+    """Untested branch (b): at low flow the 0.5 cfs absolute floor dominates
+    the 0.5% relative threshold - a 0.4 cfs difference must not count."""
+    _row(station, 15, 2.4)
+    with patch(PATCH_TARGET, return_value=[_api_row(15, 2.0)]):
+        out = StringIO()
+        call_command("audit_usgs_observations", "--gages", "12200500", stdout=out)
+
+    assert "diff=0" in out.getvalue()
+
+
+def test_tolerance_abs_floor_low_flow_counted(station):
+    """Untested branch (b): a 0.6 cfs difference at the same low flow must
+    count, since it exceeds the 0.5 cfs absolute floor."""
+    _row(station, 15, 2.6)
+    with patch(PATCH_TARGET, return_value=[_api_row(15, 2.0)]):
+        out = StringIO()
+        call_command("audit_usgs_observations", "--gages", "12200500", stdout=out)
+
+    assert "diff=1" in out.getvalue()
+
+
+def test_tolerance_relative_threshold_high_flow_just_under_not_counted(station):
+    """Untested branch (b): at high flow (100,000 cfs) the 0.5% relative
+    threshold is 500 cfs; a 499 cfs difference must not count."""
+    _row(station, 15, 100000.0 - 499.0)
+    with patch(PATCH_TARGET, return_value=[_api_row(15, 100000.0)]):
+        out = StringIO()
+        call_command("audit_usgs_observations", "--gages", "12200500", stdout=out)
+
+    assert "diff=0" in out.getvalue()
+
+
+def test_tolerance_relative_threshold_high_flow_just_over_counted(station):
+    """Untested branch (b): a 501 cfs difference at the same high flow must
+    count, since it exceeds the 500 cfs relative threshold."""
+    _row(station, 15, 100000.0 - 501.0)
+    with patch(PATCH_TARGET, return_value=[_api_row(15, 100000.0)]):
+        out = StringIO()
+        call_command("audit_usgs_observations", "--gages", "12200500", stdout=out)
+
+    assert "diff=1" in out.getvalue()
 
 
 def test_report_written_when_loop_raises(station, tmp_path):
