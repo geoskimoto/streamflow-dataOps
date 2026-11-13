@@ -68,3 +68,8 @@ data/nwm_temp/*
 
 # Database row backups (large, recoverable data dumps — never in git)
 data/backups/
+
+# Observation backfill/audit run output (operational records, regenerable)
+data/backfill_*.csv
+data/backfill_*.csv.done.txt
+data/audit_*.csv
