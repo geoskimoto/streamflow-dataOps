@@ -166,6 +166,13 @@ def prune_realtime_observations(retention_days: Optional[int] = None, dry_run: b
     type filter is a hard invariant, applied at queryset construction —
     never build the queryset without it, even transiently.
 
+    Configuration guidance: a realtime_15min PullConfiguration's
+    `pull_start_date` should be set within REALTIME_RETENTION_DAYS. If it
+    predates the window, the first pull fetches far more 15-minute data than
+    retention will keep and the next run of this task deletes the excess —
+    USGS requests and write load spent on rows with no lifetime. This is not
+    clamped in code; it is a configuration convention.
+
     Args:
         retention_days: Days of realtime_15min history to keep. Defaults to
             settings.REALTIME_RETENTION_DAYS. Must be > 0.

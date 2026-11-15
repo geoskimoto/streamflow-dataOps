@@ -24,7 +24,11 @@ from apps.streamflow.models import (
     StationMapping,
     DataPullLog,
 )
-from src.acquisition.usgs_client import USGSClient
+# Unused in this module now that both USGS branches call USGSWaterDataClient.
+# Retained because the legacy client is still live code —
+# src/acquisition/historical_population.py uses it — and removing the import
+# would be a larger change than this one.
+from src.acquisition.usgs_client import USGSClient  # noqa: F401
 from src.acquisition.usgs_waterdata_client import USGSWaterDataClient
 from src.acquisition.canada_client import CanadaClient
 from src.acquisition.noaa_client import NOAAClient
@@ -135,15 +139,6 @@ def _process_single_station(config_station, config_id, config):
         agency = config.data_source
 
         if agency == "USGS":
-            # client is unused now that both branches below call
-            # USGSWaterDataClient directly, but it stays instantiated here
-            # because tests/test_usgs_daily_mean_routing.py patches
-            # "src.acquisition.usgs_client.USGSClient.get_instantaneous" and
-            # "...get_daily_mean" by this module's dotted path; removing the
-            # instantiation doesn't break that patch target, but dropping the
-            # import entirely would. See the same convention in
-            # apps/streamflow/management/commands/backfill_usgs_observations.py.
-            client = USGSClient()  # noqa: F841 - kept for pinned patch targets
             if config.data_type == "daily_mean":
                 # Daily means come from the USGS Water Data OGC API; the legacy
                 # WaterServices endpoint is being retired and was returning

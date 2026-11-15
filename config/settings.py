@@ -219,7 +219,12 @@ RASTER_PULL_MAX_AGE_HOURS = 48  # Alert if no successful pull in 48 hours
 # Rolling window for realtime_15min observations. That series is a recent-flow
 # reference, not an archive: at 15 days a 15-minute series is 1,440 rows per
 # station. Pruning is type-scoped — see prune_realtime_observations.
-REALTIME_RETENTION_DAYS = int(os.environ.get("REALTIME_RETENTION_DAYS", "15"))
+#
+# Set a realtime_15min PullConfiguration's `pull_start_date` within this
+# window. A start date that predates it makes the first pull fetch far more
+# 15-minute data than retention keeps, and the next prune deletes the excess —
+# wasted USGS requests and write load for rows with no lifetime.
+REALTIME_RETENTION_DAYS = int(os.getenv("REALTIME_RETENTION_DAYS", "15"))
 
 # Django REST Framework
 REST_FRAMEWORK = {

@@ -144,6 +144,18 @@ app.conf.beat_schedule = {
     # 06:15 UTC sits in the gap between the GPM pull (05:00) and the NWM
     # forcing ingest (07:00), and avoids monitor-pull-health (hour='*/6',
     # minute=0 -> 06:00) and nwrfc-web-pull (minute=30, hour='*/6' -> 06:30).
+    #
+    # The nearest neighbour is dispatch-statistics-computations
+    # (crontab(minute=0) -> hourly, including 06:00), whose percentile work
+    # can still be running at 06:15. 06:15 is kept anyway: that task is a
+    # dispatcher whose heavy work runs in separate per-configuration tasks,
+    # and this prune is a single indexed DELETE batched at PRUNE_BATCH_SIZE
+    # over at most a few thousand realtime_15min rows — seconds of work, not
+    # a competing scan. Every slot in the 05:00-07:00 gap overlaps the hourly
+    # dispatcher somewhere, so moving would trade a benign overlap for a
+    # worse one (05:00 GPM, 06:00 health check, 06:30 NWRFC, 07:00 NWM).
+    # dispatch-streamflow-pulls (every 5 min) also fires at 06:15 and is
+    # likewise a dispatcher, not the work itself.
     'prune-realtime-observations': {
         'task': 'src.acquisition.monitoring_tasks.prune_realtime_observations',
         'schedule': crontab(hour=6, minute=15),

@@ -192,12 +192,36 @@ def test_scheduled_pull_passes_the_config_data_type(db):
         station_name="Skagit",
     )
 
+    # Both clients' get_instantaneous must be patched. Since realtime_15min
+    # was rerouted onto the Water Data `continuous` collection,
+    # _process_single_station calls USGSWaterDataClient.get_instantaneous —
+    # patching only the legacy USGSClient left this test issuing ~256 real,
+    # API-keyed requests (CONFIG_START is 1900-01-01, so the windowing yields
+    # one request per window) against the production request budget, and
+    # _process_single_station swallowed the resulting exceptions so it still
+    # passed. The requests.get guard below, plus the assertion after the
+    # block, turn any reintroduced live call into a loud failure.
+    def _no_live_http(*args, **kwargs):
+        raise AssertionError("no live HTTP allowed in this test")
+
     with patch.object(
         tasks.SmartAppendLogic, "get_pull_start_date", return_value=CONFIG_START
     ) as mock_start, patch(
         "src.acquisition.usgs_client.USGSClient.get_instantaneous",
         return_value=[],
-    ):
+    ), patch(
+        "src.acquisition.tasks.USGSWaterDataClient.get_instantaneous",
+        return_value=[],
+    ), patch(
+        "src.acquisition.usgs_waterdata_client.requests.get",
+        side_effect=_no_live_http,
+    ) as no_http:
         tasks._process_single_station(config_station, config.id, config)
+
+    # The side_effect blocks the request, but _process_single_station catches
+    # Exception, so the AssertionError alone would be swallowed and this test
+    # would pass silently again. Asserting the guard was never reached is what
+    # makes a reintroduced live call loud.
+    assert not no_http.called, "a live HTTP request escaped the mocks"
 
     assert mock_start.call_args.kwargs["data_type"] == "realtime_15min"
