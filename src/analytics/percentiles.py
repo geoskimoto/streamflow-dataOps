@@ -79,6 +79,11 @@ def compute_percentile_for_date(
               -- Negative discharge is real at tidal/canal gages but breaks
               -- log transforms and percentile-rank math; never rank a
               -- negative-discharge day.
+              -- Nuance: this filter runs before the DISTINCT ON dedup above,
+              -- so if a day has two revisions (an earlier positive value and
+              -- a later negative one), the negative is filtered out and the
+              -- superseded positive revision is ranked instead of the day
+              -- being skipped entirely.
               AND discharge >= 0
               AND observed_at::date = %(target_date)s
               {station_filter}
@@ -412,6 +417,12 @@ def compute_forecast_percentiles(
 
     sql = f"""
         WITH forecast_vals (station_id, target_date, discharge) AS (
+            -- No discharge >= 0 predicate here, unlike the historical side
+            -- below: a negative forecast point still receives a percentile
+            -- row. That asymmetry is deliberate-by-omission, not reviewed —
+            -- forecasts are a different product from the storage/ranking
+            -- decision this file otherwise implements. Don't assume it was
+            -- missed; it just hasn't been decided yet.
             VALUES {values_clause}
         )
         SELECT

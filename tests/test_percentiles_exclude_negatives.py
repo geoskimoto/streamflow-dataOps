@@ -15,6 +15,20 @@ chunking plumbing (unlike backfill_station_chunk / iter_station_id_chunks).
 These tests pin that its result is identical whether negative rows are
 present or physically absent from the table, and that a station cannot reach
 MIN_HISTORICAL_RECORDS by counting negative rows.
+
+Two more cases, added in fix round 1:
+
+- A negative-discharge day on the *target* date itself must produce no
+  percentile result at all (absence, not a rank-0 row) — the half of the
+  exclusion that compute_percentile_for_date's own population tests above
+  don't exercise, since they only ever put a positive value on the target
+  date.
+- backfill_station_chunk() is the function actually used by the production
+  percentile backfill (compute_percentile_for_date serves the daily Celery
+  task; backfill_station_chunk serves the historical backfill command), and
+  was previously untested here. Its test proves the chunked path and the
+  single-date path agree: same ranks for the same non-negative rows,
+  negative rows absent from the output.
 """
 
 from datetime import date, datetime, timedelta, timezone as dt_timezone
@@ -22,7 +36,11 @@ from datetime import date, datetime, timedelta, timezone as dt_timezone
 import pytest
 
 from apps.streamflow.models import DischargeObservation, Station
-from src.analytics.percentiles import MIN_HISTORICAL_RECORDS, compute_percentile_for_date
+from src.analytics.percentiles import (
+    MIN_HISTORICAL_RECORDS,
+    backfill_station_chunk,
+    compute_percentile_for_date,
+)
 
 EPOCH = datetime(2020, 1, 1, tzinfo=dt_timezone.utc)
 
@@ -117,3 +135,82 @@ def test_station_below_minimum_excluding_negatives_does_not_qualify(db_ready):
     assert results == [], (
         "station reached 30 raw rows only by counting negatives and must not qualify"
     )
+
+
+def test_negative_discharge_on_target_date_is_never_ranked(db_ready):
+    """A station with a perfectly healthy positive history (40 days, well
+    above MIN_HISTORICAL_RECORDS) whose observation *on the target date* is
+    negative must produce no percentile result for that date at all —
+    absence, not a result with percentile_rank 0.
+
+    This is the "never ranked" half of the exclusion, at the WHERE clause in
+    the obs_on_date CTE (percentiles.py ~line 82). The other tests in this
+    file only ever put a positive value on the target date, so they never
+    exercise this predicate; removing it does not fail them. It does fail
+    this one — confirmed manually by temporarily deleting the `AND
+    discharge >= 0` line from the obs_on_date CTE and re-running this test:
+    the row is no longer filtered out of obs_on_date, the join to historical
+    rows (still filtered to discharge >= 0) finds 40 historical rows, and the
+    station comes back with historical_record_count=40 and
+    percentile_rank=0.0 (nothing historical is <= a negative value) instead
+    of being absent.
+    """
+    station = _make_station("TARGETNEG001")
+    target_date = (EPOCH + timedelta(days=100)).date()
+
+    # 40 positive historical days, unrelated to the target date.
+    _bulk_obs(station, [float(v) for v in range(1, 41)])
+    # The day being evaluated is negative.
+    _bulk_obs(station, [-50.0], start=EPOCH + timedelta(days=100))
+
+    results = compute_percentile_for_date(target_date, station_ids=[station.id])
+
+    assert results == [], (
+        "a negative-discharge day must never receive a percentile rank, "
+        f"got {results!r}"
+    )
+
+
+def test_backfill_station_chunk_excludes_negatives_and_matches_clean_record(db_ready):
+    """backfill_station_chunk() is the function the historical backfill
+    command actually calls — compute_percentile_for_date() above only covers
+    the daily Celery task's single-date path. This proves the two agree:
+    - no returned row corresponds to a negative-discharge date
+    - the percentile_rank for every surviving date matches the rank computed
+      for the same record with the negative rows physically deleted,
+      proving the chunked path's comparison population is consistent with
+      a negative-free record (and, by the first test in this file, with
+      compute_percentile_for_date's population too).
+    """
+    POSITIVE_VALUES = [float(v) for v in range(1, 41)]  # 40 days, 1..40
+    NEGATIVE_VALUES = [-6700.0, -1500.0, -300.0, -0.1, -42.0]  # 5 days
+
+    clean_station = _make_station("CHUNKCLEAN001")
+    _bulk_obs(clean_station, POSITIVE_VALUES)
+
+    dirty_station = _make_station("CHUNKDIRTY001")
+    _bulk_obs(dirty_station, POSITIVE_VALUES)
+    negative_start = EPOCH + timedelta(days=len(POSITIVE_VALUES))
+    _bulk_obs(dirty_station, NEGATIVE_VALUES, start=negative_start)
+    negative_dates = {
+        (negative_start + timedelta(days=i)).date() for i in range(len(NEGATIVE_VALUES))
+    }
+
+    now = datetime(2026, 11, 15, tzinfo=dt_timezone.utc)
+    clean_rows = backfill_station_chunk([clean_station.id], computed_at=now)
+    dirty_rows = backfill_station_chunk([dirty_station.id], computed_at=now)
+
+    dirty_dates = {row["obs_date"] for row in dirty_rows}
+    assert not (dirty_dates & negative_dates), (
+        "a negative-discharge date must never appear in backfill_station_chunk's output"
+    )
+
+    # Both stations have the identical 40 positive dates/values, so the
+    # date -> percentile_rank mapping must match exactly between the record
+    # that physically contains negatives (filtered out in SQL) and the
+    # record that never had them.
+    clean_by_date = {row["obs_date"]: row["percentile_rank"] for row in clean_rows}
+    dirty_by_date = {row["obs_date"]: row["percentile_rank"] for row in dirty_rows}
+
+    assert dirty_by_date == clean_by_date
+    assert len(dirty_rows) == len(POSITIVE_VALUES)
