@@ -186,14 +186,38 @@ is logged `failed`, never `success`.
 
 #### Observation validation never drops records
 
-`DataProcessor.validate_observations` rejects only impossible values (missing,
-negative, > 1,000,000 cfs, unparseable timestamps). It does **not** drop
-statistical outliers. A batch z-score filter (|z| > 5) used to, and because
-streamflow is heavy-tailed that removed real flood peaks at 271 of 285 audited
-gages — the whole November 2021 Skagit crest, including 119,000 cfs on
-2021-11-16, was missing. High-z values are now logged
-("High-z discharge retained") and kept. Never reintroduce a batch z-score drop
-on streamflow.
+`DataProcessor.validate_observations` rejects only genuinely unusable records:
+missing required fields, a `None` or unparseable discharge, and unparseable
+timestamps. It does **not** drop values for being extreme, and it does not drop
+negatives.
+
+Three rules were removed after each was found discarding real measurements:
+
+| Removed rule | What it destroyed | Now |
+|---|---|---|
+| batch z-score, \|z\| > 5 | flood peaks at 271 of 285 audited gages — the whole Nov 2021 Skagit crest, incl. 119,000 cfs on 2021-11-16 | logged `High-z discharge retained` |
+| `> 1,000,000 cfs` cap | would silently drop Columbia mainstem peaks (The Dalles ≈1,240,000 cfs) | logged, retained |
+| `discharge < 0` | 2,553 days at 13 tidal/canal gages — e.g. FEEDER CANAL AT GRAND COULEE (771), NEHALEM RIVER AT NEHALEM at the estuary (192) | logged `Negative discharge retained for review` |
+
+Never reintroduce any of them. Streamflow is heavy-tailed, and negative daily
+mean discharge is physically real where flow reverses; USGS and EC both publish
+it as approved data.
+
+**Negative discharge is stored but never ranked.** All five observation-selecting
+queries in `src/analytics/percentiles.py` filter `discharge >= 0`, so negatives
+enter neither the ranked rows, nor the historical comparison population, nor the
+`MIN_HISTORICAL_RECORDS` qualification count. Negative flow would otherwise
+corrupt percentile ranks and any log transform. If you add a sixth query over
+`discharge_observations` that computes a rank or quantile, it needs the same
+filter — `src/analytics/station_metadata.py` already follows this convention.
+
+`backfill_daily_percentiles` upserts and never deletes, so a date whose value is
+later revised from positive to negative leaves an orphaned percentile row behind.
+Two such rows existed after the 2026-11-14 recompute (14211820, 2025-08-19 and
+2025-08-31, both revised to negative) and were removed. To find them:
+`SELECT ... FROM daily_flow_percentiles p WHERE NOT EXISTS (SELECT 1 FROM
+discharge_observations o WHERE o.station_id=p.station_id AND o.type='daily_mean'
+AND o.discharge >= 0 AND (o.observed_at AT TIME ZONE 'UTC')::date = p.date)`.
 
 Environment Canada went through the same `DataProcessor` and was truncated the
 same way: sampled 2026-11-13, 5 of 8 EC stations with long records held a
