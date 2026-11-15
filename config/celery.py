@@ -136,7 +136,14 @@ app.conf.beat_schedule = {
     # forcing ingest (07:00), and avoids monitor-pull-health (hour='*/6',
     # minute=0 -> 06:00) and nwrfc-web-pull (minute=30, hour='*/6' -> 06:30).
     'prune-realtime-observations': {
-        'task': 'src.acquisition.raster_tasks.prune_realtime_observations',
+        # Celery names a task by its defining __module__ (monitoring_tasks),
+        # not by whatever module re-exports it; the raster_tasks re-export
+        # does not create a second registration under that name. Do NOT
+        # "fix" this back to 'src.acquisition.raster_tasks.prune_realtime_observations'
+        # to match cleanup-rtma-weekly/cleanup-earthdata-monthly/cleanup-pull-logs/
+        # monitor-pull-health below — those four entries have the same defect
+        # and are being raised separately; this entry is deliberately correct.
+        'task': 'src.acquisition.monitoring_tasks.prune_realtime_observations',
         'schedule': crontab(hour=6, minute=15),
         'options': {'queue': 'celery'},
     },

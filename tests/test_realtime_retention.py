@@ -126,3 +126,23 @@ def test_returns_the_cutoff_and_window_for_the_log(station):
     result = prune_realtime_observations(retention_days=15)
     assert result["retention_days"] == 15
     assert result["cutoff"] is not None
+
+
+def test_beat_entry_resolves_to_a_registered_task():
+    """
+    The beat schedule's 'task' string must match a name actually registered
+    with the Celery app, or the job silently never fires (NotRegistered on
+    the worker). Celery names a task after its defining __module__, not
+    whatever module re-exports it, so pointing this entry at the
+    src.acquisition.raster_tasks re-export (instead of
+    src.acquisition.monitoring_tasks, where prune_realtime_observations is
+    actually defined) would reproduce the same silent-breakage bug already
+    found in three other beat entries. Forces app.loader.import_default_modules()
+    because app.conf.include is lazy and a bare django.setup() never triggers it.
+    """
+    from config.celery import app
+
+    app.loader.import_default_modules()
+    task_name = app.conf.beat_schedule["prune-realtime-observations"]["task"]
+    assert task_name in app.tasks
+
