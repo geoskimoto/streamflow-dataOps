@@ -494,3 +494,34 @@ multi-year, multi-station historical pull needs caller pacing (~756 requests for
 ### Testing Notes
 
 Tests use both `pytest` and Django's `manage.py test`. Test files live in `tests/` (40+ modules). Integration tests and Selenium E2E tests exist — these require a live DB and browser respectively; skip with `-k "not selenium"` when running unit tests only.
+
+**A bare `pytest -q` runs nothing.** Twelve modules fail at import — `sqlalchemy`,
+`ee` (earthengine) and `selenium` are not installed, and two modules touch the DB
+at import time — and pytest aborts the whole session on collection errors. Always
+use `--continue-on-collection-errors`, or the run reports "12 errors" and exits
+having executed zero tests.
+
+The suite is **not green and cannot be made green**. Baseline on a clean tree
+(2026-11-13): `333 failed, 350 passed, 7 skipped, 15 errors`. Prove a change is
+clean by **diffing failure sets**, never by expecting green:
+
+```bash
+venv/bin/python -m pytest -q -p no:cacheprovider --continue-on-collection-errors \
+  2>&1 | grep -E "^(FAILED|ERROR) [^ ]" | sed -E 's/ - .*//' | sort -u > before.txt
+# repeat on the branch, then:  comm -13 before.txt after.txt   # empty == no regressions
+```
+
+Match `^(FAILED|ERROR) [^ ]` exactly — logger output also starts with `ERROR`
+followed by whitespace, and a looser pattern silently inflates the set.
+
+**Do not revive the dead modules or install their missing dependencies** to make
+them collect. `tests/test_data_processor.py` and `tests/test_smart_append.py` are
+superseded by Django-based modules; adding `sqlalchemy` back would resurrect
+tests that assert behaviour the code no longer has.
+
+**A test that calls `_process_single_station` must patch every client the branch
+under test can reach.** That function catches `Exception` broadly, so an
+unpatched client issues real API calls and the test still *passes* — one such
+test was firing ~256 live USGS requests per run while reporting success. Patch
+both `src.acquisition.tasks.USGSWaterDataClient.<method>` and the legacy
+`src.acquisition.usgs_client.USGSClient.<method>` for the data type involved.
