@@ -19,6 +19,15 @@ app.autodiscover_tasks(lambda: ['src.acquisition', 'src.analytics', 'apps.nwm_fo
 # Explicitly include raster_tasks module (autodiscover only finds tasks.py)
 app.conf.include = ['src.acquisition.raster_tasks']
 
+# Celery names a task after its defining __module__, not whatever module
+# re-exports it — so every 'task' string below that points at a cleanup/
+# monitoring job must name 'src.acquisition.monitoring_tasks.<fn>' (where
+# cleanup_old_layers, cleanup_old_pull_logs, monitor_pull_health, and
+# prune_realtime_observations are actually defined), never the
+# 'src.acquisition.raster_tasks' re-export module. Four entries pointed at
+# the re-export and silently never resolved (NotRegistered on the worker)
+# until this was found and fixed in November 2026.
+
 # Celery Beat schedule for periodic tasks
 app.conf.beat_schedule = {
     # NOAA NOMADS RTMA - Hourly at 5 minutes past the hour
@@ -73,7 +82,7 @@ app.conf.beat_schedule = {
 
     # Data retention cleanup - Remove old RTMA data (>7 days)
     'cleanup-rtma-weekly': {
-        'task': 'src.acquisition.raster_tasks.cleanup_old_layers',
+        'task': 'src.acquisition.monitoring_tasks.cleanup_old_layers',
         'schedule': crontab(minute=0, hour=2, day_of_week=0),  # Sunday 2 AM
         'kwargs': {
             'dataset_name': 'NOAA_RTMA',
@@ -84,7 +93,7 @@ app.conf.beat_schedule = {
 
     # Cleanup old raster data (>30 days for NASA datasets)
     'cleanup-earthdata-monthly': {
-        'task': 'src.acquisition.raster_tasks.cleanup_old_layers',
+        'task': 'src.acquisition.monitoring_tasks.cleanup_old_layers',
         'schedule': crontab(minute=0, hour=3, day_of_month=1),  # 1st of month at 3 AM
         'kwargs': {
             'data_source': 'earthdata',
@@ -95,13 +104,13 @@ app.conf.beat_schedule = {
 
     # Health check - Monitor pull status and send alerts
     'monitor-pull-health': {
-        'task': 'src.acquisition.raster_tasks.monitor_pull_health',
+        'task': 'src.acquisition.monitoring_tasks.monitor_pull_health',
         'schedule': crontab(minute=0, hour='*/6'),  # Every 6 hours
     },
 
     # Database cleanup - Remove old pull logs (>90 days)
     'cleanup-pull-logs': {
-        'task': 'src.acquisition.raster_tasks.cleanup_old_pull_logs',
+        'task': 'src.acquisition.monitoring_tasks.cleanup_old_pull_logs',
         'schedule': crontab(minute=0, hour=1, day_of_week=0),  # Sunday 1 AM
         'kwargs': {'retention_days': 90}
     },
@@ -136,13 +145,6 @@ app.conf.beat_schedule = {
     # forcing ingest (07:00), and avoids monitor-pull-health (hour='*/6',
     # minute=0 -> 06:00) and nwrfc-web-pull (minute=30, hour='*/6' -> 06:30).
     'prune-realtime-observations': {
-        # Celery names a task by its defining __module__ (monitoring_tasks),
-        # not by whatever module re-exports it; the raster_tasks re-export
-        # does not create a second registration under that name. Do NOT
-        # "fix" this back to 'src.acquisition.raster_tasks.prune_realtime_observations'
-        # to match cleanup-rtma-weekly/cleanup-earthdata-monthly/cleanup-pull-logs/
-        # monitor-pull-health below — those four entries have the same defect
-        # and are being raised separately; this entry is deliberately correct.
         'task': 'src.acquisition.monitoring_tasks.prune_realtime_observations',
         'schedule': crontab(hour=6, minute=15),
         'options': {'queue': 'celery'},

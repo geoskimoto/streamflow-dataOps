@@ -128,21 +128,40 @@ def test_returns_the_cutoff_and_window_for_the_log(station):
     assert result["cutoff"] is not None
 
 
-def test_beat_entry_resolves_to_a_registered_task():
+def test_every_beat_entry_resolves_to_a_registered_task():
     """
-    The beat schedule's 'task' string must match a name actually registered
-    with the Celery app, or the job silently never fires (NotRegistered on
-    the worker). Celery names a task after its defining __module__, not
-    whatever module re-exports it, so pointing this entry at the
-    src.acquisition.raster_tasks re-export (instead of
-    src.acquisition.monitoring_tasks, where prune_realtime_observations is
-    actually defined) would reproduce the same silent-breakage bug already
-    found in three other beat entries. Forces app.loader.import_default_modules()
-    because app.conf.include is lazy and a bare django.setup() never triggers it.
+    Every beat_schedule entry's 'task' string must match a name actually
+    registered with the Celery app, or the job silently never fires
+    (NotRegistered on the worker, with no test ever catching it). Celery
+    names a task after its defining __module__, not whatever module
+    re-exports it, so an entry that points at a re-export module (e.g.
+    src.acquisition.raster_tasks instead of src.acquisition.monitoring_tasks,
+    where cleanup_old_layers, cleanup_old_pull_logs, monitor_pull_health, and
+    prune_realtime_observations are actually defined) will never resolve.
+    This exact mistake previously existed on four separate entries
+    (cleanup-rtma-weekly, cleanup-earthdata-monthly, cleanup-pull-logs,
+    monitor-pull-health) at once, undetected until this test was written.
+
+    Forces app.loader.import_default_modules() because app.conf.include is
+    lazy and a bare django.setup() never triggers it, which is why the
+    naive version of this check (just inspecting app.tasks right after
+    django.setup()) would have reported nothing as registered, including
+    tasks that work fine in production.
     """
     from config.celery import app
 
     app.loader.import_default_modules()
-    task_name = app.conf.beat_schedule["prune-realtime-observations"]["task"]
-    assert task_name in app.tasks
+
+    unresolved = [
+        (entry_name, entry["task"])
+        for entry_name, entry in app.conf.beat_schedule.items()
+        if entry["task"] not in app.tasks
+    ]
+
+    assert unresolved == [], (
+        "The following beat_schedule entries point at a task name that "
+        "is not registered (NotRegistered on the worker — the job will "
+        "never run): "
+        + ", ".join(f"{name!r} -> {task!r}" for name, task in unresolved)
+    )
 
