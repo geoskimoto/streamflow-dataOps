@@ -216,6 +216,11 @@ ALERT_EMAIL_FROM = os.getenv('ALERT_EMAIL_FROM', 'noreply@streamflow-dataops.org
 RASTER_PULL_FAILURE_THRESHOLD = 3  # Alert after 3 consecutive failures
 RASTER_PULL_MAX_AGE_HOURS = 48  # Alert if no successful pull in 48 hours
 
+# Rolling window for realtime_15min observations. That series is a recent-flow
+# reference, not an archive: at 15 days a 15-minute series is 1,440 rows per
+# station. Pruning is type-scoped — see prune_realtime_observations.
+REALTIME_RETENTION_DAYS = int(os.environ.get("REALTIME_RETENTION_DAYS", "15"))
+
 # Django REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',

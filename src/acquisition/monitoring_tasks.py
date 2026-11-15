@@ -13,6 +13,7 @@ from django.db.models import Count, Q
 from celery import shared_task
 
 from apps.streamflow.models import (
+    DischargeObservation,
     RasterDataset,
     RasterVariable,
     RasterLayer,
@@ -21,6 +22,16 @@ from apps.streamflow.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# The observation type this prune is allowed to touch. Scoping is a hard
+# safety requirement, not a filter of convenience: every daily_mean row is
+# older than any sane cutoff, so an unscoped age-based delete would destroy
+# the entire multi-decade daily archive.
+PRUNABLE_OBSERVATION_TYPE = "realtime_15min"
+
+# Delete in batches so pruning a large backlog never holds a long lock on
+# the 37M-row discharge_observations table.
+PRUNE_BATCH_SIZE = 5000
 
 
 @shared_task
@@ -140,6 +151,98 @@ def cleanup_old_pull_logs(retention_days: int = 90) -> Dict:
     except Exception as e:
         logger.exception(f"Error in cleanup_old_pull_logs: {e}")
         return {'error': str(e)}
+
+
+@shared_task
+def prune_realtime_observations(retention_days: Optional[int] = None, dry_run: bool = False) -> Dict:
+    """
+    Prune the rolling realtime_15min window.
+
+    realtime_15min is kept as a ~15-day reference window for recent flows,
+    not an archive, so rows older than retention_days are deleted. This is
+    NEVER allowed to touch daily_mean (or any other observation type): the
+    discharge_observations table also holds 37.8M daily_mean rows spanning
+    over a century, every one of which is older than any sane cutoff. The
+    type filter is a hard invariant, applied at queryset construction —
+    never build the queryset without it, even transiently.
+
+    Args:
+        retention_days: Days of realtime_15min history to keep. Defaults to
+            settings.REALTIME_RETENTION_DAYS. Must be > 0.
+        dry_run: If True, count what would be deleted without deleting.
+
+    Returns:
+        {"deleted": int, "cutoff": datetime, "retention_days": int, "dry_run": bool}
+    """
+    if retention_days is None:
+        retention_days = settings.REALTIME_RETENTION_DAYS
+
+    # Fail loudly before touching the database. A zero or negative window
+    # would otherwise delete the entire rolling series.
+    if retention_days <= 0:
+        raise ValueError(
+            f"retention_days must be > 0, got {retention_days!r}"
+        )
+
+    cutoff = timezone.now() - timedelta(days=retention_days)
+
+    # Type scope is applied here, at construction, together with the age
+    # cutoff. Never split these into separate steps where an
+    # observed_at__lt-only queryset could exist, even momentarily.
+    prunable = DischargeObservation.objects.filter(
+        type=PRUNABLE_OBSERVATION_TYPE,
+        observed_at__lt=cutoff,
+    )
+
+    total_matched = prunable.count()
+
+    if dry_run:
+        logger.info(
+            f"[DRY RUN] prune_realtime_observations: {total_matched} "
+            f"'{PRUNABLE_OBSERVATION_TYPE}' rows older than {cutoff.isoformat()} "
+            f"(retention_days={retention_days}) would be deleted"
+        )
+        return {
+            "deleted": total_matched,
+            "cutoff": cutoff,
+            "retention_days": retention_days,
+            "dry_run": True,
+        }
+
+    deleted_total = 0
+    while True:
+        batch_ids = list(
+            prunable.order_by("pk").values_list("pk", flat=True)[:PRUNE_BATCH_SIZE]
+        )
+        if not batch_ids:
+            break
+
+        _, deleted_per_model = DischargeObservation.objects.filter(
+            type=PRUNABLE_OBSERVATION_TYPE,
+            pk__in=batch_ids,
+        ).delete()
+        batch_deleted = deleted_per_model.get(
+            "streamflow.DischargeObservation", len(batch_ids)
+        )
+        deleted_total += batch_deleted
+
+        logger.info(
+            f"prune_realtime_observations: deleted batch of {batch_deleted} "
+            f"'{PRUNABLE_OBSERVATION_TYPE}' rows (running total {deleted_total})"
+        )
+
+    logger.info(
+        f"prune_realtime_observations: deleted {deleted_total} "
+        f"'{PRUNABLE_OBSERVATION_TYPE}' rows older than {cutoff.isoformat()} "
+        f"(retention_days={retention_days})"
+    )
+
+    return {
+        "deleted": deleted_total,
+        "cutoff": cutoff,
+        "retention_days": retention_days,
+        "dry_run": False,
+    }
 
 
 @shared_task

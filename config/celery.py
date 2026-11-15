@@ -130,6 +130,16 @@ app.conf.beat_schedule = {
         'task': 'src.acquisition.tasks.run_nwrfc_web_pull',
         'schedule': crontab(minute=30, hour='*/6'),
     },
+
+    # Roll the realtime_15min window (type-scoped; never touches daily_mean).
+    # 06:15 UTC sits in the gap between the GPM pull (05:00) and the NWM
+    # forcing ingest (07:00), and avoids monitor-pull-health (hour='*/6',
+    # minute=0 -> 06:00) and nwrfc-web-pull (minute=30, hour='*/6' -> 06:30).
+    'prune-realtime-observations': {
+        'task': 'src.acquisition.raster_tasks.prune_realtime_observations',
+        'schedule': crontab(hour=6, minute=15),
+        'options': {'queue': 'celery'},
+    },
 }
 
 

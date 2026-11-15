@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 from src.acquisition.monitoring_tasks import (
     cleanup_old_layers,
     cleanup_old_pull_logs,
+    prune_realtime_observations,
     monitor_pull_health,
     generate_health_report
 )
