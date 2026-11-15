@@ -135,7 +135,15 @@ def _process_single_station(config_station, config_id, config):
         agency = config.data_source
 
         if agency == "USGS":
-            client = USGSClient()
+            # client is unused now that both branches below call
+            # USGSWaterDataClient directly, but it stays instantiated here
+            # because tests/test_usgs_daily_mean_routing.py patches
+            # "src.acquisition.usgs_client.USGSClient.get_instantaneous" and
+            # "...get_daily_mean" by this module's dotted path; removing the
+            # instantiation doesn't break that patch target, but dropping the
+            # import entirely would. See the same convention in
+            # apps/streamflow/management/commands/backfill_usgs_observations.py.
+            client = USGSClient()  # noqa: F841 - kept for pinned patch targets
             if config.data_type == "daily_mean":
                 # Daily means come from the USGS Water Data OGC API; the legacy
                 # WaterServices endpoint is being retired and was returning
@@ -146,7 +154,10 @@ def _process_single_station(config_station, config_id, config):
                     end_date=end_date,
                 )
             elif config.data_type == "realtime_15min":
-                observations = client.get_instantaneous(
+                # Realtime 15-minute values come from the Water Data OGC
+                # `continuous` collection via the same client as daily_mean;
+                # the legacy dataretrieval.nwis.get_iv path is retired.
+                observations = USGSWaterDataClient().get_instantaneous(
                     station_number=station_number,
                     start_date=start_date,
                     end_date=end_date,

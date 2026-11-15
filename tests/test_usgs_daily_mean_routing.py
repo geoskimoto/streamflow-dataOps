@@ -23,6 +23,7 @@ from apps.streamflow.models import (
 from src.acquisition.tasks import _process_single_station
 
 NEW_CLIENT = "src.acquisition.tasks.USGSWaterDataClient.get_daily_mean"
+NEW_INSTANT = "src.acquisition.tasks.USGSWaterDataClient.get_instantaneous"
 LEGACY_DAILY = "src.acquisition.usgs_client.USGSClient.get_daily_mean"
 LEGACY_INSTANT = "src.acquisition.usgs_client.USGSClient.get_instantaneous"
 
@@ -71,18 +72,21 @@ def test_daily_mean_routes_to_waterdata_client(station):
     assert result["success"] is True
 
 
-def test_realtime_still_routes_to_legacy_client(station):
-    # realtime_15min is deliberately left on the legacy client; migrating it
-    # is separate work.
+def test_realtime_routes_to_waterdata_client(station):
+    # realtime_15min has been migrated off the legacy client onto the Water
+    # Data `continuous` collection (see tests/test_usgs_realtime_routing.py
+    # for the dedicated routing coverage).
     config = _config("realtime_15min")
     cs = _config_station(config, station)
 
-    with patch(NEW_CLIENT, return_value=[]) as new_client, \
+    with patch(NEW_INSTANT, return_value=[]) as new_instant, \
          patch(LEGACY_INSTANT, return_value=[]) as legacy_instant:
         result = _process_single_station(cs, config.id, config)
 
-    assert legacy_instant.called, "realtime_15min must use the legacy client"
-    assert not new_client.called
+    assert new_instant.called, "realtime_15min must use USGSWaterDataClient"
+    assert not legacy_instant.called, (
+        "realtime_15min must no longer use the legacy USGSClient.get_instantaneous"
+    )
     assert result["success"] is True
 
 
