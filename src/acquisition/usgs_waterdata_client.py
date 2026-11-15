@@ -37,8 +37,14 @@ DAILY_MEAN_STATISTIC_ID = "00003"
 CONTINUOUS_STATISTIC_ID = "00011"
 
 # A 15-minute series is ~35,040 points per year and `limit` caps at 50,000,
-# so a multi-year request must be split. 180 days is ~17,280 points, which
-# leaves generous headroom even where the series is denser than 15 minutes.
+# so a multi-year request must be split. 180 days is ~17,280 points at 15-min
+# resolution, which leaves generous headroom — but a 5-minute series is
+# ~51,840 points per 180 days, which *already* exceeds the 50,000 cap and is
+# only recovered by `next`-link pagination. Widening the window would make
+# that worse (more pages per window, not fewer requests overall, since the
+# page cap — not the window — is what forces pagination once density rises).
+# Do not raise this without re-deriving the pagination math for the densest
+# series actually seen.
 INSTANTANEOUS_WINDOW_DAYS = 180
 
 # The API echoes unit_of_measure on every feature. Checked per feature along
@@ -259,9 +265,29 @@ class USGSWaterDataClient:
         would otherwise exceed the API's 50,000-row page cap — and fetched
         one paginated request-chain per window.
 
+        Request volume: windows are ``ceil(days / INSTANTANEOUS_WINDOW_DAYS)``
+        requests per station. For a historical backfill across the ~36
+        CAMELS-overlap stations that is roughly 252 requests for 3 years, 756
+        for 10 years, and ~2,200 for 30 years, against a 1,000
+        requests/hour API key budget. This method does no pacing of its
+        own — a multi-year, multi-station historical pull must be paced by
+        the caller (a ``SOURCE_PACING``-style entry, or a chunked backfill
+        spread over time), the same as any other bulk USGS pull.
+
+        ``start_date`` and ``end_date`` are normalised to tz-aware UTC
+        internally, so a naive input is accepted (treated as already UTC)
+        rather than raising deep inside window computation. ``end_date``
+        before ``start_date`` raises ``ValueError`` before any request is
+        issued — some OGC servers silently ignore a malformed ``datetime``
+        interval and fall back to the default ~1-year window, a truncation
+        the provenance guard cannot detect since station/parameter/statistic/
+        unit all still match. ``end_date == start_date`` is accepted, not an
+        error: it is a well-defined (if trivial) single zero-width-window
+        request, not a sign of a reversed-argument bug.
+
         Args:
             station_number: bare USGS site id, e.g. ``"12200500"``.
-            start_date: inclusive start (required; tz-aware recommended).
+            start_date: inclusive start (required).
             end_date: inclusive end, or ``None`` for "up to now".
             _retries: retry budget for transient failures; 0 disables retrying.
 
@@ -271,16 +297,33 @@ class USGSWaterDataClient:
             ``discharge`` (cfs, float), ``unit``, ``type``, ``quality_code``.
             Exactly one observation per ``observed_at`` is returned even if
             the station has multiple time series for this parameter/statistic.
+
+        Raises:
+            ValueError: if ``end_date`` is given and is earlier than
+                ``start_date``.
         """
-        stop = end_date or datetime.now(timezone.utc)
-        windows = self._windows(start_date, stop, INSTANTANEOUS_WINDOW_DAYS)
+        start = self._normalize_utc(start_date)
+        stop = (
+            self._normalize_utc(end_date)
+            if end_date is not None
+            else datetime.now(timezone.utc)
+        )
+
+        if stop < start:
+            raise ValueError(
+                f"get_instantaneous for station {station_number}: end_date "
+                f"({stop.isoformat()}) is before start_date "
+                f"({start.isoformat()}); refusing to issue a reversed range."
+            )
+
+        windows = self._windows(start, stop, INSTANTANEOUS_WINDOW_DAYS)
 
         self.logger.info(
             "Fetching USGS instantaneous discharge for %s across %d "
             "window(s) (%s to %s)",
             station_number,
             len(windows),
-            start_date,
+            start,
             stop,
         )
 
@@ -314,17 +357,31 @@ class USGSWaterDataClient:
     # -- internals --------------------------------------------------------
 
     @staticmethod
+    def _normalize_utc(value: datetime) -> datetime:
+        """Coerce a naive or differently-offset datetime to tz-aware UTC.
+
+        A naive value is treated as already being UTC (not localised),
+        matching how the rest of this client treats naive input. Applied to
+        ``start_date``/``end_date`` up front in ``get_instantaneous`` so a
+        naive ``start_date`` is accepted consistently regardless of whether
+        ``end_date`` is also given — before this normalisation lived here,
+        a naive ``start_date`` with a defaulted (aware) ``end_date`` raised
+        ``TypeError`` inside ``_windows`` (naive/aware datetimes are not
+        comparable), which meant a differently-shaped failure depending on
+        argument order.
+        """
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @staticmethod
     def _as_iso(value: datetime) -> str:
         """Format a datetime as a full UTC ISO-8601 timestamp.
 
         Unlike ``_as_date`` (daily-mean, date-only), the instantaneous path
         must never drop the time component.
         """
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        else:
-            value = value.astimezone(timezone.utc)
-        return value.isoformat()
+        return USGSWaterDataClient._normalize_utc(value).isoformat()
 
     @staticmethod
     def _windows(
@@ -332,6 +389,10 @@ class USGSWaterDataClient:
     ) -> List[Tuple[datetime, datetime]]:
         """Split ``[start, end]`` into consecutive windows of at most
         ``window_days``, covering the range with no gap and no overlap.
+
+        Precondition: ``start <= end`` and both tz-aware. ``get_instantaneous``
+        enforces both — normalising naive input and rejecting ``end < start``
+        — before calling this; this method does not re-check either.
 
         Adjacent windows share their boundary instant (window N's end equals
         window N+1's start) rather than leaving a gap. A point that lands
@@ -658,6 +719,7 @@ class USGSWaterDataClient:
         timestamp instead of being truncated to midnight.
         """
         parsed: List[Dict] = []
+        series_ids = set()
         skipped = 0
         mismatches: Dict[str, set] = {}
 
@@ -671,6 +733,8 @@ class USGSWaterDataClient:
         for feature in features:
             props = feature.get("properties") or {}
             series_id = props.get("time_series_id")
+            if series_id is not None:
+                series_ids.add(series_id)
 
             # Provenance check — see `_parse` for the full rationale. Same
             # guard, parameterised to this collection/statistic's expected
@@ -757,6 +821,18 @@ class USGSWaterDataClient:
                 f"filters — {detail}. "
                 "The server is not honouring our query parameters, so the "
                 "whole response is untrustworthy; aborting this station."
+            )
+
+        if len(series_ids) > 1:
+            self.logger.warning(
+                "Station %s returned multiple time series for %s/%s: %s. "
+                "Each timestamp keeps exactly one deterministic value; see "
+                "any duplicate-timestamp warning below for how ties were "
+                "resolved.",
+                station_number,
+                DISCHARGE_PARAMETER_CODE,
+                CONTINUOUS_STATISTIC_ID,
+                sorted(series_ids),
             )
 
         observations = self._dedupe_by_timestamp(parsed, station_number)
