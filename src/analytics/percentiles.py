@@ -76,6 +76,10 @@ def compute_percentile_for_date(
                 observed_at::date AS observation_date
             FROM discharge_observations
             WHERE type = 'daily_mean'
+              -- Negative discharge is real at tidal/canal gages but breaks
+              -- log transforms and percentile-rank math; never rank a
+              -- negative-discharge day.
+              AND discharge >= 0
               AND observed_at::date = %(target_date)s
               {station_filter}
             ORDER BY station_id, observed_at DESC
@@ -96,6 +100,10 @@ def compute_percentile_for_date(
         JOIN discharge_observations h
             ON h.station_id = o.station_id
            AND h.type = 'daily_mean'
+           -- Negative discharge is real at tidal/canal gages but breaks
+           -- log transforms and percentile-rank math; exclude it from the
+           -- historical population used to compute the rank.
+           AND h.discharge >= 0
         GROUP BY
             s.id,
             s.station_number,
@@ -176,6 +184,11 @@ def backfill_station_chunk(
                 ) AS count_le
             FROM discharge_observations
             WHERE type = 'daily_mean'
+              -- Negative discharge is real at tidal/canal gages but breaks
+              -- log transforms and percentile-rank math; exclude it from
+              -- both the ranked rows and the historical population (this
+              -- CTE serves as both via the window function).
+              AND discharge >= 0
               AND station_id = ANY(%(station_ids)s)
         )
         SELECT
@@ -231,6 +244,10 @@ def iter_station_id_chunks(
         SELECT station_id
         FROM discharge_observations
         WHERE type = 'daily_mean'
+          -- Negative discharge is real at tidal/canal gages but breaks log
+          -- transforms and percentile-rank math; a station must not qualify
+          -- on negative-discharge days alone.
+          AND discharge >= 0
         GROUP BY station_id
         HAVING COUNT(*) >= %(min_records)s
         ORDER BY station_id
@@ -410,6 +427,10 @@ def compute_forecast_percentiles(
         JOIN discharge_observations h
             ON h.station_id = fv.station_id
            AND h.type = 'daily_mean'
+           -- Negative discharge is real at tidal/canal gages but breaks
+           -- log transforms and percentile-rank math; exclude it from the
+           -- historical population used to rank the forecast value.
+           AND h.discharge >= 0
         GROUP BY fv.station_id, fv.target_date, fv.discharge
         HAVING COUNT(h.id) >= %s
         ORDER BY fv.station_id, fv.target_date

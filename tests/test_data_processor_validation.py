@@ -95,8 +95,34 @@ def test_high_z_value_is_logged_not_dropped(caplog):
     assert any("High-z discharge retained" in r.message for r in caplog.records)
 
 
-def test_negative_discharge_still_rejected():
-    valid = DataProcessor().validate_observations([_obs(-5.0, 0)])
+def test_negative_discharge_is_retained_and_logged(caplog):
+    """N5: this previously asserted the opposite — negative discharge was
+    silently dropped. Negative daily-mean discharge is physically real at
+    tidally-influenced and canal gages (e.g. FEEDER CANAL AT GRAND COULEE,
+    NEHALEM RIVER AT NEHALEM near the estuary) and both USGS and Environment
+    Canada publish it as approved data. It is now logged and retained, with
+    the value unchanged, mirroring the implausibly-high-discharge handling.
+    Percentile computation excludes negatives separately (src/analytics/percentiles.py).
+    """
+    with caplog.at_level("WARNING"):
+        valid = DataProcessor().validate_observations([_obs(-5.0, 0)])
+
+    assert len(valid) == 1
+    assert float(valid[0]["discharge"]) == -5.0
+    assert any(
+        "Negative discharge retained" in r.getMessage() for r in caplog.records
+    )
+
+
+def test_unparseable_discharge_still_rejected():
+    valid = DataProcessor().validate_observations([_obs("not-a-number", 0)])
+    assert valid == []
+
+
+def test_unparseable_timestamp_still_rejected():
+    obs = _obs(100.0, 0)
+    obs["observed_at"] = "not-a-timestamp"
+    valid = DataProcessor().validate_observations([obs])
     assert valid == []
 
 
@@ -134,10 +160,12 @@ def test_missing_required_field_still_rejected():
     assert valid == []
 
 
-def test_mixed_batch_keeps_peaks_and_rejects_invalid():
-    # A realistic pull: valid baseflow, a real crest, one genuinely invalid
-    # record (negative), and one implausibly large value. Only the negative
-    # is rejected — magnitude is a review signal, not a rejection rule (N4).
+def test_mixed_batch_keeps_peaks_and_retains_negative():
+    # A realistic pull: valid baseflow, a real crest, one negative (tidal/canal
+    # site, real and approved — N5), and one implausibly large value. Nothing
+    # here is rejected on magnitude or sign; those are review signals, not
+    # rejection rules (N4, N5). Percentile exclusion of negatives happens
+    # downstream in src/analytics/percentiles.py, not here.
     observations = _batch(BASEFLOW + SKAGIT_CREST)
     observations.append(_obs(-1.0, 999))
     observations.append(_obs(5_000_000.0, 1000))
@@ -145,7 +173,7 @@ def test_mixed_batch_keeps_peaks_and_rejects_invalid():
     valid = DataProcessor().validate_observations(observations)
 
     kept = [float(o["discharge"]) for o in valid]
-    assert len(valid) == len(BASEFLOW) + len(SKAGIT_CREST) + 1
+    assert len(valid) == len(BASEFLOW) + len(SKAGIT_CREST) + 2
     assert 119000.0 in kept
-    assert -1.0 not in kept
+    assert -1.0 in kept
     assert 5_000_000.0 in kept

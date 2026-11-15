@@ -197,13 +197,16 @@ class DataProcessor:
 
         Checks (rejection):
         - Required fields present
-        - Non-negative, parseable discharge values
+        - Parseable discharge values
         - Valid timestamps
 
         Logged and RETAINED, never dropped:
         - Statistical outliers (>5 std deviations of the batch mean) — real
           flood peaks routinely exceed any fixed z-score
         - Implausibly high magnitudes (> IMPLAUSIBLE_DISCHARGE_CFS)
+        - Negative discharge — physically real at tidally-influenced and
+          canal gages; excluded from percentile computation separately
+          (src/analytics/percentiles.py), not from storage
 
         Args:
             observations: List of observation dictionaries
@@ -231,9 +234,22 @@ class DataProcessor:
                 self.logger.warning(f"Invalid discharge value: {obs['discharge']}")
                 continue
 
+            # Flag negative values for review, but keep them. Negative
+            # daily-mean discharge is physically real at tidally-influenced
+            # and canal gages (e.g. FEEDER CANAL AT GRAND COULEE, NEHALEM
+            # RIVER AT NEHALEM near the estuary), and both USGS and
+            # Environment Canada publish it as approved data. Dropping it
+            # here silently erased 2,553 real observation-days across 13
+            # stations. Percentile computation excludes negatives separately
+            # (src/analytics/percentiles.py) since negative flow breaks log
+            # transforms and percentile-rank math.
             if discharge < 0:
-                self.logger.warning(f"Negative discharge value: {discharge}")
-                continue
+                self.logger.warning(
+                    "Negative discharge retained for review: "
+                    "discharge=%s observed_at=%s",
+                    discharge,
+                    obs.get("observed_at"),
+                )
 
             # Flag implausibly high values for review, but keep them. Real
             # mainstem peaks exceed 1,000,000 cfs (Columbia at The Dalles
