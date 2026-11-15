@@ -674,3 +674,272 @@ git commit -m "feat: route realtime_15min pulls through the Water Data continuou
   `daily_mean` only; pinned by `test_emits_full_utc_timestamp_not_midnight`.
 - Reusing the daily client's internals risks changing daily behaviour, so Task 1
   Step 6 runs the daily suite unmodified as the regression gate.
+
+---
+
+### Task 3: Type-scoped retention for realtime observations
+
+**Files:**
+- Modify: `src/acquisition/monitoring_tasks.py`
+- Modify: `src/acquisition/raster_tasks.py` (re-export, matching the existing cleanup tasks)
+- Modify: `config/settings.py`
+- Modify: `config/celery.py` (beat schedule)
+- Test: `tests/test_realtime_retention.py`
+
+**Interfaces:**
+- Consumes: `settings.REALTIME_RETENTION_DAYS`.
+- Produces: `prune_realtime_observations(retention_days: int | None = None, dry_run: bool = False) -> dict`
+  in `src.acquisition.monitoring_tasks`, re-exported from `src.acquisition.raster_tasks`,
+  scheduled daily. Returns a dict with at least `deleted`, `cutoff`, `retention_days`, `dry_run`.
+
+**Why this exists.** `realtime_15min` is to be kept as a rolling ~15-day reference window for
+recent flows, not an archive. Nothing currently prunes `discharge_observations` — the existing
+cleanup tasks cover raster layers (7/30 days) and pull logs (90 days) only — so without this the
+window never rolls and the table grows until someone deletes rows by hand, which is what caused
+the original storage squeeze. At 15 days a 15-minute series is 1,440 rows per station, so a few
+dozen stations is well under 100k rows.
+
+**THE CRITICAL SAFETY PROPERTY.** This task deletes production data. The filter **must** be
+scoped to `type="realtime_15min"`. An age-based delete without that scope would destroy the
+37,830,000-row `daily_mean` archive that a long repair effort just finished restoring and
+verifying — every daily row is older than any sane cutoff, so they would all match. Treat the
+type scope as a hard invariant with its own tests, not as an incidental filter.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `tests/test_realtime_retention.py`:
+
+```python
+"""Retention for the realtime_15min rolling window.
+
+realtime_15min is a rolling ~15-day reference window, not an archive. The
+single most important property here is that pruning NEVER touches
+daily_mean: those rows are decades old by definition, so an unscoped
+age-based delete would wipe the entire 37.8M-row archive.
+"""
+
+from datetime import timedelta
+
+import pytest
+from django.conf import settings
+from django.utils import timezone
+
+from apps.streamflow.models import DischargeObservation, Station
+from src.acquisition.monitoring_tasks import prune_realtime_observations
+
+
+@pytest.fixture
+def station(db):
+    return Station.objects.create(
+        station_number="12200500", name="Skagit", agency="USGS", is_active=True
+    )
+
+
+def _obs(station, days_ago, obs_type, value=100.0, unit="cfs"):
+    return DischargeObservation.objects.create(
+        station=station,
+        observed_at=timezone.now() - timedelta(days=days_ago),
+        discharge=value,
+        unit=unit,
+        type=obs_type,
+        quality_code="A",
+    )
+
+
+def test_daily_mean_is_never_deleted_however_old(station):
+    # THE critical invariant. These are decades old and must survive.
+    _obs(station, 40 * 365, "daily_mean")
+    _obs(station, 10 * 365, "daily_mean")
+    _obs(station, 30, "daily_mean")
+
+    prune_realtime_observations(retention_days=15)
+
+    assert DischargeObservation.objects.filter(type="daily_mean").count() == 3
+
+
+def test_old_realtime_rows_are_deleted(station):
+    _obs(station, 20, "realtime_15min")
+    _obs(station, 16, "realtime_15min")
+
+    result = prune_realtime_observations(retention_days=15)
+
+    assert DischargeObservation.objects.filter(type="realtime_15min").count() == 0
+    assert result["deleted"] == 2
+
+
+def test_recent_realtime_rows_are_kept(station):
+    _obs(station, 14, "realtime_15min")
+    _obs(station, 1, "realtime_15min")
+
+    result = prune_realtime_observations(retention_days=15)
+
+    assert DischargeObservation.objects.filter(type="realtime_15min").count() == 2
+    assert result["deleted"] == 0
+
+
+def test_mixed_table_only_loses_old_realtime(station):
+    _obs(station, 40 * 365, "daily_mean")      # ancient archive
+    _obs(station, 20, "realtime_15min")        # past the window
+    _obs(station, 2, "realtime_15min")         # inside the window
+
+    prune_realtime_observations(retention_days=15)
+
+    assert DischargeObservation.objects.filter(type="daily_mean").count() == 1
+    kept = DischargeObservation.objects.filter(type="realtime_15min")
+    assert kept.count() == 1
+
+
+def test_dry_run_deletes_nothing_but_reports_the_count(station):
+    _obs(station, 20, "realtime_15min")
+    _obs(station, 18, "realtime_15min")
+
+    result = prune_realtime_observations(retention_days=15, dry_run=True)
+
+    assert DischargeObservation.objects.filter(type="realtime_15min").count() == 2
+    assert result["deleted"] == 2
+    assert result["dry_run"] is True
+
+
+def test_retention_days_defaults_to_the_setting(station):
+    _obs(station, settings.REALTIME_RETENTION_DAYS + 5, "realtime_15min")
+    _obs(station, 1, "realtime_15min")
+
+    prune_realtime_observations()
+
+    assert DischargeObservation.objects.filter(type="realtime_15min").count() == 1
+
+
+def test_setting_default_is_15_days():
+    assert settings.REALTIME_RETENTION_DAYS == 15
+
+
+def test_absurd_retention_is_refused_rather_than_deleting_everything(station):
+    # A zero or negative window would delete the whole rolling series, and a
+    # bad config should fail loudly rather than quietly emptying a table.
+    _obs(station, 1, "realtime_15min")
+
+    with pytest.raises(ValueError):
+        prune_realtime_observations(retention_days=0)
+    with pytest.raises(ValueError):
+        prune_realtime_observations(retention_days=-5)
+
+    assert DischargeObservation.objects.filter(type="realtime_15min").count() == 1
+
+
+def test_other_observation_types_are_untouched(station):
+    _obs(station, 400, "ec_realtime_daily", unit="cms")
+
+    prune_realtime_observations(retention_days=15)
+
+    assert DischargeObservation.objects.filter(type="ec_realtime_daily").count() == 1
+
+
+def test_returns_the_cutoff_and_window_for_the_log(station):
+    result = prune_realtime_observations(retention_days=15)
+    assert result["retention_days"] == 15
+    assert result["cutoff"] is not None
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `venv/bin/python -m pytest tests/test_realtime_retention.py -v`
+Expected: `ImportError` for `prune_realtime_observations`, and the settings test failing on the missing `REALTIME_RETENTION_DAYS`.
+
+- [ ] **Step 3: Add the setting**
+
+In `config/settings.py`, beside the other acquisition settings:
+
+```python
+# Rolling window for realtime_15min observations. That series is a recent-flow
+# reference, not an archive: at 15 days a 15-minute series is 1,440 rows per
+# station. Pruning is type-scoped — see prune_realtime_observations.
+REALTIME_RETENTION_DAYS = int(os.environ.get("REALTIME_RETENTION_DAYS", "15"))
+```
+
+- [ ] **Step 4: Implement the task**
+
+Add to `src/acquisition/monitoring_tasks.py`, following the structure of the
+`cleanup_old_layers` / `cleanup_old_pull_logs` tasks already there:
+
+```python
+# The observation type this prune is allowed to touch. Scoping is a hard
+# safety requirement, not a filter of convenience: every daily_mean row is
+# older than any sane cutoff, so an unscoped age-based delete would destroy
+# the entire multi-decade daily archive.
+PRUNABLE_OBSERVATION_TYPE = "realtime_15min"
+
+
+@shared_task
+def prune_realtime_observations(retention_days=None, dry_run=False):
+    ...
+```
+
+Requirements:
+- `retention_days` defaults to `settings.REALTIME_RETENTION_DAYS` when `None`.
+- Raise `ValueError` for `retention_days <= 0` **before** touching the database.
+- Filter on **both** `type=PRUNABLE_OBSERVATION_TYPE` **and**
+  `observed_at__lt=cutoff`. Never build the queryset without the type filter,
+  even transiently.
+- `dry_run=True` counts and returns without deleting.
+- Delete in batches (a few thousand per statement) so a large backlog cannot
+  hold a long lock on a 37M-row table, and log progress.
+- Return `{"deleted": int, "cutoff": ..., "retention_days": int, "dry_run": bool}`
+  and log a single summary line naming the type, cutoff and count.
+
+- [ ] **Step 5: Re-export for beat discovery**
+
+In `src/acquisition/raster_tasks.py`, add `prune_realtime_observations` to the
+existing re-export block alongside `cleanup_old_layers` and
+`cleanup_old_pull_logs`, so it resolves as
+`src.acquisition.raster_tasks.prune_realtime_observations` the same way they do.
+(`autodiscover_tasks` only picks up `tasks.py`; `raster_tasks` is explicitly
+included in `config/celery.py`.)
+
+- [ ] **Step 6: Run the tests**
+
+Run: `venv/bin/python -m pytest tests/test_realtime_retention.py -v`
+Expected: 10 passed.
+
+- [ ] **Step 7: Schedule it daily**
+
+In `config/celery.py`, add to `beat_schedule`, following the style of the
+existing cleanup entries:
+
+```python
+    # Roll the realtime_15min window (type-scoped; never touches daily_mean)
+    'prune-realtime-observations': {
+        'task': 'src.acquisition.raster_tasks.prune_realtime_observations',
+        'schedule': crontab(hour=4, minute=30),
+        'options': {'queue': 'celery'},
+    },
+```
+
+Check the existing entries' exact shape and match it. Pick a slot that does not
+collide with the jobs already scheduled around that time — per the project's
+convention, state in your report which existing jobs you checked and why the
+chosen slot avoids them.
+
+- [ ] **Step 8: Verify the task is registered**
+
+Run:
+```bash
+venv/bin/python -c "
+import os,django
+os.environ.setdefault('DJANGO_SETTINGS_MODULE','config.settings')
+django.setup()
+from config.celery import app
+names = sorted(n for n in app.tasks if 'prune' in n or 'cleanup' in n)
+print('\n'.join(names))
+print('scheduled:', 'prune-realtime-observations' in app.conf.beat_schedule)
+"
+```
+Expected: `src.acquisition.raster_tasks.prune_realtime_observations` is listed and
+`scheduled: True`.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add src/acquisition/monitoring_tasks.py src/acquisition/raster_tasks.py \
+        config/settings.py config/celery.py tests/test_realtime_retention.py
+git commit -m "feat: add type-scoped retention for the realtime_15min rolling window"
+```
