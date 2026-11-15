@@ -409,6 +409,7 @@ NWM_S3_BASE                  # AWS S3 base URL for historical data (default: htt
 USGS_WATERDATA_BASE           # USGS Water Data OGC API base (default https://api.waterdata.usgs.gov/ogcapi/v1)
 USGS_API_KEY                  # api.data.gov key; raises the rate limit to 1000 req/hr (anonymous gets 429s under load)
 OBSERVATION_REFETCH_WINDOW_DAYS  # Days each incremental observation pull rewinds before re-fetching (default 180)
+REALTIME_RETENTION_DAYS          # Rolling window for realtime_15min observations (default 15); prune is type-scoped
 ```
 
 `DEBUG=False` is hardcoded; set it via env if needed locally.
@@ -423,9 +424,60 @@ OBSERVATION_REFETCH_WINDOW_DAYS  # Days each incremental observation pull rewind
 | MODIS Terra/Aqua | Daily 04:00/04:30 UTC |
 | GPM precipitation | Daily 05:00 UTC |
 | Daily flow percentiles | 06:00, 12:00, 18:00 UTC |
+| Realtime observation prune | Daily 06:15 UTC |
 | NWM Analysis Assim ingest | Daily 07:00 UTC |
 | RTMA cleanup (>7 days) | Sunday 02:00 UTC |
 | EarthData cleanup (>30 days) | 1st of month 03:00 UTC |
+
+#### A beat entry must name a task's *defining* module
+
+Celery registers a task under its own `__module__`, so re-exporting a task
+through another module does **not** create a second valid task name. Four beat
+entries referenced `src.acquisition.raster_tasks.*` for tasks defined in
+`src.acquisition.monitoring_tasks` — `cleanup_old_layers` (×2),
+`cleanup_old_pull_logs` and `monitor_pull_health` — and therefore raised
+`NotRegistered` and never ran. They now point at `monitoring_tasks`.
+
+`tests/test_realtime_retention.py` iterates **every** `beat_schedule` entry and
+asserts its task name resolves in `app.tasks` after
+`app.loader.import_default_modules()`. Keep that test: a scheduled job whose
+name does not resolve fails invisibly, which is how four of them went unnoticed.
+Note `app.tasks` is empty without forcing discovery — checking it bare makes
+every entry look broken, including working ones.
+
+Production uses `django_celery_beat:DatabaseScheduler`, so the live schedule is
+the `PeriodicTask` table, which beat syncs from `beat_schedule` on start. After
+changing a task name, **restart `celery-worker` as well as `celery-beat`** or the
+worker will not have the task registered.
+
+#### realtime_15min is a rolling window, not an archive
+
+`realtime_15min` is a recent-flow reference kept to `REALTIME_RETENTION_DAYS`
+(default 15). At 15 days a 15-minute series is 1,440 rows per station, so a few
+dozen stations stays under 100k rows.
+
+`prune_realtime_observations` (`src/acquisition/monitoring_tasks.py`) enforces it.
+**Its filter is scoped to `type="realtime_15min"` as a hard safety invariant, not
+a convenience.** The same table holds ~37.8M `daily_mean` rows spanning over a
+century; every one is older than any sane cutoff, so an age-only delete would
+destroy the whole archive. It also raises `ValueError` for
+`retention_days <= 0`, deletes in batches, and supports `dry_run`. The lead test
+`test_daily_mean_is_never_deleted_however_old` seeds 40-year-old daily rows and
+asserts they survive — it fails if the type scope is removed.
+
+Set a realtime configuration's `pull_start_date` **within**
+`REALTIME_RETENTION_DAYS`, or the first pull fetches more than retention keeps
+and the prune immediately deletes it.
+
+Instantaneous values come from the OGC `continuous` collection
+(`USGSWaterDataClient.get_instantaneous`), **not** `daily`: `parameter_code=00060`
+with `statistic_id=00011`. Two traps are pinned by tests. First, **with no
+`datetime` parameter the API silently returns only the most recent ~1 year**, so
+an explicit range is always sent; second, a reversed range would be ignored the
+same way, undetectably, so it raises before any request. `observed_at` keeps the
+full UTC timestamp here — the midnight-UTC rule is `daily_mean` only. A
+multi-year, multi-station historical pull needs caller pacing (~756 requests for
+10 years across 36 stations against a 1,000/hour key budget).
 
 ### Deployment
 
